@@ -27,8 +27,6 @@
   Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
-.PARAMETER vcenter
-  VMware vCenter server hostname. Default is localhost. You can specify several hostnames by separating entries with commas.
 .EXAMPLE
   Import all VMs in the ctr1 container and cleanup after a successful import:
   PS> .\ahv-migration.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -container ctr1 -import -cleanup
