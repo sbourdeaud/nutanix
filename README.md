@@ -11,3 +11,5 @@ Collection of scripts used for Nutanix Services:
 - add-VmToPd.ps1: used to add one or more virtual machines to an async protection domain in a Nutanix cluster.
 
 - get-NutanixStatus.ps1: used to retrieve a csv with containers status for one or more Nutanix clusters.
+
+- ahv-migration.ps1: used to import Scale Computing exported vms (as xml and qcow2) in a given container and create corresponding AHV virtual machines.  Can also be used to export an AHV virtual machine's disks to qcow2.
