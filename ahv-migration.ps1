@@ -82,12 +82,6 @@ $myvarScriptName = ".\ahv-migration.ps1"
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
 
-#check PoSH version
-if ($PSVersionTable.PSVersion.Major -lt 5) {
-    OutputLogData -category "ERROR" -message "Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"
-    exit
-}
-
 #let's load the Nutanix cmdlets
 if ((Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue) -eq $null)#is it already there?
 {
@@ -97,13 +91,6 @@ if ((Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue) -e
 		OutputLogData -category "ERROR" -message "Unable to load the Nutanix snapin.  Please make sure the Nutanix Cmdlets are installed on this server."
 		return
 	}
-}
-
-#let's load SSHSessions
-if (!Import-Module SSHSessions) {
-    OutputLogData -category "WARNING" -message "We need to install the SSHSessions module!"
-    Install-Module SSHSessions
-    Import-Module SSHSessions
 }
 
 
@@ -586,6 +573,19 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
 #region Export VM
 if ($export) {
     
+    #check PoSH version
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        OutputLogData -category "ERROR" -message "Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"
+        exit
+    }
+
+    #let's load SSHSessions
+    if (!Import-Module SSHSessions) {
+        OutputLogData -category "WARNING" -message "We need to install the SSHSessions module!"
+        Install-Module SSHSessions
+        Import-Module SSHSessions
+    }
+
     #get vm information
     OutputLogData -category "INFO" -message "Retrieving VM object $vm..."
     try {
@@ -692,7 +692,7 @@ if ($export) {
         }
     }
     #create xml
-    OutputLogData -category "INFO" -message "Exporting XML definition for VM object $vm..."
+    #OutputLogData -category "INFO" -message "Exporting XML definition for VM object $vm..."
     #
 }
 #endregion
