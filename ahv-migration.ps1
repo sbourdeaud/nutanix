@@ -545,7 +545,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             catch
             {
                 Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not delete source file $myvarDiskName!"
+	            OutputLogData -category "ERROR" -message "Could not delete source file $myvarDiskName.qcow2!"
             }
         }#end foreach vmdisk
         #endregion
