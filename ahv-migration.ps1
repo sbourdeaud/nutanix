@@ -83,9 +83,11 @@ if ($History) {$HistoryText; exit}
 #let's load the Nutanix cmdlets
 if ((Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue) -eq $null)#is it already there?
 {
-	Add-PSSnapin NutanixCmdletsPSSnapin #no? let's add it
-	if (!$?) #have we been able to add it successfully?
-	{
+    try {
+	    Add-PSSnapin NutanixCmdletsPSSnapin -ErrorAction Stop #no? let's add it
+	}
+    catch {
+        Write-Warning $($_.Exception.Message)
 		OutputLogData -category "ERROR" -message "Unable to load the Nutanix snapin.  Please make sure the Nutanix Cmdlets are installed on this server."
 		return
 	}
@@ -312,6 +314,8 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         OutputLogData -category "INFO" -message "Processing $myvarXMLFile..."
         try #let's make sure we can import the XML file content
         {
+            #remove NUL characters from the XML file if there are any
+            (get-content N:\$($myvarXMLFile.Name)) -replace "`0", "" | Set-Content N:\$($myvarXMLFile.Name)
             $myvarXML = [xml](get-content N:\$($myvarXMLFile.Name) | Where-Object {$_ -notmatch '<scale:os'})
         }#end try xml import
         catch
@@ -339,19 +343,16 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         foreach ($myvarVmDisk in $myvarVmDisks) {
             $myvarDiskName = $myvarVmDisk.source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
-            try {
-                $myvarResults = Test-Path N:\$myvarDiskName -ErrorAction Stop
-            }
-            catch {
-                Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Disk $myvarDiskName is not in \\$prism\$container"
+            if (!(Test-Path N:\$myvarDiskName.qcow2)) {
+                OutputLogData -category "ERROR" -message "Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
 	            Exit
             }
+            
             $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
             $myvarImage = Get-NTNXImage | where {$_.Name -eq $myvarImageName}
             if ($myvarImage) {OutputLogData -category "WARNING" -message "Image $myvarImageName already exists in the library: skipping import..."}
             else {
-                $myvarSource = "nfs://127.0.0.1/"+$container+"/"+$myvarDiskName
+                $myvarSource = "nfs://127.0.0.1/"+$container+"/"+$myvarDiskName+".qcow2"
                 $myvarBody = @{annotation=$myvarAnnotation;image_type="disk_image";imageImportSpec=@{containerName=$container;url=$myvarSource};name=$myvarImageName}
                 $myvarBody = ConvertTo-Json $myvarBody
                 $myvarImageImportTaskId = PrismRESTCall -method "Post" -username $username -password $password -url $myvarUrl -body $myvarBody
