@@ -538,9 +538,9 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
 
             $myvarDiskName = $myvarVmDisk.source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
-            OutputLogData -category "INFO" -message "Deleting source file $myvarDiskName..."
+            OutputLogData -category "INFO" -message "Deleting source file $myvarDiskName.qcow2..."
             try {
-                $myvarResults = Remove-Item N:\$myvarDiskName
+                $myvarResults = Remove-Item N:\$myvarDiskName.qcow2 -ErrorAction Stop
             }
             catch
             {
