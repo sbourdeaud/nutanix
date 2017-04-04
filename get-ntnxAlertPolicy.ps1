@@ -321,7 +321,8 @@ if (!$csv) {$csv = "prism-alerts-report.csv"}
                                   "title" = $myvarHealthCheck.title;
                                   "alertTypeId" = $myvarHealthCheck.alertTypeId;
                                   "message" = $myvarHealthCheck.message;
-                                  "severity" = $myvarSeverity}
+                                  "severity" = $myvarSeverity;
+                                  "impacts" = $myvarHealthCheck.impacts -join " "}
         #populate array
         $myvarResults.Add((New-Object PSObject -Property $myvarHealthCheckInfo)) | Out-Null
     }#end foreach healthcheck
