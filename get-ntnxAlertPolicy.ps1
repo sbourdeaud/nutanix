@@ -1,24 +1,16 @@
 ﻿<#
 .SYNOPSIS
-  This script can be used to import VMs which have been exported from Scale Computing.  It assumes XML and qcow2 files have been desposited into a container on the Nutanix cluster.
+  This script can be used to retrieve all alerts and their configuration from a Prism instance.
 .DESCRIPTION
-  Given a Nutanix cluster and container, the script will process all XML files it finds at the root of that container and create corresponding VMs in AHV.  Qcow2 disks are imported in the image library and then added to the newly created VM.  If network labels do not match, the script will prompt for a vlan id.
+  Given a Nutanix cluster, retrieve all alerts and healthchecks with full information, including severity, causes, resolutions, KB, etc... and export to a CSV file.
 .PARAMETER prism
   IP address or FQDN of the Nutanix cluster (this can also be a single CVM IP or FQDN).
 .PARAMETER username
   Prism username (with privileged cluster admin access).
 .PARAMETER password
   Prism username password.
-.PARAMETER container
-  Name of the storage container where the Scale Computing VM export files have been put.  Files (xml and qcow2) must be placed in the root folder of that container.
-.PARAMETER import
-  Switch to specify you want to import VMs.  All XML files in the container will be processed.
-.PARAMETER export
-  Switch to specify you want to export a given AHV virtual machine instead.  The script will use SSHSessions to start the qemu-img conversion process on the AHV VM raw files and drop them in the specified container.
-.PARAMETER cleanup
-  When used with import, the cleanup switch will have the script remove imported disk images from the AHV image library as well as delete the xml and qcow2 file(s) in the container once the AHV VM has been created successfully.
-.PARAMETER vm
-  Required when using export to specify the name of the AHV virtual machine you want to export.
+.PARAMETER csv
+  Name of csv file to export to. By default this is prism-alerts-report.csv in the working directory.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -28,16 +20,13 @@
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .EXAMPLE
-  Import all VMs in the ctr1 container and cleanup after a successful import:
-  PS> .\ahv-migration.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -container ctr1 -import -cleanup
-  Export AHV virtual machine vm1 in the ctr1 container:
-  PS> .\ahv-migration.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -container ctr1 -export -vm vm1
+  PS> .\get-ntnxAlertPolicy.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -csv c:\temp\production-cluster-report.csv
 .LINK
   http://www.nutanix.com/services
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: March 13th 2017
+  Revision: April 4th 2017
 #>
 
 #region Parameters
@@ -72,7 +61,7 @@ $HistoryText = @'
  04/04/2017 sb   Initial release.
 ################################################################################
 '@
-$myvarScriptName = ".\ahv-migration.ps1"
+$myvarScriptName = ".\get-ntnxAlertPolicy.ps1"
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
 
