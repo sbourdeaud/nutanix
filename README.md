@@ -13,3 +13,5 @@ Collection of scripts used for Nutanix Services:
 - get-NutanixStatus.ps1: used to retrieve a csv with containers status for one or more Nutanix clusters.
 
 - ahv-migration.ps1: used to import Scale Computing exported vms (as xml and qcow2) in a given container and create corresponding AHV virtual machines.  Can also be used to export an AHV virtual machine's disks to qcow2.
+
+- get-NTNXAlertPolicy.ps1: retrieves all healthchecks and alerts with full information and export to csv.
