@@ -49,8 +49,22 @@ function Usage {
 }#end function Usage
 
 #let's make sure the VIToolkit is being used
-Add-PSSnapin VMware.VimAutomation.Core
-#Initialize-VIToolkitEnvironment.ps1 | Out-Null
+$myvarPowerCLI = Get-PSSnapin VMware.VimAutomation.Core -Registered
+try {
+    switch ($myvarPowerCLI.Version.Major) {
+        {$_ -ge 6}
+            {
+            Import-Module VMware.VimAutomation.Vds -ErrorAction Stop
+            OutputLogData -category "INFO" -message "PowerCLI 6+ module imported"
+            }
+        5   {
+            Add-PSSnapin VMware.VimAutomation.Vds -ErrorAction Stop
+            OutputLogData -category "WARNING" -message "PowerCLI 5 snapin added; recommend upgrading your PowerCLI version"
+            }
+        default {throw "This script requires PowerCLI version 5 or later"}
+        }
+    }
+catch {throw "Could not load the required VMware.VimAutomation.Vds cmdlets"}
 
 ########################
 ##   main functions   ##
