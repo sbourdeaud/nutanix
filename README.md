@@ -1,3 +1,5 @@
+NOTE: Most scripts require PowerCLI (https://my.vmware.com/web/vmware/details?downloadGroup=PCLI650R1&productId=614) and/or Nutanix CmdLets (which can be downloaded from the user menu in Prism).
+
 Collection of scripts used for Nutanix Services:
 
 - set-ipconfig.ps1: used for IP reconfiguration on Windows for cross-hypervisor DR. Can aslo be used for AHV migrations to save/restore ip configuration on multiple NICs.
