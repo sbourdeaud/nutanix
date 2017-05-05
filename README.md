@@ -15,3 +15,11 @@ Collection of scripts used for Nutanix Services:
 - ahv-migration.ps1: used to import Scale Computing exported vms (as xml and qcow2) in a given container and create corresponding AHV virtual machines.  Can also be used to export an AHV virtual machine's disks to qcow2.
 
 - get-NTNXAlertPolicy.ps1: retrieves all healthchecks and alerts with full information and export to csv.
+
+
+When setting up a new Nutanix cluster, use:
+- set-cvms.ps1 after having created the HA/DRS cluster in vCenter to apply Nutanix best practices on the vSphere cluster,
+- set-hostconfig.ps1 to configure redundant dns and ntp on esxi servers,
+- add-DRSAffinityRulesForMA.ps1 after having configured Metro Availability (if applicable) to create the relevant DRS groups and rules for MA.
+
+Please report any bugs here.  Not that scripts were recently modified to deal with PowerCLI 6.5 (dropped snapins) and updated Nutanix cmdlets (errors should now be more verbose when those aren't installed properly).
