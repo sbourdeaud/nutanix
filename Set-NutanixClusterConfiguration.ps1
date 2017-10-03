@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-This script configures a Nutanix cluster after Foundation. It will let you specify both Nutanix 
+This script configures a Nutanix cluster after Foundation.
 
 .DESCRIPTION
 This is a detailed description of what the script does and how it is used.
@@ -65,29 +65,25 @@ Revision: May 17th 2017
         [Switch]
         $VerboseOutput,
 
-        [Parameter(mandatory = $true)]
-        [String]
-        $Prism,
-	    
-        [Parameter(mandatory = $true)]
-        [String]
-        $Username,
-	    
         [Parameter(mandatory = $false)]
         [String]
-        $Password,
+        $ConfigPath,
 
-        [Parameter(mandatory = $true,ParameterSetName = "ByOnline")]
+        [Parameter(mandatory = $false)]
+        [String]
+        $PrismUsername,
+
+        [Parameter(mandatory = $false)]
+        [String]
+        $PrismPassword,
+
+        [Parameter(mandatory = $false,ParameterSetName = "ByOnline")]
         [Switch]
         $Online,
 
-        [Parameter(mandatory = $true, ParameterSetName = "ByOffline")]
+        [Parameter(mandatory = $false, ParameterSetName = "ByOffline")]
         [Switch]
-        $Offline,
-
-        [Parameter(mandatory = $false, ParameterSetName = "ByOnline")]
-        [Switch]
-        $DataProtection
+        $Offline
 
     )
 #endregion
@@ -108,383 +104,447 @@ Revision: May 17th 2017
     if (!$VerboseOutput) {$VerbosePreference = 'SilentlyContinue'} else {$VerbosePreference = 'Continue'}
 
     #let's deal with the password
-    if (!$Password) #if it was not passed as an argument, let's prompt for it
+    if (!$PrismPassword) #if it was not passed as an argument, let's prompt for it
     {
-        $SecurePassword = read-host "Enter the Prism password" -AsSecureString
+        $PrismSecurePassword = read-host "Enter the Prism admin user password" -AsSecureString
     }
     else #if it was passed as an argument, let's convert the string to a secure string and flush the memory
     {
-        $SecurePassword = ConvertTo-SecureString $Password –asplaintext –force
-        Remove-Variable Password
+        $PrismSecurePassword = ConvertTo-SecureString $PrismPassword –asplaintext –force
+        Remove-Variable PrismPassword
     }
+    if (!$PrismUsername) {
+        $PrismUsername = "admin"
+    }#endif not username
+
+    if (!$Online -and !$Offline) {Write-LogOutput -Category ERROR -Message "You must specify either -online or -offline!" -LogFile $LogFile; Exit}
+    if (!$ConfigPath) {$ConfigPath = $pwd.Path}
+
+    #CONSTANTS
+    $BasicConfigFileName = "basic-config.csv"
+    $vSwitchConfigFileName = "vswitch-config.csv"
+    $ComputeConfigFileName = "compute-config.csv"
+    $PrismConfigFileName = "prism-config.csv"
+    $vMotionConfigFileName = "vmotion-config.csv"
 
 #endregion
 #region prepwork
 
-    #import the modules we need
-    try
-    {
-        Import-Module -Name sbourdeaud -ErrorAction Stop
-    }
-    catch #we couldn't import the module, so let's download it
-    {
-        $ModulesPath = ($env:PsModulePath -split ";")[0]
-        $MyModulePath = "$ModulesPath\sbourdeaud"
-        New-Item -Type Container -Force -path $MyModulePath | out-null
-        (New-Object net.webclient).DownloadString("https://raw.github.com/sbourdeaud/modules/master/sbourdeaud.psm1") | Out-File "$MyModulePath\sbourdeaud.psm1" -ErrorAction Continue
-        (New-Object net.webclient).DownloadString("https://raw.github.com/sbourdeaud/modules/master/sbourdeaud.psd1") | Out-File "$MyModulePath\sbourdeaud.psd1" -ErrorAction Continue
-    }
-    finally
-    {
+    #process requirements (PoSH version and modules)
+    Write-LogOutput -Category INFO -Message "Checking the Powershell version..." -LogFile $LogFile
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        Write-LogOutput -Category WARNING -Message "Powershell version is less than 5. Trying to upgrade from the web..." -LogFile $LogFile
+        $ChocoVersion = choco
+        if (!$ChocoVersion) {
+            Write-LogOutput -Category WARNING -Message "Chocolatey is not installed!" -LogFile $LogFile
+            [ValidateSet('y','n')]$ChocoInstall = Read-Host "Do you want to install the chocolatey package manager? (y/n)"
+            if ($ChocoInstall -eq "y") {
+                Write-LogOutput -Category INFO -Message "Downloading and running chocolatey installation script from chocolatey.org..." -LogFile $LogFile
+                iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+                Write-LogOutput -Category INFO -Message "Downloading and installing the latest Powershell version from chocolatey.org..." -LogFile $LogFile
+                choco install -y powershell
+            } else {
+                Write-LogOutput -Category ERROR -Message "Please upgrade to Powershell v5 or above manually (https://www.microsoft.com/en-us/download/details.aspx?id=54616)" -LogFile $LogFile
+                Exit
+            }#endif choco install
+        }#endif not choco
+    }#endif PoSH version
+    Write-LogOutput -Category INFO -Message "Checking for required Powershell modules..." -LogFile $LogFile
+    if (!(Get-Module -Name sbourdeaud)) {
+        Write-LogOutput -Category INFO -Message "Importing module 'sbourdeaud'..." -LogFile $LogFile
         try
         {
             Import-Module -Name sbourdeaud -ErrorAction Stop
-        }
-        catch #we couldn't import the module
+            Write-LogOutput -Category INFO -Message "Imported module 'sbourdeaud'..." -LogFile $LogFile
+        }#end try
+        catch #we couldn't import the module, so let's download it
         {
-            $ErrorCode = $Error[0]
-            Write-Host $ErrorCode.Exception -ForegroundColor Red
-            Write-Host "ERROR: Unable to import the module sbourdeaud.psm1.  Please download and install from https://github.com/sbourdeaud/modules"  -ForegroundColor Red
-            Exit
-        }
-    }
+            Write-LogOutput -Category INFO -Message "Downloading module 'sbourdeaud' from github..." -LogFile $LogFile
+            $ModulesPath = ($env:PsModulePath -split ";")[0]
+            $MyModulePath = "$ModulesPath\sbourdeaud"
+            New-Item -Type Container -Force -path $MyModulePath | out-null
+            (New-Object net.webclient).DownloadString("https://raw.github.com/sbourdeaud/modules/master/sbourdeaud.psm1") | Out-File "$MyModulePath\sbourdeaud.psm1" -ErrorAction Continue
+            (New-Object net.webclient).DownloadString("https://raw.github.com/sbourdeaud/modules/master/sbourdeaud.psd1") | Out-File "$MyModulePath\sbourdeaud.psd1" -ErrorAction Continue
 
-    #let's load the Nutanix cmdlets
-    try
-    {
-        Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction Stop #is it already there?
-    }
-    catch
-    {
-        try 
+            try
+            {
+                Import-Module -Name sbourdeaud -ErrorAction Stop
+                Write-LogOutput -Category INFO -Message "Imported module 'sbourdeaud'..." -LogFile $LogFile
+            }#end try
+            catch #we couldn't import the module
+            {
+                Write-Host "ERROR: Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "Please download and install from https://github.com/sbourdeaud/modules" -ForegroundColor Yellow
+                Exit
+            }#end catch
+        }#end catch
+    }#endif module sbourdeaud
+    if (!(Get-Module -Name VMware.PowerCLI)) {
+        Write-LogOutput -Category INFO -Message "Importing module 'VMware.PowerCLI'..." -LogFile $LogFile
+        try
         {
-	        Add-PSSnapin NutanixCmdletsPSSnapin -ErrorAction Stop #no? let's add it
-	    }
-        catch 
+            Import-Module VMware.PowerCLI -ErrorAction Stop
+            Write-LogOutput -Category INFO -Message "Imported module 'VMware.PowerCLI'..." -LogFile $LogFile
+        }#end try
+        catch #we couldn't import the module, so let's download it
         {
-            $ErrorCode = $Error[0]
-            Write-Host $ErrorCode.Exception -ForegroundColor Red
-            Write-Host "ERROR: The NutanixCmdletsPSSnapin is required. Please download it from your Prism interface and install it on this workstation." -ForegroundColor Red
-            Exit
-	    }
+            Write-LogOutput -Category WARNING -Message "Could not import the VMware.PowerCLI module. Trying to install from the web..." -LogFile $LogFile
+            try {
+                Install-Module -Name VMware.PowerCLI -Scope CurrentUser
+                Write-LogOutput -Category INFO -Message "Installed module 'VMware.PowerCLI'..." -LogFile $LogFile
+                Write-LogOutput -Category INFO -Message "Importing module 'VMware.PowerCLI'..." -LogFile $LogFile
+                try {
+                    Import-Module VMware.PowerCLI -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Imported module 'VMware.PowerCLI'..." -LogFile $LogFile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Unable to import the module VMware.PowerCLI : $($_.Exception.Message)" -Logfile $Logfile
+                    Write-LogOutput -Category WARNING -Message "Please download and install from https://my.vmware.com/en/web/vmware/details?downloadGroup=PCLI650R1&productId=614" -LogFile $LogFile
+                    Exit
+                }#end catch
+            }#end try
+            catch {
+                Write-LogOutput -Category ERROR -Message "Unable to import the module VMware.PowerCLI : $($_.Exception.Message)" -Logfile $Logfile
+                Write-LogOutput -Category WARNING -Message "Please download and install from https://my.vmware.com/en/web/vmware/details?downloadGroup=PCLI650R1&productId=614" -LogFile $LogFile
+                Exit
+            }#end catch
+        }#end catch
+    }#endif module VMware.PowerCLI
+    if (!(Get-Module -Name SSHSessions)) {
+        Write-LogOutput -Category INFO -Message "Importing module 'SSHSessions'..." -LogFile $LogFile
+        try {
+            Import-Module SSHSessions -ErrorAction Stop
+            Write-LogOutput -Category INFO -Message "Imported module 'SSHSessions'..." -LogFile $LogFile
+        }#end try
+        catch {
+            Write-LogOutput -Category INFO -Message "Downloading module 'SSHSessions' from the web..." -LogFile $LogFile
+            try {
+                powershellget\Install-Module SSHSessions -ErrorAction Stop
+                Write-LogOutput -Category INFO -Message "Installed module 'SSHSessions'." -LogFile $LogFile
+                try {
+                    Import-Module SSHSessions -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Imported module 'SSHSessions'..." -LogFile $LogFile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Unable to import the module SSHSessions : $($_.Exception.Message)" -Logfile $Logfile
+                    Exit
+                }#end catch
+            }#end try
+            catch {
+                Write-LogOutput -Category ERROR -Message "Unable to import the module SSHSessions : $($_.Exception.Message)" -Logfile $Logfile
+                Exit
+            }#end catch
+        }#end catch
+    }#endif module SSHSessions
+
+    #let's get ready to use the Nutanix REST API
+    #Accept self signed certs
+add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(
+            ServicePoint srvPoint, X509Certificate certificate,
+            WebRequest request, int certificateProblem) {
+            return true;
+        }
     }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
 
 #endregion
 
 #region functions
 
-function New-NutanixContainer
-{
-<#
-.SYNOPSIS
-Walks the user thru creating a new Nutanix storage container.
 
-.DESCRIPTION
-This function is used to prompt the user for all the information required to create a new Nutanix storage container.
-
-.PARAMETER Cluster
-Nutanix cluster system object returned by Get-NTNXCluster
-
-.PARAMETER Hosts
-System array object containing the Nutanix hosts in the cluster
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-New-NutanixContainer -Cluster $Cluster -Hosts $Hosts
-
-Starts the creation workflow for a new container. The function will return the newly created container object.
-
-.LINK
-https://github.com/sbourdeaud/nutanix
-#>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-	param
-	(
-		[Parameter(Mandatory)]
-        [System.Object]
-        $Cluster,
-
-        [Parameter(Mandatory)]
-        [System.Array]
-        $Hosts
-	)
-
-    process
-    {
-        #prompting the user for the required information while performing some validation
-        $ContainerName = Read-Host "Enter the container name"
-        [ValidateSet('y','n')]$Compression = Read-Host "Do you want to enable compression? (y/n)"
-        if ($Compression -eq 'y') {[int]$CompressionDelay = Read-Host "What is the desired compression delay in seconds? (0 for inline compression)"}
-        [ValidateSet('y','n')]$Deduplication = Read-Host "Do you want to enable deduplication? (y/n)"
-        if ($Deduplication -eq 'y') {[ValidateSet('y','n')]$DeduplicationCapacity = Read-Host "Do you want to enable deduplication on the capacity tier? (y/n)"}
-        if ($Hosts.Count -ge 4) {[ValidateSet('y','n')]$ErasureCoding = Read-Host "Do you want to enable erasure coding? (y/n)"}
-        if ($Cluster.clusterRedundancyState.currentRedundancyFactor -ge 3) {[ValidateSet('2','3')][int]$ReplicationFactor = Read-Host "Which replication factor do you want to use for this container? (2/3)"} else {$ReplicationFactor = $Cluster.clusterRedundancyState.currentRedundancyFactor}
-
-        #creating the container
-        Write-LogOutput -Category INFO -Message "Creating the container $ContainerName..."
-        try
-        {
-            $Result = New-NTNXContainer -Name $ContainerName -ReplicationFactor $ReplicationFactor -ErrorAction Stop
-            Write-LogOutput -Category INFO -Message "Successfully created the container $ContainerName..."
-            $Containers = Get-NTNXContainer
-            $Container = $Containers | where {$_.name -eq $ContainerName}
-        }
-        catch
-        {
-            $ErrorCode = $Error[0]
-            Write-Host $ErrorCode.Exception -ForegroundColor Red
-	        Write-LogOutput -Category "ERROR" -Message "Could not create the container $ContainerName" -LogFile $LogFile
-	        Exit
-        }
-
-        #modifying the container based on selected options
-        if ($Compression -eq 'y') 
-        {
-            Write-LogOutput -Category INFO -Message "Enabling compression on $ContainerName..."
-            try
-            {
-                $Container | Set-NTNXContainer -CompressionEnabled $true -CompressionDelayInSecs $CompressionDelay -ErrorAction Stop
-                Write-LogOutput -Category INFO -Message "Successfully enabled compression on $ContainerName..."
-            }
-            catch
-            {
-                $ErrorCode = $Error[0]
-                Write-Host $ErrorCode.Exception -ForegroundColor Red
-	            Write-LogOutput -Category "ERROR" -Message "Could not enable compression on container $ContainerName" -LogFile $LogFile
-            }
-        }
-        if ($Deduplication -eq 'y') 
-        {
-            Write-LogOutput -Category INFO -Message "Enabling deduplication on $ContainerName..."
-            try
-            {
-                $Container | Set-NTNXContainer -FingerPrintOnWrite ON -ErrorAction Stop
-                Write-LogOutput -Category INFO -Message "Successfully enabled deduplication on $ContainerName..."
-            }
-            catch
-            {
-                $ErrorCode = $Error[0]
-                Write-Host $ErrorCode.Exception -ForegroundColor Red
-	            Write-LogOutput -Category "ERROR" -Message "Could not enable deduplication on container $ContainerName" -LogFile $LogFile
-            }
-        }
-        if ($DeduplicationCapacity -eq 'y') 
-        {
-            Write-LogOutput -Category INFO -Message "Enabling deduplication on capacity tier on $ContainerName..."
-            try
-            {
-                $Container | Set-NTNXContainer -OnDiskDedup POST_PROCESS -ErrorAction Stop
-                Write-LogOutput -Category INFO -Message "Successfully enabled deduplication on capacity tier on $ContainerName..."
-            }
-            catch
-            {
-                $ErrorCode = $Error[0]
-                Write-Host $ErrorCode.Exception -ForegroundColor Red
-	            Write-LogOutput -Category "ERROR" -Message "Could not enable deduplication on capacity tier on container $ContainerName" -LogFile $LogFile
-            }
-        }
-        if ($ErasureCoding -eq 'y') 
-        {
-            Write-LogOutput -Category INFO -Message "Enabling erasure coding on $ContainerName..."
-            try
-            {
-                $Container | Set-NTNXContainer -ErasureCode on -ErrorAction Stop
-                Write-LogOutput -Category INFO -Message "Successfully enabled erasure coding on $ContainerName..."
-            }
-            catch
-            {
-                $ErrorCode = $Error[0]
-                Write-Host $ErrorCode.Exception -ForegroundColor Red
-	            Write-LogOutput -Category "ERROR" -Message "Could not enable erasure coding on container $ContainerName" -LogFile $LogFile
-            }
-        }
-
-        #setting up to return the container object
-        $Containers = Get-NTNXContainer
-        $Container = $Containers | where {$_.name -eq $ContainerName}
-        Return $Container
-    }
-
-}#end function New-NutanixContainer
 
 #endregion
 
 #region processing
+    
+    #region offline
+        
+        #region get required input
 
-    #region connect to the Nutanix cluster
-    Write-LogOutput -Category "INFO" -Message "Connecting to Nutanix cluster $Prism..." -LogFile $LogFile
-        try
-        {
-            Write-Verbose "Storing results of Connect-NutanixCluster in the NutanixCluster variable."
-            $NutanixCluster = Connect-NutanixCluster -Server $Prism -UserName $Username -Password $SecurePassword –acceptinvalidsslcerts -ForcedConnection -ErrorAction Stop
+        #gather input from csv
+        Write-LogOutput -Category INFO -Message "Importing basic configuration information from $($ConfigPath + $BasicConfigFileName)..." -Logfile $Logfile
+        try {
+            $BasicConfig = Import-Csv -Path ($ConfigPath + $BasicConfigFileName) -Delimiter ";" -ErrorAction Stop
+        }#end try
+        catch {
+            Write-LogOutput -Category ERROR -Message "Could not find $BasicConfigFileName in $ConfigPath : $($_.Exception.Message)" -Logfile $Logfile
+            Exit
+        }#end catch
+
+        #get nutanix cluster configuration
+        Write-LogOutput -Category INFO -Message "Retrieving cluster information for $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+        $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/cluster/"
+        $method = "GET"
+        try {
+            $NutanixCluster = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -ErrorAction Stop
+            Write-LogOutput -Category INFO -Message "Successfully retrieved cluster information from $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+        }#end try
+        catch {
+            Write-LogOutput -Category ERROR -Message "Could not find retrieve cluster information for $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+            Exit
+        }#end catch
+
+        #endregion
+
+        #region build json body for cluster/patch request
+        $body = @{
+            clusterUuid=$NutanixCluster.cluster_uuid;
+            genericDTO=@{
+                name=$NutanixCluster.name;
+                clusterExternalDataServicesIPAddress=$BasicConfig.data_services_ip;
+                timezone=$BasicConfig.timezone
+            };
+            operation="EDIT"
         }
-        catch
-        {
-	        $ErrorCode = $Error[0]
-            Write-Host $ErrorCode.Exception -ForegroundColor Red
-	        Write-LogOutput -Category "ERROR" -Message "Could not connect to $Prism" -LogFile $LogFile
-	        Exit
+        $body = ConvertTo-Json $body
+        #endregion
+
+        #region configure Nutanix cluster
+
+        #region configure timezone and external data services ip
+        if (($NutanixCluster.cluster_external_data_services_ipaddress -eq $BasicConfig.data_services_ip) -and ($NutanixCluster.timezone -eq $BasicConfig.timezone)) {
+            Write-LogOutput -Category WARNING -Message "Cluster $($BasicConfig.cluster_ip) already has the correct data services IP and timezone. Skipping..." -Logfile $Logfile
         }
-    Write-LogOutput -category "INFO" -message "Connected to Nutanix cluster $Prism." -LogFile $LogFile
+        else
+        {
+            Write-LogOutput -Category INFO -Message "Configuring cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+            $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v1/cluster/"
+            $method = "PATCH"
+            try {
+                $RESTCall = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -body $body -ErrorAction Stop
+                Write-LogOutput -Category INFO -Message "Successfully configured the timezone ($($BasicConfig.timezone)) and cluster external data services ip ($($BasicConfig.data_services_ip)) for cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+            }#end try
+            catch {
+                Write-LogOutput -Category ERROR -Message "Could not configure cluster $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+                Exit
+            }#end catch
+        }#endif already configured
+        #endregion
+
+        #region configure name servers
+        if (($NutanixCluster.name_servers -Join ",") -notmatch $BasicConfig.dns) {
+            if ($NutanixCluster.name_servers) {Write-LogOutput -Category INFO -Message "Removing configured name servers from cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile}
+            ForEach ($item in $NutanixCluster.name_servers) {
+                $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/cluster/name_servers/" + $item
+                $method = "DELETE"
+                try {
+                    $RESTCall = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Successfully removed DNS server $item from cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Could not remove DNS server $item from cluster $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+                }#end catch
+            }#end foreach name server in Prism
+            
+            Write-LogOutput -Category INFO -Message "Adding name servers to cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+            
+            ForEach ($item in (($BasicConfig.dns).Split(","))) {
+                $body = @{value = $item}
+                $body = ConvertTo-Json $body
+                $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/cluster/name_servers"
+                $method = "POST"
+                try {
+                    $RESTCall = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -body $body -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Successfully added DNS server $item to cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Could not add DNS server $item to cluster $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+                    Exit
+                }#end catch
+            }#end foreach name server
+        } 
+        else {
+            Write-LogOutput -Category WARNING -Message "Name servers on cluster $($BasicConfig.cluster_ip) are already defined. Skipping..." -Logfile $Logfile
+        }#endif name servers match?
+        #endregion
+
+        #region configure ntp servers...
+        if (($NutanixCluster.ntp_servers -Join ",") -notmatch $BasicConfig.ntp) {
+            if ($NutanixCluster.ntp_servers) {Write-LogOutput -Category INFO -Message "Removing configured ntp servers from cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile}
+            ForEach ($item in $NutanixCluster.ntp_servers) {
+                $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/cluster/ntp_servers/" + $item
+                $method = "DELETE"
+                try {
+                    $RESTCall = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Successfully removed ntp server $item from cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Could not remove ntp server $item from cluster $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+                }#end catch
+            }#end foreach ntp server in Prism
+            Write-LogOutput -Category INFO -Message "Adding ntp servers to cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+            
+            ForEach ($item in (($BasicConfig.ntp).Split(","))) {
+                $body = @{value = $item}
+                $body = ConvertTo-Json $body
+                $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/cluster/ntp_servers"
+                $method = "POST"
+                try {
+                    $RESTCall = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -body $body -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Successfully added ntp server $item to cluster $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Could not add ntp server $item to cluster $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+                    Exit
+                }#end catch
+            }#end foreach ntp server
+        } 
+        else {
+            Write-LogOutput -Category WARNING -Message "Ntp servers on cluster $($BasicConfig.cluster_ip) are already defined. Skipping..." -Logfile $Logfile
+        }#endif name servers match?
+        #endregion
+
+        #region process container
+        #get cluster storage_containers information
+        Write-LogOutput -Category INFO -Message "Retrieving storage containers information for $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+        $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/storage_containers/"
+        $method = "GET"
+        try {
+            $StorageContainers = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -ErrorAction Stop
+            Write-LogOutput -Category INFO -Message "Successfully retrieved storage containers information for $($BasicConfig.cluster_ip)" -Logfile $Logfile
+        }#end try
+        catch {
+            Write-LogOutput -Category ERROR -Message "Could not retrieve storage containers information for $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+            Exit
+        }#end catch
+        #remove default container
+        ForEach ($item in $StorageContainers.entities) {
+            if ($item.name -like "*default*") {
+                Write-LogOutput -Category INFO -Message "Deleting default container $($item.name) on $($BasicConfig.cluster_ip)..." -Logfile $Logfile
+                $url = "https://" + $BasicConfig.cluster_ip + ":9440/PrismGateway/services/rest/v2.0/storage_containers/" + $item.storage_container_uuid
+                $method = "DELETE"
+                try {
+                    $RESTCall = Get-PrismRESTCall -username $PrismUsername -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -method $method -ErrorAction Stop
+                    Write-LogOutput -Category INFO -Message "Successfully deleted default storage container $($item.name) on $($BasicConfig.cluster_ip)" -Logfile $Logfile
+                }#end try
+                catch {
+                    Write-LogOutput -Category ERROR -Message "Could not delete default storage container $($item.name) on $($BasicConfig.cluster_ip) : $($_.Exception.Message)" -Logfile $Logfile
+                    Exit
+                }#end catch
+            }#endif default container
+        }#end foreach existing container
+        #add container >>>remove container list from basic-config.csv and put it in containers-config.csv to allow for multiple entries<<<
+        #add reserved space container (best practice)
+        #endregion
+
+        #endregion
+
+        #region configure cvms
+        #figure out the date and time
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #set time and date on cvms
+        try {
+        }#end try
+        catch {
+        }#end catch
+        #endregion
+
+        #region configure vmhosts
+
+        #set time and date on vmhosts
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure name servers on nutanix cluster
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure name servers on vmhosts
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure domain suffix on vmhosts
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure ntp servers on nutanix cluster
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure ntp servers on vmhosts
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #remove default container
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #create new container
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #stop nutanix cluster
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure vlan tagging for cvms
+        try {
+        }#end try
+        catch {
+        }#end catch
+
+        #configure vlan tagging for vmhosts management network
+        try {
+        }#end try
+        catch {
+        }#end catch
+        #endregion
+
     #endregion
 
-    #region offline (wip)
-        if ($Offline)
-        {
-        #region general Nutanix cluster configuration
-         Write-LogOutput -Category INFO -Message "Configuring general Nutanix cluster settings..."
-         Write-LogOutput -Category INFO -Message "Retrieving cluster information..."
-         $Cluster = Get-NTNXCluster
-         Write-LogOutput -Category INFO -Message "Retrieving host information..."
-         $Hosts = Get-NTNXHost
-         Write-LogOutput -Category INFO -Message "Retrieving container information..."
-         $Containers = Get-NTNXContainer
+    #region online
 
-
-            #region remove the default container
-            [ValidateSet('y','n')]$RemoveDefaultContainer = Read-Host "Do you want to remove the default container? (y/n)"
-            if ($RemoveDefaultContainer -eq 'y')
-            {
-                Write-LogOutput -Category INFO -Message "Removing the default container"
-                try
-                {
-                    $DefaultContainer = $Containers | where {$_.name -like "default-container*"}
-                    $Result = $DefaultContainer | Remove-NTNXContainer -ErrorAction Stop
-                }
-                catch
-                {
-                    $ErrorCode = $Error[0]
-                    Write-Host $ErrorCode.Exception -ForegroundColor Red
-	                Write-LogOutput -Category "ERROR" -Message "Could not remove the default container" -LogFile $LogFile
-	                Exit
-                }
-                if ($DefaultContainer) {Write-LogOutput -Category INFO -Message "Successfully removed the default container ($($DefaultContainer.name))"} else {Write-LogOutput -Category WARNING -Message "There was no default container to remove"}
-            }
-            #endregion
-            #region add one or more new containers
-            do
-            {
-                [ValidateSet('y','n')]$NewContainer = Read-Host "Do you want to create a new container? (y/n)"
-                if ($NewContainer -eq 'y')
-                {
-                    $Container = New-NutanixContainer -Hosts $Hosts -Cluster $Cluster
-                    $Containers = Get-NTNXContainer
-                }
-            }
-            while ($NewContainer -eq 'y')
-                #region add container for reserved space
-                #endregion
-
-            #endregion
-            #region configure Ntp servers
-            #endregion
-            #region configure DNS servers
-            #endregion
-
-        #endregion
-        #region hypervisor configuration
-
-            #region get the hypervisor
-            #endregion
-
-            #region VMware vSphere configuration
-
-                #region configure Ntp on ESXi hosts
-                #endregion
-                #region configure Dns on ESXi hosts
-                #endregion
-                #region configure vlans
-                #endregion
-
-            #endregion
-            #region Microsoft Hyper-V configuration
-
-                #region configure vlans
-                #endregion
-
-            #endregion
-            #region AHV configuration
-
-                #region configure lacp
-                #endregion
-                #region configure vlans
-                #endregion
-
-            #endregion
-
-        #endregion
-        }
-    #endregion
-
-    #region online (wip)
-        #region general Nutanix cluster configuration
-
-        #region remove the default container
-        #endregion
-        #region add one or more new containers
-
-            #region add container for reserved space
-            #endregion
-
-        #endregion
-        #region configure Ntp servers
-        #endregion
-        #region configure DNS servers
-        #endregion
-        #region configure LDAP authentication
-        #endregion
-        #region licensing configuration
+        #region prism configuration
+            #add authentication domain
+            #add role mapping
+            #configure smtp
+            #configure alert email recipients
+            #configure http proxy
+            #configure data services ip
         #endregion
 
-        #endregion
-        #region hypervisor configuration
-
-        #region get the hypervisor
-        #endregion
-
-        #region VMware vSphere configuration
-
-            #region connect to vCenter
-            #endregion
-
-            #region create the datacenter
-            #endregion
-
-            #region create the cluster
-            #endregion
-
-            #region configure the cluster
-            #endregion
-
-            #region configure Ntp on ESXi hosts
-            #endregion
-
-            #region configure Dns on ESXi hosts
-            #endregion
-
-            #region networking
-            #endregion
-
+        #region vcenter configuration
+            #connect to vCenter server
+            #create datacenter
+            #create HA/DRS cluster
+            #add vmshosts
+            #create portgroups
+            #copy portgroups
+            #add vmotion network
+            #disconnect from vCenter server
         #endregion
 
-        #region Microsoft Hyper-V configuration
-        #endregion
-
-        #region AHV configuration
-        #endregion
-
-        #endregion
-    #endregion
-
-    #region data protection (wip)
-
-        #region async protection domains
-        #endregion
-
-        #region metro availability
+        #region change passwords
+            #change vmhosts root password
+            #change cvms nutanix password
+            #change prism admin password
         #endregion
 
     #endregion
@@ -492,16 +552,8 @@ https://github.com/sbourdeaud/nutanix
 #endregion
 
 #region cleanup
-
-    #cleanup after ourselves and disconnect from the Nutanix cluster
-    Write-LogOutput -Category "INFO" -Message "Disconnecting from Nutanix cluster $Prism..." -LogFile $LogFile
-	Disconnect-NutanixCluster -Servers $Prism
     
     #let's figure out how much time this all took
 	Write-LogOutput -Category "SUM" -Message "total processing time: $($ElapsedTime.Elapsed.ToString())" -LogFile $LogFile
-
-    #removing modules and snapins from memory
-    Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-    Remove-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue
 
 #endregion
