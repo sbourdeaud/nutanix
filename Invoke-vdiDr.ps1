@@ -330,6 +330,8 @@ add-type @"
     #$username = "<enter your Prism username here>"
     #$referentialPath = "<enter your path to reference files here>"
     #$target_pg = "<enter your target portgroup name here>"
+    #$hvCreds = Get-Credential -Message "Please enter the credentials for the Horizon View server(s)"
+    #$vcCreds = Get-Credential -Message "Please enter the credentials for the vCenter server(s)"
 #endregion
 
 #region parameters validation
@@ -378,43 +380,165 @@ add-type @"
 
     #region -scan
     if ($scan) {
-        #check if this is the first run
-
-        #if it is, build the first reference file
-
         #load pool2pd reference
-        try {$pool2PdReferential = Import-Csv -Path ("$referentialPath\PoolRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"}
+        try {$poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"}
 
-        #load old vm reference
-        If (Test-Path -Path ("$referentialPath\ViewVmRef.csv")) {
-            try {$savedReferential = Import-Csv -Path ("$referentialPath\ViewVmRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\ViewVmRef.csv : $($_.Exception.Message)"}
+        #load old references
+        If (Test-Path -Path ("$referentialPath\hvRef.csv")) {
+            try {$oldHvRef = Import-Csv -Path ("$referentialPath\hvRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\hvRef.csv : $($_.Exception.Message)"}
+        }
+        If (Test-Path -Path ("$referentialPath\vcRef.csv")) {
+            try {$oldVcRef = Import-Csv -Path ("$referentialPath\vcRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\vcRef.csv : $($_.Exception.Message)"}
         }
 
-        #extract desktop pools and their content
+        #region extract Horizon View data
+        #connect to Horizon View server
+        Write-Host "$(get-date) [INFO] Connecting to the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+        try {
+            if ($hvCreds) {
+                $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
+            } else {
+                $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
+            }
+        }
+        catch{throw "$(get-date) [ERROR] Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"}
+        Write-Host "$(get-date) [SUCCESS] Connected to the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+        #create API object
+        $source_hvObjectAPI = $source_hvObject.ExtensionData
         
+        [System.Collections.ArrayList]$newHvRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
+
+        #extract desktop pools
+        Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+        $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+        Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+        
+        #map the user id to a username
+        Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+        $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
+        Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+
+        #extract Virtual Machines summary information
+        Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+        $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
+        Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+        
+        #figure out the info we need for each VM (VM name, user, desktop pool name)
+        ForEach ($vm in $source_hvVMs.Results) { #let's process each vm
+            #figure out the vm assigned username
+            $hvADUsers = $source_hvADUsers #save the ADUsers query results as this is a paginated result and we need to search a specific user
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService" #we'll use this object to retrieve other pages from the ADUsers request
+            while ($hvADUsers.Results -ne $null) { #start a loop to look at each page of the ADUsers query results
+                if (!($vmUsername = ($hvADUsers.Results | where {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName)) { #grab the user name whose id matches the id of the assigned user on the desktop machine
+                    #couldn't find our userId, let's fetch the next page of AD objects
+                    if ($hvADUsers.id -eq $null) {break}
+                    try {$hvADUsers = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$hvADUsers.id)}
+                    catch{throw "$(get-date) [ERROR] $($_.Exception.Message)"}
+                } else {break} #we found our user, let's get out of this loop
+            }
+
+            #figure out the desktop pool name
+            $vmDesktopPool = ($source_hvDesktopPools.Results | where {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
+
+            $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
+            $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
+        }
+
+        Disconnect-HVServer -Confirm:$false
+        Write-Host "$(get-date) [INFO] Disconnected from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+        #endregion
+        
+        #region extract information from vSphere
+        #connect to the vCenter server
+        Write-Host "$(get-date) [INFO] Connecting to the SOURCE vCenter server $source_vc ..." -ForegroundColor Green
+        try {
+            if ($vcCreds) {
+                $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
+            } else {
+                $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
+            }
+        }
+        catch {throw "$(get-date) [ERROR] Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"}
+        Write-Host "$(get-date) [SUCCESS] Connected to SOURCE vCenter server $source_vc" -ForegroundColor Cyan
+
+        [System.Collections.ArrayList]$newVcRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
+
+        #process each vm and figure out the folder and portgroup name
+        ForEach ($vm in $newHvRef) {
+            Write-Host "$(get-date) [INFO] Retrieving VM $($vm.vmName) ..." -ForegroundColor Green
+            try{$vmObject = Get-VM $vm.vmName -ErrorAction Stop} catch{throw "$(get-date) [ERROR] Could not retrieve VM $($vm.vmName) : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [INFO] Retrieving portgroup name for VM $($vm.vmName) ..." -ForegroundColor Green
+            try {$vmPortGroup = ($vmObject | Get-NetworkAdapter -ErrorAction Stop).NetworkName} catch {throw "$(get-date) [ERROR] Could not retrieve portgroup name for VM $($vm.vmName) : $($_.Exception.Message)"}
+            if ($vmPortGroup -is [array]) {
+                $vmPortGroup = $vmPortGroup | Select -First 1
+                Write-Host "$(get-date) [WARNING] : There is more than one portgroup for $($vm.vmName). Only keeping the first one ($vmPortGroup)."  -ForegroundColor Yellow
+            }
+            $vmInfo = @{"vmName" = $vm.vmName;"folder" = $vmObject.Folder.Name;"portgroup" = $vmPortGroup} #we build the information for that specific machine
+            $result = $newVcRef.Add((New-Object PSObject -Property $vmInfo))
+        }
+
+        #disconnect from vCenter
+        Write-Host "$(get-date) [INFO] Disconnecting from SOURCE vCenter server $source_vc..." -ForegroundColor Green
+		Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+        #endregion
+
+        #region extract Nutanix Prism data
         #extract protection domains
         Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
         $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
         $method = "GET"
         $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+        $newPrismRef = $sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name,vms
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from source Nutanix cluster $source_cluster" -ForegroundColor Cyan
+        #endregion
 
-        #build new reference
-        $actualVms2PdRef = $sourceClusterPd.entities | select -Property name,vms
+        #region update reference files and figure out which vms need to be added/removed to protection domain(s)
 
         #compare reference file with pool & pd content
-        #$vms2add = @("fullprivm-001","fullprivm-002","fullprivm-003")
-        #$vms2remove = @("fullprivm-001","fullprivm-002","fullprivm-003")
-        #$pd = "async1"
+        #foreach vm in hv, find out if it is already in the right protection domain, otherwise, add it to the list of vms to add to that pd
+        [System.Collections.ArrayList]$vms2Add = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect which vms need to be added to which protection domain
+        ForEach ($vm in $newHvRef) {
+            #figure out which protection domain this vm should be based on its current desktop pool and the assigned protection domain for that pool
+            $assignedPd = ($poolRef | where {$_.desktop_pool -eq $vm.desktop_pool}).protection_domain
+            if (!$assignedPd) {Write-Host "$(get-date) [WARNING] : Could not process protection domain addition for VM $($vm.vmName) because there is no assigned protection domain defined in $referentialPath\poolRef.csv for $($vm.desktop_pool)!"  -ForegroundColor Yellow}
+            else {
+                #now find out if that vm is already in that protection domain
+                if (!($newPrismRef | where {$_.name -eq $assignedPd} | where {$_.vms.vm_name -eq $vm.vmName})) {
+                    $vmInfo = @{"vmName" = $vm.vmName;"protection_domain" = $assignedPd}
+                    #add vm to name the list fo vms to add to that pd
+                    $result = $vms2Add.Add((New-Object PSObject -Property $vmInfo))
+                }
+            }
+        }
+        
+        #foreach protection domain, figure out if there are vms which are no longer in horizon view and which need to be removed from the protection domain
+        [System.Collections.ArrayList]$vms2Remove = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect which vms need to be removed from which protection domain
+        #$vmNames2remove = $newHvRef.vmname | where {($newPrismRef | where {$poolRef.protection_domain -Contains $_.name}).vms.vm_name -notcontains $_} #figuring out which vms are in a protection domain in Prism which has a mapping but are no longer in view
+        $protectedVMs = ($newPrismRef | where {$poolRef.protection_domain -Contains $_.name}).vms.vm_name
+        $vmNames2remove = $protectedVMs | where {$newHvRef.vmname -notcontains $_}
+        ForEach ($vm in $vmNames2remove) { #process each vm identified above
+            $pd = (($newPrismRef | where {$poolRef.protection_domain -Contains $_.name}) | where {$_.vms.vm_name -eq $vmNames2remove}).name
+            $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
+            #add vm to name the list fo vms to add to that pd
+            $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
+        }
 
+        #endregion
+
+        #region update protection domains
         #if required, add vms to pds
         ForEach ($vm2add in $vms2add) {
-            $reponse = Update-NutanixProtectionDomain -action add -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $pd -vm $vm2add
+            $reponse = Update-NutanixProtectionDomain -action add -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2add.protection_domain -vm $vm2add.vmName
         }
         #if required, remove vms from pds
         ForEach ($vm2remove in $vms2remove) {
-            $reponse = Update-NutanixProtectionDomain -action remove -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $pd -vm $vm2remove
+            $reponse = Update-NutanixProtectionDomain -action remove -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2remove.protection_domain -vm $vm2remove.vmName
         }
+        #endregion
+
+        #export new references
+        $newHvRefExport = $newHvRef | Export-Csv -NoTypeInformation -Path "$referentialPath\hvRef.csv"
+        $newVcRefExport = $newVcRef | Export-Csv -NoTypeInformation -Path "$referentialPath\vcRef.csv"
     }
     #endregion
 
