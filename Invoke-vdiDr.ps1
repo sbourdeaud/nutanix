@@ -1,14 +1,56 @@
 ﻿<#
 .SYNOPSIS
-  This is a summary of what the script is (!!!!!!!!!!WORK IN PROGRESS: DO NOT USE!!!!!!!!!!).
+  This script can be used to automate the failover (planned or unplanned) of Horizon View desktop pool(s) using manual assignment and full clones and hosted on a Nutanix cluster.
 .DESCRIPTION
-  This is a detailed description of what the script does and how it is used.
+  This script can be used to automate the failover (planned or unplanned) of Horizon View desktop pool(s) using manual assignment and full clones and hosted on a Nutanix cluster.
+  The script has four main workflows: (1)failover, (2)cleanup, (3)scan and (4)deactivate.
+  
+  Failover is either (1)planned or (2)unplanned.
+  When planned, failover will:
+    (1)Check that the targeted desktop pools on the source Horizon View server are disabled
+    (2)Remove all machines from the targeted desktop pools on the source Horizon View server
+    (3)Initiate migrate on the matching protection domains on the source Nutanix cluster, which will shutdown all the VMs and replicate them to the target site
+    (4)Remove orphaned inventory entries from the source vCenter server
+    (5)Move the VMs to the correct folder on the target vCenter server, and reconnect their vNIC to the distributed vSwitch if applicable
+    (6)Add VMs to the desktop pools on the target Horizon View server
+    (7)Assign users to their VM on the target Horizon View server
+  When unplanned, failover will:
+    (1)Activate the matching protection domains (for the given desktop pools) on the target Nutanix cluster
+    (2)Move the VMs to the correct folder on the target vCenter server, and reconnect their vNIC to the distributed vSwitch if applicable
+    (3)Add VMs to the desktop pools on the target Horizon View server
+    (4)Assign users to their VM on the target Horizon View server
+
+  Cleanup is either (1)planned or (2)unplanned.
+  When planned, cleanup will:
+    (1)Remove schedules from all matching protection domains on the source Nutanix cluster
+  When unplanned, cleanup will:
+    (1)Check that the targeted desktop pools on the source Horizon View server are disabled
+    (2)Remove all machines from the targeted desktop pools on the source Horizon View server
+    (3)Disable the matching protection domains on the source Nutanix cluster, which will DELETE ALL VMs on that cluster
+    (4)Remove orphaned inventory entries from the source vCenter server
+
+  Scan will:
+    (1)Retrieve desktop pool information from the specified Horizon View server and save the desktop pool name and assigned user for each VM. A reference file is created in the specified directory.
+    (2)Retrieve matching VMs information from the source vCenter server and save the Folder and portgroup name for each VM. A reference file is created in the specified directory.
+
+  Deactivate will:
+    (1)Disable the specified protection domain on the specified Nutanix cluster which will DELETE ALL VMs on that cluster
+
+  In order to work properly, the script requires a reference file matching desktop pools to protection domain names. The file should be called poolRef.csv and be either in the script working directory, or the specified reference path.
+  That reference file contains the following fields (in that order): desktop_pool,protection_domain. Headers should be specified in the csv file.
+  
+  Example:
+
+  desktop_pool,protection_domain
+  VDI1,async1
+  VDI2,async2
+  VDI3,async3
+  VDI4,async4
+
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
@@ -17,14 +59,49 @@
   Username used to connect to the Nutanix cluster.
 .PARAMETER password
   Password used to connect to the Nutanix cluster.
+.PARAMETER scan
+  Specifies you want to create the reference files.  See the script description for more information.
+.PARAMETER failover
+  Specifies you want to trigger a failover workflow, either planned or unplanned.  See the script description for more information.
+.PARAMETER cleanup
+  Specifies you want to trigger a cleanup workflow, either planned or unplanned.  See the script description for more information.
+.PARAMETER planned
+  Used in conjunction with failover or cleanup. When used with failover, planned assumes both the source and target sites are available. See the script description for more information.
+.PARAMETER unplanned
+  Used in conjunction with failover or cleanup. When used with failover, unplanned assumes only the target site is available. See the script description for more information.
+.PARAMETER deactivate
+  Specifies you want to disable a protection domain and DELETE ALL VMs on that cluster that belong to that protection domain.  See the script description for more information.
+.PARAMETER referentialPath
+  Specifies the path where reference files are stored. Reference files are required for the failover and cleanup workflows. If no reference path is specified, the script working directory is used instead.
+.PARAMETER target_pg
+  Specifies the name of the portgroup you want to reconnect VMs to. If none is specified, the script figures out if there is a single distributed portgroup available, in which case it will use it.  If not, it looks for a matching portgroup name.  If there are none, it sees if there is a single portgroup on vSwitch0. If not, the script will fail.
+.PARAMETER protection_domains
+  Lets you specify which protection domain(s) you want to failover. Only works with planned.
+.PARAMETER desktop_pools
+  Lets you specify which protection domain(s) you want to failover or cleanup.
+.PARAMETER source_cluster
+  Specifies the source Nutanix cluster (IP or FQDN).
+.PARAMETER source_vc
+  Specifies the source vCenter server (IP or FQDN).
+.PARAMETER source_hv
+  Specifies the source Horizon View server (IP or FQDN).
+.PARAMETER target_cluster
+  Specifies the target Nutanix cluster (IP or FQDN).
+.PARAMETER target_vc
+  Specifies the target vCenter server (IP or FQDN).
+.PARAMETER target_hv
+  Specifies the target Horizon View (IP or FQDN).
 .EXAMPLE
-  Connect to a Nutanix cluster of your choice:
-  PS> .\template.ps1 -cluster ntnxc1.local -username admin -password admin
+.\Invoke-vdiDr.ps1 -source_cluster <ip> -source_vc <ip> -source_hv <ip> -referentialPath c:\temp -target_cluster <ip> -target_vc <ip> -target_hv <ip> -failover -planned  -username admin -password <secret>
+Trigger a planned failover for all disabled desktop pools on the source Horizon View server which contain VMs.
+.EXAMPLE
+.\Invoke-vdiDr.ps1 -source_cluster <ip> -source_vc <ip> -source_hv <ip> -referentialPath c:\temp -target_cluster <ip> -target_vc <ip> -target_hv <ip> -failover -planned  -username admin -password <secret> -desktop_pools VDI1
+Trigger a planned failover for the specified desktop pool on the source Horizon View server which contain VMs.
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: July 22nd 2015
+  Revision: May 11th 2018
 #>
 
 #region parameters
@@ -37,7 +114,6 @@ Param
     #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
     [parameter(mandatory = $false)] [switch]$help,
     [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$log,
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [switch]$scan,
     [parameter(mandatory = $false)] [switch]$failover,
@@ -211,11 +287,6 @@ Function Invoke-HvQuery
     }
 }#end function Invoke-HvQuery
 
-#function add vms to desktop pool
-#function assign users to desktop
-#function move vms to folders
-#function remove vms from desktop pool
-
 #endregion
 
 #region prepwork
@@ -225,10 +296,10 @@ $HistoryText = @'
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
- 06/19/2015 sb   Initial release.
+ 05/11/2018 sb   Initial release.
 ################################################################################
 '@
-$myvarScriptName = ".\template_prism_rest.ps1"
+$myvarScriptName = ".\Invoke-vdiDr.ps1"
  
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
@@ -339,7 +410,19 @@ add-type @"
 	# command line arguments initialization
 	############################################################################	
 	#let's initialize parameters if they haven't been specified
+
+    if (!$scan -and !$failover -and !$deactivate -and !$cleanup) {throw "$(get-date) [ERROR] You haven't specified any workflow (-scan, -failover, -deactivate or -cleanup)"}
+    if ($scan -and ($failover -or $deactivate -or $cleanup)) {throw "$(get-date) [ERROR] You can only specify a single workflow at a time (-scan, -failover, -deactivate or -cleanup)"}
+    if ($failover -and ($scan -or $deactivate -or $cleanup)) {throw "$(get-date) [ERROR] You can only specify a single workflow at a time (-scan, -failover, -deactivate or -cleanup)"}
+    if ($deactivate -and ($failover -or $scan -or $cleanup)) {throw "$(get-date) [ERROR] You can only specify a single workflow at a time (-scan, -failover, -deactivate or -cleanup)"}
+    if ($cleanup -and ($failover -or $deactivate -or $scan)) {throw "$(get-date) [ERROR] You can only specify a single workflow at a time (-scan, -failover, -deactivate or -cleanup)"}
     
+    #region check that we have what we need to proceed
+    if (!$referentialPath) {$referentialPath = (Get-Item -Path ".\").FullName} #assume all reference fiels are in the current working directory if a path has not been specified
+    If ((Test-Path -Path $referentialPath) -eq $false) {throw "$(get-date) [ERROR] Could not access the path where the reference files are: $($_.Exception.Message)"}
+    If ((Test-Path -Path ("$referentialPath\PoolRef.csv")) -eq $false) {throw "$(get-date) [ERROR] Could not access the PoolRef.csv file in $referentialPath : $($_.Exception.Message)"}
+    #endregion
+
     if (!$username) {$username = "admin"} #if Prism username has not been specified, assume we are using admin
 
     if (!$password) #if it was not passed as an argument, let's prompt for it
@@ -358,13 +441,26 @@ add-type @"
         if (!$source_hv) {$source_hv = Read-Host "Enter the fully qualified domain name or IP address of the source VMware Horizon View server"} #prompt for the VMware Horizon View server name/ip if it hasn't been specified already
     }
 
-    if (!$referentialPath) {$referentialPath = (Get-Item -Path ".\").FullName} #assume all reference fiels are in the current working directory if a path has not been specified
-
-    if ($failover -or $cleanup -or $deactivate) {
+    if ($failover -or $deactivate) {
         if (!$target_cluster) {$target_cluster = Read-Host "Enter the fully qualified domain name or IP address of the target Nutanix cluster"} #prompt for the target Nutanix cluster name/ip if we are trying to failover and it hasn't been specified already
         if (!$deactivate -and !$target_vc) {$target_vc = Read-Host "Enter the fully qualified domain name or IP address of the target vCenter server"} #prompt for the target vCenter server name/ip if we are trying to failover and it hasn't been specified already
         if (!$deactivate -and !$target_hv) {$target_hv = Read-Host "Enter the fully qualified domain name or IP address of the target VMware Horizon View server"} #prompt for the target vCenter server name/ip if we are trying to failover and it hasn't been specified already
     }
+    if ($failover -and (!$planned -and !$unplanned)) {throw "$(get-date) [ERROR] You need to specify -planned or -unplanned with -failover!"}
+    if ($failover -and ($planned -and $unplanned)) {throw "$(get-date) [ERROR] You can only specify -planned or -unplanned with -failover, not both at the same time!"}
+
+    if ($cleanup) {
+        if (!$source_cluster) {$source_cluster = Read-Host "Enter the fully qualified domain name or IP address of the Nutanix cluster that you want to clean up. This is usually the cluster where the VMs used to be."} #prompt for the Nutanix source cluster name/ip if it hasn't been specified already
+        if ($unplanned) {
+            if (!$source_vc) {$source_vc = Read-Host "Enter the fully qualified domain name or IP address of the vCenter server you want to cleanup"} #prompt for the vCenter server name/ip if it hasn't been specified already
+            if (!$source_hv) {$source_hv = Read-Host "Enter the fully qualified domain name or IP address of the VMware Horizon View server you want to cleanup"} #prompt for the VMware Horizon View server name/ip if it hasn't been specified already
+        }
+    }
+    if ($cleanup -and (!$planned -and !$unplanned)) {throw "$(get-date) [ERROR] You need to specify -planned or -unplanned with -cleanup!"}
+    if ($cleanup -and ($planned -and $unplanned)) {throw "$(get-date) [ERROR] You can only specify -planned or -unplanned with -cleanup, not both at the same time!"}
+
+    if ($desktop_pools) {$desktop_pools = $desktop_pools.Split(",")}
+    if ($protection_domains) {$protection_domains = $protection_domains.Split(",")}
 
 #endregion
 
@@ -372,11 +468,6 @@ add-type @"
 	################################
 	##  Main execution here       ##
 	################################
-	
-    #region check that we have what we need to proceed
-    If ((Test-Path -Path $referentialPath) -eq $false) {throw "$(get-date) [ERROR] Could not access the path where the reference files are: $($_.Exception.Message)"}
-    If ((Test-Path -Path ("$referentialPath\PoolRef.csv")) -eq $false) {throw "$(get-date) [ERROR] Could not access the PoolRef.csv file in $referentialPath : $($_.Exception.Message)"}
-    #endregion
 
     #region -scan
     if ($scan) {
@@ -536,21 +627,206 @@ add-type @"
 
     #region -failover
     if ($failover) {
+        
+        #region prechecks
+        #code to check pre-requisites before starting the workflow. That will prevent us from having a half completed workflow which would require manual recovery
+        Write-Host ""
+        Write-Host "$(get-date) [INFO] Performing pre-checks..." -ForegroundColor Green
 
-        #load pool2pd reference
-        try {$poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"}
-        #load old references
-        If (Test-Path -Path ("$referentialPath\hvRef.csv")) {
+        #region check we have the appropriate references
+            #load pool2pd reference
+            try {$poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"}
+            #load old references
+            If (Test-Path -Path ("$referentialPath\hvRef.csv")) {
             try {$oldHvRef = Import-Csv -Path ("$referentialPath\hvRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\hvRef.csv : $($_.Exception.Message)"}
         }
-        If (Test-Path -Path ("$referentialPath\vcRef.csv")) {
+            If (Test-Path -Path ("$referentialPath\vcRef.csv")) {
             try {$oldVcRef = Import-Csv -Path ("$referentialPath\vcRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\vcRef.csv : $($_.Exception.Message)"}
         }
+        #endregion
+        
+        #region applies to planned only
+        if ($planned) {
+        #region check there are matching desktop pools with VMs to process and which are disabled on the source hv
+            #start by connecting to the source view server
+            Write-Host "$(get-date) [INFO] Connecting to the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            try {
+                if ($hvCreds) {
+                    $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
+                } else {
+                    $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
+                }
+            }
+            catch{throw "$(get-date) [ERROR] Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Connected to the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+            #create API object
+            $source_hvObjectAPI = $source_hvObject.ExtensionData
+            
+            #extract desktop pools
+            Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+            Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+
+            #find out which pool we are working with (assume all which are disabled if none have been specified)
+            if (!$desktop_pools) {
+                if ($protection_domains) { #no pool was specified, but one or more protection domain(s) was/were, so let's match those to desktop pools using the reference file
+                    $test_desktop_pools = @()
+                    ForEach ($protection_domain in $protection_domains) {
+                        $test_desktop_pools += ($poolRef | where {$_.protection_domain -eq $protection_domain}).desktop_pool
+                    }
+                    $test_disabled_desktop_pools = $source_hvDesktopPools.Results | where {$_.DesktopSummaryData.Enabled -eq $false}
+                    $test_desktop_pools = $test_disabled_desktop_pools | where {$test_desktop_pools -contains $_.DesktopSummaryData.Name}
+                } else { #no pd and no pool were specified, so let's assume we have to process all disabled pools
+                    $test_desktop_pools = $source_hvDesktopPools.Results | where {$_.DesktopSummaryData.Enabled -eq $false}
+                }
+            } else { #extract the desktop pools information
+                $test_disabled_desktop_pools = $source_hvDesktopPools.Results | where {$_.DesktopSummaryData.Enabled -eq $false}
+                $test_desktop_pools = $test_disabled_desktop_pools | where {$desktop_pools -contains $_.DesktopSummaryData.Name}
+            }
+
+            if (!$test_desktop_pools) {
+                throw "$(get-date) [ERROR] There are no desktop pool(s) to process on SOURCE horizon view server $source_hv! Make sure the desktop pool(s) you want to failover are disabled and contain VMs."
+            }
+
+            Remove-Variable test_desktop_pools -ErrorAction SilentlyContinue
+            Remove-Variable test_disabled_desktop_pools -ErrorAction SilentlyContinue
+
+            #diconnect from the source view server
+            Disconnect-HVServer * -Confirm:$false
+            Write-Host "$(get-date) [INFO] Disconnected from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+        #endregion
+        #region check there are matching protection domains in the correct status and with remote sites defined
+            #let's retrieve the list of protection domains from the source
+            Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+            $method = "GET"
+            $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from source Nutanix cluster $source_cluster" -ForegroundColor Cyan
+            
+            #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+            if (!$protection_domains) {
+                if ($desktop_pools) { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
+                    $test_protection_domains = @()
+                    ForEach ($desktop_pool in $desktop_pools) {
+                        $test_protection_domains += ($poolRef | where {$_.desktop_pool -eq $desktop_pool}).protection_domain
+                    }
+                    $test_activeProtectionDomains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
+                    $test_protection_domains = $test_activeProtectionDomains | where {$test_protection_domains -contains $_}
+                } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
+                    $test_protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
+                }
+            } else {
+                $test_protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name | where {$protection_domains -contains $_}
+            }
+
+            if (!$test_protection_domains) {
+                throw "$(get-date) [ERROR] There are no protection domains in the correct status on $source_cluster!"
+            }
+
+            ForEach ($test_pd2migrate in $test_protection_domains) {
+
+                #figure out if there is more than one remote site defined for the protection domain
+                $test_remoteSite = $sourceClusterPd.entities | where {$_.name -eq $test_pd2migrate} | select -Property remote_site_names
+                if (!$test_remoteSite.remote_site_names) {throw "$(get-date) [ERROR] : There is no remote site defined for protection domain $test_pd2migrate"}
+                if ($test_remoteSite -is [array]) {throw "$(get-date) [ERROR] : There is more than one remote site for protection domain $test_pd2migrate"}
+            }
+
+            Remove-Variable test_protection_domains -ErrorAction SilentlyContinue
+            Remove-Variable test_activeProtectionDomains -ErrorAction SilentlyContinue
+
+        #endregion
+        #region check we can connect to source vc
+            Write-Host "$(get-date) [INFO] Connecting to the SOURCE vCenter server $source_vc ..." -ForegroundColor Green
+            try {
+                if ($vcCreds) {
+                    $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
+                } else {
+                    $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
+                }
+            }
+            catch {throw "$(get-date) [ERROR] Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Connected to SOURCE vCenter server $source_vc" -ForegroundColor Cyan
+
+            #diconnect from vCenter
+            Write-Host "$(get-date) [INFO] Disconnecting from SOURCE vCenter server $source_vc..." -ForegroundColor Green
+		    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+        #endregion
+        }
+        #endregion
+
+        #region applies to unplanned only
+        if ($unplanned) {
+            #region check there are matching protection domains in the correct status on the target prism
+                #let's retrieve the list of protection domains from the target
+                Write-Host "$(get-date) [INFO] Retrieving protection domains from target Nutanix cluster $target_cluster ..." -ForegroundColor Green
+                $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                $method = "GET"
+                $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from target Nutanix cluster $target_cluster" -ForegroundColor Cyan
+
+                #make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
+                ForEach ($matching_protection_domain in $matching_protection_domains) {
+                    if (($sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}).active -eq $true) {
+                        Write-Host "$(get-date) [WARNING] Protection domain $matching_protection_domain is already active on target Prism $target_cluster. Skipping." -ForegroundColor Yellow
+                    } else {
+                        $pds2activate += $sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}
+                    }
+                }
+
+                if (!$pds2activate) {throw "$(get-date) [ERROR] There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."}
+
+                Remove-Variable pds2activate -ErrorAction SilentlyContinue
+            #endregion
+        }
+        #endregion
+
+        #region applies to both
+        #region check we can connect to the target hv
+            #connect to the target view server
+            Write-Host "$(get-date) [INFO] Connecting to the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            try {
+                if ($hvCreds) {
+                    $target_hvObject = Connect-HVServer -Server $target_hv -Credential $hvCreds -ErrorAction Stop
+                } else {
+                    $target_hvObject = Connect-HVServer -Server $target_hv -ErrorAction Stop
+                }
+            }
+            catch{throw "$(get-date) [ERROR] Could not connect to the TARGET Horizon View server $target_hv : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Connected to the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
+
+            #disconnect from the target view server
+            Disconnect-HVServer * -Confirm:$false
+            Write-Host "$(get-date) [INFO] Disconnected from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+        #endregion
+        #region check we can connect to the target vc
+            #connect to the target vCenter
+            Write-Host "$(get-date) [INFO] Connecting to the TARGET vCenter server $target_vc ..." -ForegroundColor Green
+            try {
+                if ($vcCreds) {
+                    $target_vcObject = Connect-VIServer $target_vc -Credential $vcCreds -ErrorAction Stop
+                } else {
+                    $target_vcObject = Connect-VIServer $target_vc -ErrorAction Stop
+                }
+            }
+            catch {throw "$(get-date) [ERROR] Could not connect to TARGET vCenter server $target_vc : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Connected to TARGET vCenter server $target_vc" -ForegroundColor Cyan
+
+            #disconnect from vCenter
+            Write-Host "$(get-date) [INFO] Disconnecting from TARGET vCenter server $source_vc..." -ForegroundColor Green
+		    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+        #endregion
+        #endregion
+
+        Write-Host "$(get-date) [SUCCESS] Performed pre-checks." -ForegroundColor Cyan
+        Write-Host ""
+
+        #endregion
 
         #region -planned
         if ($planned) { #we're doing a planned failover
             
             #region deal with the source view bits
+            Write-Host "$(get-date) [INFO] Processing items on SOURCE Horizon View server $source_hv..." -ForegroundColor Green
             #start by connecting to the source view server
             Write-Host "$(get-date) [INFO] Connecting to the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
             try {
@@ -634,9 +910,13 @@ add-type @"
             #diconnect from the source view server
             Disconnect-HVServer * -Confirm:$false
             Write-Host "$(get-date) [INFO] Disconnected from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+
+            Write-Host "$(get-date) [SUCCESS] Done processing items on SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+            Write-Host ""
             #endregion
 
             #region deal with the source Prism bits
+            Write-Host "$(get-date) [INFO] Processing items on SOURCE Nutanix cluster $source_cluster..." -ForegroundColor Green
             #let's retrieve the list of protection domains from the source
             Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
@@ -656,6 +936,12 @@ add-type @"
                 } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
                     $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
                 }
+            } else {
+                $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name | where {$protection_domains -contains $_}
+            }
+
+            if (!$protection_domains) {
+                throw "$(get-date) [ERROR] There are no protection domains in the correct status on $source_cluster!"
             }
 
             #now let's call the migrate workflow
@@ -715,9 +1001,12 @@ add-type @"
 
             Write-Host "$(get-date) [SUCCESS] All protection domain migration tasks have completed. Moving on to vCenter." -ForegroundColor CYAN
 
+            Write-Host "$(get-date) [SUCCESS] Done processing items on SOURCE Nutanix server $source_cluster" -ForegroundColor Cyan
+            Write-Host ""
             #endregion
 
             #region deal with the source vCenter bits
+            Write-Host "$(get-date) [INFO] Processing items on SOURCE vCenter server $source_vc..." -ForegroundColor Green
             #connect to the source vCenter
             Write-Host "$(get-date) [INFO] Connecting to the SOURCE vCenter server $source_vc ..." -ForegroundColor Green
             try {
@@ -746,9 +1035,13 @@ add-type @"
             #diconnect from vCenter
             Write-Host "$(get-date) [INFO] Disconnecting from SOURCE vCenter server $source_vc..." -ForegroundColor Green
 		    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+
+            Write-Host "$(get-date) [SUCCESS] Done processing items on SOURCE vCenter server $source_vc" -ForegroundColor Cyan
+            Write-Host ""
             #endregion
 
             #region deal with the target vCenter bits
+            Write-Host "$(get-date) [INFO] Processing items on TARGET vCenter server $target_vc..." -ForegroundColor Green
             #connect to the target vCenter
             Write-Host "$(get-date) [INFO] Connecting to the TARGET vCenter server $target_vc ..." -ForegroundColor Green
             try {
@@ -827,9 +1120,13 @@ add-type @"
             #diconnect from vCenter
             Write-Host "$(get-date) [INFO] Disconnecting from TARGET vCenter server $target_vc..." -ForegroundColor Green
 		    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+
+            Write-Host "$(get-date) [SUCCESS] Done processing items on TARGET vCenter server $target_vc" -ForegroundColor Cyan
+            Write-Host ""
             #endregion
 
             #region deal with the target view bits
+            Write-Host "$(get-date) [INFO] Processing items on TARGET Horizon View server $target_hv..." -ForegroundColor Green
             #connect to the target view server
             Write-Host "$(get-date) [INFO] Connecting to the TARGET Horizon View server $target_hv..." -ForegroundColor Green
             try {
@@ -845,7 +1142,7 @@ add-type @"
             $target_hvObjectAPI = $target_hvObject.ExtensionData
             
             #retrieve basic information we'll need
-            #retrieve the vCenter object
+            #retrieve the view object
             $target_hvVirtualCenter = $target_hvObjectAPI.VirtualCenter.VirtualCenter_List() | where {$_.Enabled -eq $true}
             if ($target_hvVirtualCenter -is [array]) {throw "$(get-date) [ERROR] There is more than one enabled vCenter on $target_hv!"}
             #retrieve the list of available vms in vCenter
@@ -929,12 +1226,23 @@ add-type @"
             #disconnect from the target view server
             Disconnect-HVServer * -Confirm:$false
             Write-Host "$(get-date) [INFO] Disconnected from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+
+            Write-Host "$(get-date) [SUCCESS] Done processing items on TARGET Horizon View server $target_hv" -ForegroundColor Cyan
+            Write-Host ""
             #endregion
+
+            Write-Host "$(get-date) [SUCCESS] Done!" -ForegroundColor Cyan
+            Write-Host ""
         }
         #endregion
         
         #region -unplanned
         if ($unplanned) {
+            #we need to know the desktop pools and protection domains for unplanned, so let's figure that out now
+            if (!$desktop_pools) {$desktop_pools = Read-Host "Please enter the desktop pool(s) you want to failover (unplanned)"}
+            #figure out the matching protection domains from the reference file
+            ForEach ($desktop_pool in $desktop_pools) {$matching_protection_domains += ($poolRef | where {$_.desktop_pool -eq $desktop_pool}).protection_domain}
+
             #region deal with the target Prism bits
             #let's retrieve the list of protection domains from the target
             Write-Host "$(get-date) [INFO] Retrieving protection domains from target Nutanix cluster $target_cluster ..." -ForegroundColor Green
@@ -943,20 +1251,28 @@ add-type @"
             $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from target Nutanix cluster $target_cluster" -ForegroundColor Cyan
 
-            #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are inactive.
-            if (!$protection_domains) {$protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name}
+            #make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
+            ForEach ($matching_protection_domain in $matching_protection_domains) {
+                if (($sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}).active -eq $true) {
+                    Write-Host "$(get-date) [WARNING] Protection domain $matching_protection_domain is already active on target Prism $target_cluster. Skipping." -ForegroundColor Yellow
+                } else {
+                    $pds2activate += $sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}
+                }
+            }
+
+            if (!$pds2activate) {throw "$(get-date) [ERROR] There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."}
 
             #now let's call the activate workflow
-            ForEach ($pd2activate in $protection_domains) {
+            ForEach ($pd2activate in $pds2activate) {
                 
                 #activate the protection domain
-                Write-Host "$(get-date) [INFO] Activating protection domain $pd2activate on $target_cluster ..." -ForegroundColor Green
-                $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2activate/activate"
+                Write-Host "$(get-date) [INFO] Activating protection domain $(pd2activate.name) on $target_cluster ..." -ForegroundColor Green
+                $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$(pd2activate.name)/activate"
                 $method = "POST"
                 $content = @{}
                 $body = (ConvertTo-Json $content -Depth 4)
                 $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
-                Write-Host "$(get-date) [SUCCESS] Successfully activated protection domain $pd2activate on $target_cluster" -ForegroundColor Cyan
+                Write-Host "$(get-date) [SUCCESS] Successfully activated protection domain $(pd2activate.name) on $target_cluster" -ForegroundColor Cyan
 
             }
             #endregion
@@ -974,10 +1290,70 @@ add-type @"
             catch {throw "$(get-date) [ERROR] Could not connect to TARGET vCenter server $target_vc : $($_.Exception.Message)"}
             Write-Host "$(get-date) [SUCCESS] Connected to TARGET vCenter server $target_vc" -ForegroundColor Cyan
             
-            #move vms to their correct folder
-            #connect vms to the portgroup
+            #our reference point is the desktop pool, so let's process vms in each desktop pool
+            ForEach ($desktop_pool in $desktop_pools) {
+                #determine which vms belong to the desktop pool(s) we are processing
+                $vms = $oldHvRef | where {$_.desktop_pool -eq $desktop_pool}
+                #process all vms for that desktop pool
+                $dvPortgroups = Get-VDPortGroup | where {$_.IsUplink -eq $false} #retrieve distributed portgroup names in the target infrastructure which are not uplinks
+                ForEach ($vm in $vms) {
+                    #move vms to their correct folder
+                    $folder = Get-Folder -Name (($oldVcRef | where {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
+                    Write-Host "$(get-date) [INFO] Trying to move $($vm.vmName) to folder $($folder.Name)..." -ForegroundColor Green
+                    try {
+                        $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
+                        if ($vmObject.Folder.Name -ne $folder.Name) {
+                            $result = $vmObject | Move-VM -InventoryLocation $folder -ErrorAction Stop
+                            Write-Host "$(get-date) [SUCCESS] Moved $($vm.vmName) to folder $($folder.Name)" -ForegroundColor Cyan
+                        } else {
+                            Write-Host "$(get-date) [INFO] VM $($vm.vmName) is already in folder $($folder.Name)" -ForegroundColor Green
+                        }
+                    }
+                    catch {throw "$(get-date) [ERROR] Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"}
+                    
+                    #connect vms to the portgroup
+                    Write-Host "$(get-date) [INFO] Re-connecting the virtual machine $($vm.vmName) virtual NIC..." -ForegroundColor Green
+                    try {
+                         if (!$target_pg) {#no target portgroup has been specified, so we need to figure out where to connect our vnics
+                            $standard_portgroup = $false
+                            Write-Host "$(get-date) [WARNING] No target portgroup was specified, figuring out which one to use..." -ForegroundColor Yellow
+                            #first we'll see if there is a portgroup with the same name in the target infrastructure
+                            $vmPortgroup = ($oldVcRef | where {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
+                            $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
+                            $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
+                            if ($target_pgObject = $dvPortgroups | where {$_.Name -eq $vmPortGroup}) {
+                                Write-Host "$(get-date) [INFO] There is a matching distributed portgroup $($target_pgObject.Name) which will be used." -ForegroundColor Green
+                            } elseIf ($target_pgObject = $portgroups | where {$_.Name -eq $vmPortGroup}) {
+                                Write-Host "$(get-date) [INFO] There is a matching standard portgroup $($target_pgObject.Name) which will be used." -ForegroundColor Green
+                                $standard_portgroup = $true
+                            } elseIf (!($dvPortGroups -is [array])) {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
+                                $target_pgObject = $dvPortgroups
+                                Write-Host "$(get-date) [INFO] There is a single distributed portgroup $($target_pgObject.Name) which will be used." -ForegroundColor Green
+                            } elseIf (!($vSwitch0_portGroups -is [array])) {#if not, we'll see if there is a single portgroup on vSwitch0
+                                $target_pgObject = $vSwitch0_portGroups
+                                Write-Host "$(get-date) [INFO] There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used." -ForegroundColor Green
+                                $standard_portgroup = $true
+                            } else {#if not, we'll warn the user we could not process that VM
+                                Write-Host "$(get-date) [WARNING] Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!" -ForegroundColor Yellow
+                                continue
+                            }
+                         } else { #fetching the specified portgroup
+                            Write-Host "$(get-date) [INFO] Retrieving the specified target portgroup $target_pg..." -ForegroundColor Green
+                            try {$target_pgObject = Get-VirtualPortGroup -Name $target_pg} catch {throw "$(get-date) [ERROR] Could not retrieve the specified target portgroup : $($_.Exception.Message)"}
+                            if ($target_pgObject -is [array]) {throw "$(get-date) [ERROR] There is more than one portgroup with the specified name!"}
+                            Write-Host "$(get-date) [SUCCESS] Retrieved the specified target portgroup $target_pg" -ForegroundColor Cyan
+                         }
+                         #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
+                         if (!$standard_portgroup) {
+                            $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
+                         }
+                    }
+                    catch {throw "$(get-date) [ERROR] Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"}
+                    if (!$standard_portgroup) {Write-Host "$(get-date) [SUCCESS] Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)" -ForegroundColor Cyan} else {Write-Host "$(get-date) [INFO] Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..." -ForegroundColor Green}
+                }
+            }
             
-            #diconnect from vCenter
+            #disconnect from vCenter
             Write-Host "$(get-date) [INFO] Disconnecting from TARGET vCenter server $source_vc..." -ForegroundColor Green
 		    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
             #endregion
@@ -997,12 +1373,90 @@ add-type @"
             #create API object
             $target_hvObjectAPI = $target_hvObject.ExtensionData
             
-            #add vms to the desktop pools
-            
-            #register users to their vms
+            #retrieve basic information we'll need
+            #retrieve the vCenter object
+            $target_hvVirtualCenter = $target_hvObjectAPI.VirtualCenter.VirtualCenter_List() | where {$_.Enabled -eq $true}
+            if ($target_hvVirtualCenter -is [array]) {throw "$(get-date) [ERROR] There is more than one enabled vCenter on $target_hv!"}
+            #retrieve the list of available vms in vCenter
+            $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
+            #extract desktop pools
+            Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
+            Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
+            #extract Active Directory users & groups
+            Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
+            Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
+
+            #process each desktop pool
+            ForEach ($desktop_pool in $desktop_pools) {
+                #figure out the desktop pool Id
+                $desktop_poolId = ($target_hvDesktopPools.Results | where {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
+                #determine which vms belong to the desktop pool(s) we are processing
+                $vms = $oldHvRef | where {$_.desktop_pool -eq $desktop_pool}
+                
+                #add vms to the desktop pools
+                if ($vms) {
+                    #process all vms for that desktop pool
+                    #we start by building the list of vms to add to the pool (this will be more efficient than adding them one by one)
+                    $vmIds = @()
+                    ForEach ($vm in $vms) {
+                        #figure out the virtual machine id
+                        $vmId = ($target_hvAvailableVms | where {$_.Name -eq $vm.vmName}).Id
+                        $vmIds += $vmId
+                    }
+
+                    Write-Host "$(get-date) [INFO] Adding virtual machines to desktop pool $desktop_pool..." -ForegroundColor Green
+                    try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {throw "$(get-date) [ERROR] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"}
+                    Write-Host "$(get-date) [SUCCESS] Added virtual machines to desktop pool $desktop_pool." -ForegroundColor Cyan
+
+                    #register users to their vms
+                    ForEach ($vm in $vms) {
+                        #figure out the object id of the assigned user
+                        if ($vm.assignedUser) {#process the assigned user if there was one
+                            #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
+                            #extract Virtual Machines summary information
+                            Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+                            Sleep 15
+                            $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                            Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
+                            
+                            #figure out the virtual machine id
+                            while (!($vmId = ($target_hvVMs.Results | where {$_.Base.Name -eq $vm.vmName}).Id)) {
+                                Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+                                Sleep 15
+                                $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                                Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
+                            }
+
+                            $hvADUsers = $target_hvADUsers #save the ADUsers query results as this is a paginated result and we need to search a specific user
+                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService" #we'll use this object to retrieve other pages from the ADUsers request
+                            while ($hvADUsers.Results -ne $null) { #start a loop to look at each page of the ADUsers query results
+                                if (!($vmUserId = ($hvADUsers.Results | where {$_.Base.DisplayName -eq $vm.assignedUser}).Id)) { #grab the user name whose id matches the id of the assigned user on the desktop machine
+                                    #couldn't find our userId, let's fetch the next page of AD objects
+                                    if ($hvADUsers.id -eq $null) {break}
+                                    try {$hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$hvADUsers.id)}
+                                    catch {throw "$(get-date) [ERROR] $($_.Exception.Message)"}
+                                } else {break} #we found our user, let's get out of this loop
+                            }
+                            if (!$vmUserId) {Write-Host "$(get-date) [ERROR] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Red; continue}   
+                            #create the MapEntry object required for updating the machine
+                            $MapEntry = New-Object "Vmware.Hv.MapEntry"
+                            $MapEntry.key = "base.user"
+                            $MapEntry.value = $vmUserId
+                            #update the machine
+                            Write-Host "$(get-date) [INFO] Updating assigned user for $($vm.vmName)..." -ForegroundColor Green
+                            try {$result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)} catch {throw "$(get-date) [ERROR] Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"}
+                            Write-Host "$(get-date) [SUCCESS] Updated assigned user for $($vm.vmName) to $($vm.assignedUser)." -ForegroundColor Cyan
+                        }
+                    }
+                } else {
+                    Write-Host "$(get-date) [WARNING] There were no virtual machines to add to desktop pool $desktop_pool..." -ForegroundColor Yellow
+                }
+            }
             
             #disconnect from the target view server
-            Disconnect-HVServer -Confirm:$false
+            Disconnect-HVServer * -Confirm:$false
             Write-Host "$(get-date) [INFO] Disconnected from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
             #endregion
         }
@@ -1040,7 +1494,145 @@ add-type @"
         
         #region -unplanned
         if ($unplanned) {
+            #we need to know the desktop pools and protection domains for unplanned, so let's figure that out now
+            if (!$desktop_pools) {$desktop_pools = Read-Host "Please enter the desktop pool(s) you want to failover (unplanned)"}
 
+            #cleanup source/primary View
+            #region deal with the source view bits
+            #start by connecting to the source view server
+            Write-Host "$(get-date) [INFO] Connecting to the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            try {
+                if ($hvCreds) {
+                    $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
+                } else {
+                    $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
+                }
+            }
+            catch{throw "$(get-date) [ERROR] Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Connected to the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+            #create API object
+            $source_hvObjectAPI = $source_hvObject.ExtensionData
+            
+            #extract desktop pools
+            Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+            Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+        
+            #map the user id to a username
+            Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
+            Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+
+            #extract Virtual Machines summary information
+            Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
+            Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
+
+            #find out which pool we are working with (assume all which are disabled if none have been specified)
+            if (!$desktop_pools) {
+                $desktop_pools = $source_hvDesktopPools.Results | where {$_.DesktopSummaryData.Enabled -eq $false}
+            } else { #extract the desktop pools information
+                $disabled_desktop_pools = $source_hvDesktopPools.Results | where {$_.DesktopSummaryData.Enabled -eq $false}
+                $desktop_pools = $disabled_desktop_pools | where {$desktop_pools -contains $_.DesktopSummaryData.Name}
+            }
+
+            if (!$desktop_pools) {
+                throw "$(get-date) [ERROR] There are no desktop pool(s) to process on SOURCE horizon view server $source_hv!"
+            }
+
+            #process each desktop pool
+            $poolProcessed = $false
+            ForEach ($desktop_pool in $desktop_pools) {
+                #check that the pool is disabled
+                if ($desktop_pool.DesktopSummaryData.Enabled -eq $true) {Write-Host "$(get-date) [WARNING] Skipping $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv because the desktop pool is enabled" -ForegroundColor Yellow; continue}
+                #figure out which machines are in that desktop pool
+                $vms = $source_hvVMs.Results | where {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
+                #remove machines from the desktop pool
+                if ($vms -is [array]) {#we use different methods based on the number of vms in the pool
+                    Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
+                    try {$result = $source_hvObjectAPI.Machine.Machine_DeleteMachines($vms.Id,$null)} catch {throw "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"}
+                    Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
+                    $poolProcessed = $true
+                } else {
+                    if ($vms -ne $null) {#there is only a single vm in the pool to remove, so we use a different method
+                        Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
+                        try {$result = $source_hvObjectAPI.Machine.Machine_Delete($vms.Id,$null)} catch {throw "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"}
+                        Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
+                        $poolProcessed = $true
+                    } else {#there were no vms in the pool
+                        Write-Host "$(get-date) [WARNING] There were no vms to remove from pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv!" -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            if (!$poolProcessed) {throw "$(get-date) [ERROR] There were no disabled desktop pools with VMs in their inventory. Stopping execution here."}
+
+            #save the desktop pool names we processed for later
+            $desktop_pool_names = $desktop_pools.DesktopSummaryData.Name
+
+            #diconnect from the source view server
+            Disconnect-HVServer * -Confirm:$false
+            Write-Host "$(get-date) [INFO] Disconnected from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            #endregion
+            
+            #cleanup source/primary Prism
+            #region deal with source Prism
+            #let's retrieve the list of protection domains from the target
+            Write-Host "$(get-date) [INFO] Retrieving protection domains from SOURCE Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+            $method = "GET"
+            $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from SOURCE Nutanix cluster $source_cluster" -ForegroundColor Cyan
+
+            #first, we need to figure out which protection domains need to be deactivated.
+            if (!$protection_domains) {$protection_domains = Read-Host "Enter the name of the protection domain(s) you want to deactivate on $source_cluster. !!!WARNING!!! All VMs in that protection domain will be deleted from the cluster!"}
+
+            #now let's call the deactivate workflow
+            ForEach ($pd2deactivate in $protection_domains) {
+                
+                #activate the protection domain
+                Write-Host "$(get-date) [INFO] De-activating protection domain $pd2deactivate on $source_cluster ..." -ForegroundColor Green
+                $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
+                $method = "POST"
+                $content = @{}
+                $body = (ConvertTo-Json $content -Depth 4)
+                $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                Write-Host "$(get-date) [SUCCESS] Successfully de-activated protection domain $pd2deactivate on $source_cluster" -ForegroundColor Cyan
+
+            }
+            #endregion
+
+            #cleanup source/primary vCenter
+            #region deal with the source vCenter bits
+            #connect to the source vCenter
+            Write-Host "$(get-date) [INFO] Connecting to the SOURCE vCenter server $source_vc ..." -ForegroundColor Green
+            try {
+                if ($vcCreds) {
+                    $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
+                } else {
+                    $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
+                }
+            }
+            catch {throw "$(get-date) [ERROR] Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Connected to SOURCE vCenter server $source_vc" -ForegroundColor Cyan
+
+            #remove orphaned entries from SOURCE vCenter
+            #our reference point is the desktop pool, so let's process vms in each desktop pool
+            ForEach ($desktop_pool in $desktop_pool_names) {
+                #determine which vms belong to the desktop pool(s) we are processing
+                $vms = $oldHvRef | where {$_.desktop_pool -eq $desktop_pool}
+                #process all vms for that desktop pool
+                ForEach ($vm in $vms) {
+                    Write-Host "$(get-date) [INFO] Removing $($vm.vmName) from inventory in $source_vc ..." -ForegroundColor Green
+                    try {$result = Get-VM -Name $vm.vmName | where {$_.ExtensionData.Summary.OverallStatus -eq 'gray'} | remove-vm -Confirm:$false} catch {throw "$(get-date) [ERROR] Could not remove VM $($vm.vmName): $($_.Exception.Message)"}
+                    Write-Host "$(get-date) [SUCCESS] Removed $($vm.vmName) from inventory in $source_vc." -ForegroundColor Cyan
+                }
+            }
+
+            #diconnect from vCenter
+            Write-Host "$(get-date) [INFO] Disconnecting from SOURCE vCenter server $source_vc..." -ForegroundColor Green
+		    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+            #endregion
         }
         #endregion 
     }   
