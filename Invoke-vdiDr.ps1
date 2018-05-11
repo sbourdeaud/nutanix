@@ -97,6 +97,15 @@ Trigger a planned failover for all disabled desktop pools on the source Horizon 
 .EXAMPLE
 .\Invoke-vdiDr.ps1 -source_cluster <ip> -source_vc <ip> -source_hv <ip> -referentialPath c:\temp -target_cluster <ip> -target_vc <ip> -target_hv <ip> -failover -planned  -username admin -password <secret> -desktop_pools VDI1
 Trigger a planned failover for the specified desktop pool on the source Horizon View server which contain VMs.
+.EXAMPLE
+.\Invoke-vdiDr.ps1 -referentialPath c:\temp -source_cluster <ip> -cleanup -planned  -username admin -password <secret> -desktop_pools VDI1,VDI3
+Remove schedules for the matching protection domains (based on desktop pools) at the source Nutanix cluster after a planned failover has completed.
+.EXAMPLE
+.\Invoke-vdiDr.ps1 -referentialPath c:\temp -target_cluster <ip> -target_vc <ip> -target_hv <ip> -failover -unplanned  -username admin -password <secret> -desktop_pools VDI1,VDI3
+Perform an unplanned failover of the designated desktop pools to a target Nutanix cluster.
+.EXAMPLE
+.\Invoke-vdiDr.ps1 -referentialPath c:\temp -source_cluster <ip> -source_vc <ip> -source_hv <ip> -cleanup -unplanned  -username admin -password <secret> -desktop_pools VDI1,VDI3
+Empty desktop pools, disable protection domains, delete VMs and remove them from vCenter inventory on the source Nutanix cluster after an unplanned failover has been done to a target Nutanix cluster.
 .LINK
   http://www.nutanix.com/services
 .NOTES
@@ -435,7 +444,7 @@ add-type @"
         Remove-Variable password
     }
 
-    if (!$deactivate -and !$failover -and !$unplanned) {
+    if (!$deactivate -and !$failover -and !$unplanned -and !$cleanup) {
         if (!$source_cluster) {$source_cluster = Read-Host "Enter the fully qualified domain name or IP address of the source Nutanix cluster"} #prompt for the Nutanix source cluster name/ip if it hasn't been specified already
         if (!$source_vc) {$source_vc = Read-Host "Enter the fully qualified domain name or IP address of the source vCenter server"} #prompt for the vCenter server name/ip if it hasn't been specified already
         if (!$source_hv) {$source_hv = Read-Host "Enter the fully qualified domain name or IP address of the source VMware Horizon View server"} #prompt for the VMware Horizon View server name/ip if it hasn't been specified already
@@ -448,6 +457,7 @@ add-type @"
     }
     if ($failover -and (!$planned -and !$unplanned)) {throw "$(get-date) [ERROR] You need to specify -planned or -unplanned with -failover!"}
     if ($failover -and ($planned -and $unplanned)) {throw "$(get-date) [ERROR] You can only specify -planned or -unplanned with -failover, not both at the same time!"}
+    if ($failover -and !$desktop_pools) {$desktop_pools = Read-Host "You must specify which desktop pools you want to failover (unplanned)"}
 
     if ($cleanup) {
         if (!$source_cluster) {$source_cluster = Read-Host "Enter the fully qualified domain name or IP address of the Nutanix cluster that you want to clean up. This is usually the cluster where the VMs used to be."} #prompt for the Nutanix source cluster name/ip if it hasn't been specified already
@@ -764,16 +774,20 @@ add-type @"
                 $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from target Nutanix cluster $target_cluster" -ForegroundColor Cyan
 
+                $test_matching_protection_domains = @()
+                $test_pds2activate = @()
+                ForEach ($desktop_pool in $desktop_pools) {$test_matching_protection_domains += ($poolRef | where {$_.desktop_pool -eq $desktop_pool}).protection_domain}
+
                 #make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
-                ForEach ($matching_protection_domain in $matching_protection_domains) {
-                    if (($sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}).active -eq $true) {
-                        Write-Host "$(get-date) [WARNING] Protection domain $matching_protection_domain is already active on target Prism $target_cluster. Skipping." -ForegroundColor Yellow
+                ForEach ($test_matching_protection_domain in $test_matching_protection_domains) {
+                    if (($targetClusterPd.entities | where {$_.name -eq $test_matching_protection_domain}).active -eq $true) {
+                        Write-Host "$(get-date) [WARNING] Protection domain $test_matching_protection_domain is already active on target Prism $target_cluster. Skipping." -ForegroundColor Yellow
                     } else {
-                        $pds2activate += $sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}
+                        $test_pds2activate += $targetClusterPd.entities | where {$_.name -eq $test_matching_protection_domain}
                     }
                 }
 
-                if (!$pds2activate) {throw "$(get-date) [ERROR] There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."}
+                if (!$test_pds2activate) {throw "$(get-date) [ERROR] There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."}
 
                 Remove-Variable pds2activate -ErrorAction SilentlyContinue
             #endregion
@@ -1241,9 +1255,11 @@ add-type @"
             #we need to know the desktop pools and protection domains for unplanned, so let's figure that out now
             if (!$desktop_pools) {$desktop_pools = Read-Host "Please enter the desktop pool(s) you want to failover (unplanned)"}
             #figure out the matching protection domains from the reference file
+            $matching_protection_domains = @()
             ForEach ($desktop_pool in $desktop_pools) {$matching_protection_domains += ($poolRef | where {$_.desktop_pool -eq $desktop_pool}).protection_domain}
 
             #region deal with the target Prism bits
+            Write-Host "$(get-date) [INFO] Processing items on TARGET Nutanix cluster $target_cluster..." -ForegroundColor Green
             #let's retrieve the list of protection domains from the target
             Write-Host "$(get-date) [INFO] Retrieving protection domains from target Nutanix cluster $target_cluster ..." -ForegroundColor Green
             $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
@@ -1252,11 +1268,12 @@ add-type @"
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from target Nutanix cluster $target_cluster" -ForegroundColor Cyan
 
             #make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
+            $pds2activate = @()
             ForEach ($matching_protection_domain in $matching_protection_domains) {
-                if (($sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}).active -eq $true) {
+                if (($targetClusterPd.entities | where {$_.name -eq $matching_protection_domain}).active -eq $true) {
                     Write-Host "$(get-date) [WARNING] Protection domain $matching_protection_domain is already active on target Prism $target_cluster. Skipping." -ForegroundColor Yellow
                 } else {
-                    $pds2activate += $sourceClusterPd.entities | where {$_.name -eq $matching_protection_domain}
+                    $pds2activate += $targetClusterPd.entities | where {$_.name -eq $matching_protection_domain}
                 }
             }
 
@@ -1266,15 +1283,54 @@ add-type @"
             ForEach ($pd2activate in $pds2activate) {
                 
                 #activate the protection domain
-                Write-Host "$(get-date) [INFO] Activating protection domain $(pd2activate.name) on $target_cluster ..." -ForegroundColor Green
-                $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$(pd2activate.name)/activate"
+                Write-Host "$(get-date) [INFO] Activating protection domain $($pd2activate.name) on $target_cluster ..." -ForegroundColor Green
+                $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pd2activate.name)/activate"
                 $method = "POST"
                 $content = @{}
                 $body = (ConvertTo-Json $content -Depth 4)
                 $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
-                Write-Host "$(get-date) [SUCCESS] Successfully activated protection domain $(pd2activate.name) on $target_cluster" -ForegroundColor Cyan
+                Write-Host "$(get-date) [SUCCESS] Successfully activated protection domain $($pd2activate.name) on $target_cluster" -ForegroundColor Cyan
 
             }
+
+            #let's make sure all protection domain migrations have been processed successfully
+            #retrieve the list of tasks in the cluster
+            Write-Host "$(get-date) [INFO] Retrieving list of tasks on the TARGET cluster $target_cluster ..." -ForegroundColor Green
+            $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+            $method = "GET"
+            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            Write-Host "$(get-date) [SUCCESS] Retrieved list of tasks on the TARGET cluster $target_cluster" -ForegroundColor Cyan
+            #select only the tasks of operation type "deactivate" which were created after this script was started
+            $pdActivateTasks = $response.entities | where {$_.operation -eq "activate"} | where {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+            #let's loop now until the tasks status are completed and successfull. If a task fails, we'll throw an exception.
+            ForEach ($pdActivateTask in $pdActivateTasks) {
+                if ($pdActivateTask.percentageCompleted -ne "100") {
+                    Do {
+                        Write-Host "$(get-date) [WARNING] Waiting 5 seconds for task $($pdActivateTask.taskName) to complete : $($pdActivateTask.percentageCompleted)%" -ForegroundColor Yellow
+                        Sleep 5
+                        Write-Host "$(get-date) [INFO] Retrieving list of tasks on the TARGET cluster $target_cluster ..." -ForegroundColor Green
+                        $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+                        $method = "GET"
+                        $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                        Write-Host "$(get-date) [SUCCESS] Retrieved list of tasks on the TARGET cluster $target_cluster" -ForegroundColor Cyan
+                        $task = $response.entities | where {$_.taskName -eq $pdActivateTask.taskName} | where {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+                        if ($task.status -ne "running") {
+                            if ($task.status -ne "succeeded") {
+                                throw "$(get-date) [ERROR] Task $($pdActivateTask.taskName) failed with the following status and error code : $($task.status) : $($task.errorCode)"
+                            }
+                        }
+                    }
+                    While ($task.percentageCompleted -ne "100")
+                    Write-Host "$(get-date) [SUCCESS] Protection domain migration task $($pdActivateTask.taskName) completed on the TARGET cluster $target_cluster" -ForegroundColor Cyan
+                } else {
+                    Write-Host "$(get-date) [SUCCESS] Protection domain migration task $($pdActivateTask.taskName) completed on the TARGET cluster $target_cluster" -ForegroundColor Cyan
+                }
+            }
+
+            Write-Host "$(get-date) [SUCCESS] All protection domain activation tasks have completed. Moving on to vCenter." -ForegroundColor CYAN
+
+            Write-Host "$(get-date) [SUCCESS] Done processing items on TARGET Nutanix server $target_cluster" -ForegroundColor Cyan
+            Write-Host ""
             #endregion
 
             #region deal with the target vCenter bits
@@ -1468,6 +1524,10 @@ add-type @"
     if ($cleanup) {
         #region -planned
         if ($planned) {
+
+            #load pool2pd reference
+            try {$poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"}
+            
             #let's retrieve the list of protection domains from the source
             Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
@@ -1476,7 +1536,24 @@ add-type @"
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from source Nutanix cluster $source_cluster" -ForegroundColor Cyan
             
             #first, we need to figure out which protection domains need to be updated. If none have been specified, we'll assume all of them.
-            if (!$protection_domains) {$protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name}
+            if (!$protection_domains) {
+                if ($desktop_pools) { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
+                    $protection_domains = @()
+                    ForEach ($desktop_pool in $desktop_pools) {
+                        $protection_domains += ($poolRef | where {$_.desktop_pool -eq $desktop_pool}).protection_domain
+                    }
+                    $standbyProtectionDomains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name
+                    $protection_domains = $standbyProtectionDomains | where {$protection_domains -contains $_}
+                } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
+                    $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name
+                }
+            } else {
+                $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name | where {$protection_domains -contains $_}
+            }
+
+            if (!$protection_domains) {
+                throw "$(get-date) [ERROR] There are no protection domains in the correct status on $source_cluster!"
+            }
 
             #now let's remove the schedules
             ForEach ($pd2update in $protection_domains) {
@@ -1494,8 +1571,38 @@ add-type @"
         
         #region -unplanned
         if ($unplanned) {
+
+            #region check we have the appropriate references
+            #load pool2pd reference
+            try {$poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"}
+            #load old references
+            If (Test-Path -Path ("$referentialPath\hvRef.csv")) {
+                try {$oldHvRef = Import-Csv -Path ("$referentialPath\hvRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\hvRef.csv : $($_.Exception.Message)"}
+            }
+            If (Test-Path -Path ("$referentialPath\vcRef.csv")) {
+                try {$oldVcRef = Import-Csv -Path ("$referentialPath\vcRef.csv") -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not import data from $referentialPath\vcRef.csv : $($_.Exception.Message)"}
+            }
+        #endregion
+
+            #region figure out what needs to be processed
             #we need to know the desktop pools and protection domains for unplanned, so let's figure that out now
             if (!$desktop_pools) {$desktop_pools = Read-Host "Please enter the desktop pool(s) you want to failover (unplanned)"}
+            #figure out the matching protection_domains
+            $protection_domains = @()
+            ForEach ($desktop_pool in $desktop_pools) {
+                $protection_domains += ($poolRef | where {$_.desktop_pool -eq $desktop_pool}).protection_domain
+            }
+            #let's retrieve the list of protection domains from the target
+            Write-Host "$(get-date) [INFO] Retrieving protection domains from SOURCE Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+            $method = "GET"
+            $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from SOURCE Nutanix cluster $source_cluster" -ForegroundColor Cyan
+            #keep only those that are active and match
+            $activeProtectionDomains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
+            $protection_domains = $activeProtectionDomains | where {$protection_domains -contains $_}
+            if (!$protection_domains) {throw "$(get-date) [ERROR] Could not find any matching protection domains in the reference file!"}
+            #endregion
 
             #cleanup source/primary View
             #region deal with the source view bits
@@ -1518,11 +1625,6 @@ add-type @"
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
         
-            #map the user id to a username
-            Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
-            $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
-            Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
-
             #extract Virtual Machines summary information
             Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
             $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
@@ -1541,7 +1643,6 @@ add-type @"
             }
 
             #process each desktop pool
-            $poolProcessed = $false
             ForEach ($desktop_pool in $desktop_pools) {
                 #check that the pool is disabled
                 if ($desktop_pool.DesktopSummaryData.Enabled -eq $true) {Write-Host "$(get-date) [WARNING] Skipping $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv because the desktop pool is enabled" -ForegroundColor Yellow; continue}
@@ -1552,20 +1653,16 @@ add-type @"
                     Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
                     try {$result = $source_hvObjectAPI.Machine.Machine_DeleteMachines($vms.Id,$null)} catch {throw "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"}
                     Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
-                    $poolProcessed = $true
                 } else {
                     if ($vms -ne $null) {#there is only a single vm in the pool to remove, so we use a different method
                         Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
                         try {$result = $source_hvObjectAPI.Machine.Machine_Delete($vms.Id,$null)} catch {throw "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"}
                         Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
-                        $poolProcessed = $true
                     } else {#there were no vms in the pool
                         Write-Host "$(get-date) [WARNING] There were no vms to remove from pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv!" -ForegroundColor Yellow
                     }
                 }
             }
-
-            if (!$poolProcessed) {throw "$(get-date) [ERROR] There were no disabled desktop pools with VMs in their inventory. Stopping execution here."}
 
             #save the desktop pool names we processed for later
             $desktop_pool_names = $desktop_pools.DesktopSummaryData.Name
@@ -1577,17 +1674,7 @@ add-type @"
             
             #cleanup source/primary Prism
             #region deal with source Prism
-            #let's retrieve the list of protection domains from the target
-            Write-Host "$(get-date) [INFO] Retrieving protection domains from SOURCE Nutanix cluster $source_cluster ..." -ForegroundColor Green
-            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-            $method = "GET"
-            $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-            Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from SOURCE Nutanix cluster $source_cluster" -ForegroundColor Cyan
-
-            #first, we need to figure out which protection domains need to be deactivated.
-            if (!$protection_domains) {$protection_domains = Read-Host "Enter the name of the protection domain(s) you want to deactivate on $source_cluster. !!!WARNING!!! All VMs in that protection domain will be deleted from the cluster!"}
-
-            #now let's call the deactivate workflow
+            #let's call the deactivate workflow
             ForEach ($pd2deactivate in $protection_domains) {
                 
                 #activate the protection domain
