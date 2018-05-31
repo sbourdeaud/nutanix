@@ -91,6 +91,8 @@
   Specifies the target vCenter server (IP or FQDN).
 .PARAMETER target_hv
   Specifies the target Horizon View (IP or FQDN).
+.PARAMETER prismCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt).
 .EXAMPLE
 .\Invoke-vdiDr.ps1 -source_cluster <ip> -source_vc <ip> -source_hv <ip> -referentialPath c:\temp -target_cluster <ip> -target_vc <ip> -target_hv <ip> -failover -planned  -username admin -password <secret>
 Trigger a planned failover for all disabled desktop pools on the source Horizon View server which contain VMs.
@@ -141,7 +143,8 @@ Param
 	[parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] [string]$referentialPath,
     [parameter(mandatory = $false)] $protection_domains,
-    [parameter(mandatory = $false)] $desktop_pools
+    [parameter(mandatory = $false)] $desktop_pools,
+    [parameter(mandatory = $false)] $prismCreds
 )
 #endregion
 
@@ -306,7 +309,8 @@ $HistoryText = @'
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  05/11/2018 sb   Initial release.
- 05/28/2918 sb   Added checks for PowerCLI version and corrected a parameter check bug with -failover -planned
+ 05/28/2018 sb   Added checks for PowerCLI version and corrected a parameter check bug with -failover -planned.
+ 05/31/2018 sb   Added prismCreds parameter.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -345,6 +349,11 @@ if (!(Get-Module -Name sbourdeaud)) {
         }#end catch
     }#end catch
 }#endif module sbourdeaud
+if (((Get-Module -Name sbourdeaud).Version.Major -le 1) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 1)) {
+    Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+    try {Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+    catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+}
 #endregion
 
 #region Load/Install VMware.PowerCLI
@@ -372,7 +381,10 @@ if (!(Get-Module VMware.PowerCLI)) {
 }
 
 #check PowerCLI version
-if ((Get-PowerCLIVersion).Major -lt 10) {throw "$(get-date) [ERROR] Please upgrade PowerCLI to version 10 or above by running the command 'Update-Module VMware.PowerCLI' as an admin user"}
+if ((Get-Module -Name VMware.VimAutomation.Core).Version.Major -lt 10) {
+    try {Update-Module -Name VMware.PowerCLI -Scope CurrentUser -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not update the VMware.PowerCLI module : $($_.Exception.Message)"}
+    throw "$(get-date) [ERROR] Please upgrade PowerCLI to version 10 or above by running the command 'Update-Module VMware.PowerCLI' as an admin user"
+}
 #endregion
 
 #region get ready to use the Nutanix REST API
@@ -435,17 +447,22 @@ add-type @"
     If ((Test-Path -Path $referentialPath) -eq $false) {throw "$(get-date) [ERROR] Could not access the path where the reference files are: $($_.Exception.Message)"}
     If ((Test-Path -Path ("$referentialPath\PoolRef.csv")) -eq $false) {throw "$(get-date) [ERROR] Could not access the PoolRef.csv file in $referentialPath : $($_.Exception.Message)"}
     #endregion
+    if (!$prismCreds) {
+        if (!$username) {$username = "admin"} #if Prism username has not been specified, assume we are using admin
 
-    if (!$username) {$username = "admin"} #if Prism username has not been specified, assume we are using admin
-
-    if (!$password) #if it was not passed as an argument, let's prompt for it
-    {
-        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-    }
-    else #if it was passed as an argument, let's convert the string to a secure string and flush the memory
-    {
-        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-        Remove-Variable password
+        if (!$password) #if it was not passed as an argument, let's prompt for it
+        {
+            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
+        }
+        else #if it was passed as an argument, let's convert the string to a secure string and flush the memory
+        {
+            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+            Remove-Variable password
+        }
+    } else {
+        $prismCredentials = Get-CustomCredentials -credname $prismCreds
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
     }
 
     if (!$deactivate -and !$failover -and !$unplanned -and !$cleanup) {
