@@ -306,6 +306,7 @@ $HistoryText = @'
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  05/11/2018 sb   Initial release.
+ 05/28/2918 sb   Added checks for PowerCLI version and corrected a parameter check bug with -failover -planned
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -369,6 +370,9 @@ if (!(Get-Module VMware.PowerCLI)) {
         catch {throw "$(get-date) [ERROR] Could not install the VMware.PowerCLI module. Install it manually from https://www.powershellgallery.com/items?q=powercli&x=0&y=0 : $($_.Exception.Message)"} 
     }
 }
+
+#check PowerCLI version
+if ((Get-PowerCLIVersion).Major -lt 10) {throw "$(get-date) [ERROR] Please upgrade PowerCLI to version 10 or above by running the command 'Update-Module VMware.PowerCLI' as an admin user"}
 #endregion
 
 #region get ready to use the Nutanix REST API
@@ -457,7 +461,7 @@ add-type @"
     }
     if ($failover -and (!$planned -and !$unplanned)) {throw "$(get-date) [ERROR] You need to specify -planned or -unplanned with -failover!"}
     if ($failover -and ($planned -and $unplanned)) {throw "$(get-date) [ERROR] You can only specify -planned or -unplanned with -failover, not both at the same time!"}
-    if ($failover -and !$desktop_pools) {$desktop_pools = Read-Host "You must specify which desktop pools you want to failover (unplanned)"}
+    if ($failover -and ($unplanned -and !$desktop_pools)) {$desktop_pools = Read-Host "You must specify which desktop pools you want to failover (unplanned)"}
 
     if ($cleanup) {
         if (!$source_cluster) {$source_cluster = Read-Host "Enter the fully qualified domain name or IP address of the Nutanix cluster that you want to clean up. This is usually the cluster where the VMs used to be."} #prompt for the Nutanix source cluster name/ip if it hasn't been specified already
