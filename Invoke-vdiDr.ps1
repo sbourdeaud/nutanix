@@ -1559,7 +1559,7 @@ add-type @"
             $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from source Nutanix cluster $source_cluster" -ForegroundColor Cyan
             
-            #first, we need to figure out which protection domains need to be updated. If none have been specified, we'll assume all of them.
+            #first, we need to figure out which protection domains need to be updated. If none have been specified, we'll assume all those which are referenced in the PoolRef.csv file.
             if (!$protection_domains) {
                 if ($desktop_pools) { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
                     $protection_domains = @()
@@ -1568,8 +1568,9 @@ add-type @"
                     }
                     $standbyProtectionDomains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name
                     $protection_domains = $standbyProtectionDomains | where {$protection_domains -contains $_}
-                } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
-                    $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name
+                } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains referenced in PoolRef.csv
+                    $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
+                    $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name | where {$protection_domains -contains $_}
                 }
             } else {
                 $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name | where {$protection_domains -contains $_}
