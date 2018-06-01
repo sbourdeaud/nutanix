@@ -634,7 +634,7 @@ add-type @"
         $protectedVMs = ($newPrismRef | where {$poolRef.protection_domain -Contains $_.name}).vms.vm_name
         $vmNames2remove = $protectedVMs | where {$newHvRef.vmname -notcontains $_}
         ForEach ($vm in $vmNames2remove) { #process each vm identified above
-            $pd = (($newPrismRef | where {$poolRef.protection_domain -Contains $_.name}) | where {$_.vms.vm_name -eq $vmNames2remove}).name
+            $pd = (($newPrismRef | where {$poolRef.protection_domain -Contains $_.name}) | where {$_.vms.vm_name -eq $vm}).name
             $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
             #add vm to name the list fo vms to add to that pd
             $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
@@ -972,7 +972,8 @@ add-type @"
                     $activeProtectionDomains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
                     $protection_domains = $activeProtectionDomains | where {$protection_domains -contains $_}
                 } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
-                    $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
+                    $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
+                    $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $false} | select -Property name).name | where {$protection_domains -contains $_}
                 }
             } else {
                 $protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name | where {$protection_domains -contains $_}
