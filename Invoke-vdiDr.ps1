@@ -147,7 +147,9 @@ Param
     [parameter(mandatory = $false)] [string]$referentialPath,
     [parameter(mandatory = $false)] $protection_domains,
     [parameter(mandatory = $false)] $desktop_pools,
-    [parameter(mandatory = $false)] $prismCreds
+    [parameter(mandatory = $false)] $prismCreds,
+    [parameter(mandatory = $false)] $vcCreds,
+    [parameter(mandatory = $false)] $hvCreds
 )
 #endregion
 
@@ -468,6 +470,14 @@ add-type @"
         $PrismSecurePassword = $prismCredentials.Password
     }
 
+    if ($vcCreds) {
+        $vcCreds = Get-CustomCredentials -credname $vcCreds
+    }
+    if ($hvCreds) {
+        $hvCreds = Get-CustomCredentials -credname $hvCreds
+    }
+
+
     if (!$deactivate -and !$failover -and !$unplanned -and !$cleanup) {
         if (!$source_cluster) {$source_cluster = Read-Host "Enter the fully qualified domain name or IP address of the source Nutanix cluster"} #prompt for the Nutanix source cluster name/ip if it hasn't been specified already
         if (!$source_vc) {$source_vc = Read-Host "Enter the fully qualified domain name or IP address of the source vCenter server"} #prompt for the vCenter server name/ip if it hasn't been specified already
@@ -747,7 +757,8 @@ add-type @"
                     $test_activeProtectionDomains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
                     $test_protection_domains = $test_activeProtectionDomains | where {$test_protection_domains -contains $_}
                 } else { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
-                    $test_protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name
+                    $test_protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
+                    $test_protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name | where {$test_protection_domains -contains $_}
                 }
             } else {
                 $test_protection_domains = ($sourceClusterPd.entities | where {$_.active -eq $true} | select -Property name).name | where {$protection_domains -contains $_}
@@ -1711,7 +1722,8 @@ add-type @"
                 $body = (ConvertTo-Json $content -Depth 4)
                 $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
                 Write-Host "$(get-date) [SUCCESS] Successfully de-activated protection domain $pd2deactivate on $source_cluster" -ForegroundColor Cyan
-
+                Write-Host "$(get-date) [INFO] Waiting 1 minute for tasks to complete..."
+                Sleep 60
             }
             #endregion
 
