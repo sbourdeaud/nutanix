@@ -639,14 +639,14 @@ add-type @"
                 $method = "GET"
                 $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
-				$myvarNtnxC1_hosts = $NTNXHosts.entities | Select -Property hypervisor_address
+				$myvarNtnxC1_hosts = ($NTNXHosts.entities).hypervisor_address
 
 				#retrieve container names for active metro availability protection domains
 				Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
                 $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
                 $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                $myvarNtnxC1_MaActiveCtrs = $myvarMaActivePDs.entities | where {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}
+                $myvarNtnxC1_MaActiveCtrs = ($myvarMaActivePDs.entities | where {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
 			}
 		if ($myvarCounter -eq 2)
@@ -657,14 +657,14 @@ add-type @"
                 $method = "GET"
                 $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
-				$myvarNtnxC2_hosts = $NTNXHosts.entities | Select -Property hypervisor_address
+				$myvarNtnxC2_hosts = ($NTNXHosts.entities).hypervisor_address
 
 				#retrieve container names for active metro availability protection domains
 				Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
                 $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
                 $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                $myvarNtnxC2_MaActiveCtrs = $myvarMaActivePDs.entities | where {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}
+                $myvarNtnxC2_MaActiveCtrs = ($myvarMaActivePDs.entities | where {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
 			}
 		
@@ -712,7 +712,7 @@ add-type @"
 				{
 					foreach ($myvarHostIP in $myvarNtnxC1_hosts) #compare to the host IP addresses we got from the Nutanix cluster 1
 					{
-						if ($myvarHostVmk.IP -eq $myvarHostIP.hypervisorAddress)
+						if ($myvarHostVmk.IP -eq $myvarHostIP)
 						{
 							OutputLogData -category "INFO" -message "$myvarVMHost.Name is a host in $ntnx_cluster1..."
 							$myvarNtnxC1_vmhosts += $myvarVMHost#if we get a match, that vcenter host is in cluster 1
@@ -720,7 +720,7 @@ add-type @"
 					}#end foreacch IP C1 loop
 					foreach ($myvarHostIP in $myvarNtnxC2_hosts) #compare to the host IP addresses we got from the Nutanix cluster 2
 					{
-						if ($myvarHostVmk.IP -eq $myvarHostIP.hypervisorAddress) 
+						if ($myvarHostVmk.IP -eq $myvarHostIP) 
 						{
 							OutputLogData -category "INFO" -message "$myvarVMHost.Name is a host in $ntnx_cluster2..."
 							$myvarNtnxC2_vmhosts += $myvarVMHost #if we get a match, that vcenter host is in cluster 2
