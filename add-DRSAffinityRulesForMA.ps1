@@ -576,9 +576,11 @@ add-type @"
 "@
 #we also need to use the proper encryption protocols
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-[Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls, tls11, tls12"
+[Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls12"
+[Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
 }
 #endregion
+
 #endregion
 
 #region variables
