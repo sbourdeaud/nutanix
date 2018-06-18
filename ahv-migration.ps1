@@ -65,34 +65,86 @@ Param
 
 #region Prep-work
 
-# get rid of annoying error messages
-if (!$debugme) {$ErrorActionPreference = "SilentlyContinue"}
-
 #check if we need to display help and/or history
 $HistoryText = @'
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  03/13/2017 sb   Initial release.
+ 06/18/2018 sb   Modified prep-work section to handle updates better and added bettertls module to deal with tls 1.2.
+                 Fixed an issue with disk uuid enumeration with recent releases of AOS.
 ################################################################################
 '@
 $myvarScriptName = ".\ahv-migration.ps1"
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
 
-#let's load the Nutanix cmdlets
-if ((Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue) -eq $null)#is it already there?
-{
-    try {
-	    Add-PSSnapin NutanixCmdletsPSSnapin -ErrorAction Stop #no? let's add it
-	}
-    catch {
-        Write-Warning $($_.Exception.Message)
-		OutputLogData -category "ERROR" -message "Unable to load the Nutanix snapin.  Please make sure the Nutanix Cmdlets are installed on this server."
-		return
-	}
-}
+#region module sbourdeaud is used for facilitating Prism REST calls
+if (!(Get-Module -Name sbourdeaud)) {
+    Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
+    try
+    {
+        Import-Module -Name sbourdeaud -ErrorAction Stop
+        Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+    }#end try
+    catch #we couldn't import the module, so let's install it
+    {
+        Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
+        try {Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+        catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
 
+        try
+        {
+            Import-Module -Name sbourdeaud -ErrorAction Stop
+            Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+        }#end try
+        catch #we couldn't import the module
+        {
+            Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
+            Exit
+        }#end catch
+    }#end catch
+}#endif module sbourdeaud
+if (((Get-Module -Name sbourdeaud).Version.Major -le 1) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 1)) {
+    Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+    try {Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+    catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+}
+#endregion
+
+#region module BetterTls
+if (!(Get-Module -Name BetterTls)) {
+    Write-Host "$(get-date) [INFO] Importing module 'BetterTls'..." -ForegroundColor Green
+    try
+    {
+        Import-Module -Name BetterTls -ErrorAction Stop
+        Write-Host "$(get-date) [SUCCESS] Imported module 'BetterTls'!" -ForegroundColor Cyan
+    }#end try
+    catch #we couldn't import the module, so let's install it
+    {
+        Write-Host "$(get-date) [INFO] Installing module 'BetterTls' from the Powershell Gallery..." -ForegroundColor Green
+        try {Install-Module -Name BetterTls -Scope CurrentUser -ErrorAction Stop}
+        catch {throw "$(get-date) [ERROR] Could not install module 'BetterTls': $($_.Exception.Message)"}
+
+        try
+        {
+            Import-Module -Name BetterTls -ErrorAction Stop
+            Write-Host "$(get-date) [SUCCESS] Imported module 'BetterTls'!" -ForegroundColor Cyan
+        }#end try
+        catch #we couldn't import the module
+        {
+            Write-Host "$(get-date) [ERROR] Unable to import the module BetterTls : $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/BetterTls/0.1.0.0" -ForegroundColor Yellow
+            Exit
+        }#end catch
+    }#end catch
+}
+Write-Host "$(get-date) [INFO] Disabling Tls..." -ForegroundColor Green
+try {Disable-Tls -Tls -Confirm:$false -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not disable Tls : $($_.Exception.Message)"}
+Write-Host "$(get-date) [INFO] Enabling Tls 1.2..." -ForegroundColor Green
+try {Enable-Tls -Tls12 -Confirm:$false -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not enable Tls 1.2 : $($_.Exception.Message)"}
+#endregion
 
 #let's get ready to use the Nutanix REST API
 #Accept self signed certs
@@ -109,7 +161,7 @@ add-type @"
 "@
 #we also need to use the proper encryption protocols
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-[Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls, tls11, tls12"
+[Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls12"
 
 #endregion
 
@@ -117,130 +169,145 @@ add-type @"
 ########################
 ##   main functions   ##
 ########################
-
-#this function is used to output log data
-Function OutputLogData 
-{
-	#input: log category, log message
-	#output: text to standard output
 <#
-.SYNOPSIS
-  Outputs messages to the screen and/or log file.
+.Synopsis
+   Gets status for a given Prism task uuid
 .DESCRIPTION
-  This function is used to produce screen and log output which is categorized, time stamped and color coded.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER myCategory
-  This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-.PARAMETER myMessage
-  This is the actual message you want to display.
-.EXAMPLE
-  PS> OutputLogData -mycategory "ERROR" -mymessage "You must specify a cluster name!"
+   Gets status for a given Prism task uuid
 #>
-	param
-	(
-		[string] $category,
-		[string] $message
-	)
-
-    begin
-    {
-	    $myvarDate = get-date
-	    $myvarFgColor = "Gray"
-	    switch ($category)
-	    {
-		    "INFO" {$myvarFgColor = "Green"}
-		    "WARNING" {$myvarFgColor = "Yellow"}
-		    "ERROR" {$myvarFgColor = "Red"}
-		    "SUM" {$myvarFgColor = "Magenta"}
-	    }
-    }
-
-    process
-    {
-	    Write-Host -ForegroundColor $myvarFgColor "$myvarDate [$category] $message"
-	    if ($log) {Write-Output "$myvarDate [$category] $message" >>$myvarOutputLogFile}
-    }
-
-    end
-    {
-        Remove-variable category
-        Remove-variable message
-        Remove-variable myvarDate
-        Remove-variable myvarFgColor
-    }
-}#end function OutputLogData
-
-#this function is used to connect to Prism REST API
-Function PrismRESTCall
+function Get-NTNXTask
 {
-	#input: username, password, url, method, body
-	#output: REST response
+    [CmdletBinding()]
+    [Alias()]
+    [OutputType([int])]
+    Param
+    (
+        # Param1 help description
+        [Parameter(Mandatory=$true,
+                   ValueFromPipelineByPropertyName=$true,
+                   Position=0)]
+        $TaskId
+    )
+
+    Begin
+    {
+    }
+    Process
+    {
+        $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/tasks/$($TaskId.task_uuid)"
+        $result = Invoke-PrismRESTCall -username $username -password $password -method "GET" -url $myvarUrl
+    }
+    End
+    {
+        return $result
+    }
+}
+
 <#
-.SYNOPSIS
-  Connects to Nutanix Prism REST API.
+.Synopsis
+   Short description
 .DESCRIPTION
-  This function is used to connect to Prism REST API.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER username
-  Specifies the Prism username.
-.PARAMETER password
-  Specifies the Prism password.
-.PARAMETER url
-  Specifies the Prism url.
+   Long description
 .EXAMPLE
-  PS> PrismRESTCall -username admin -password admin -url https://10.10.10.10:9440/PrismGateway/services/rest/v1/ 
+   Example of how to use this cmdlet
+.EXAMPLE
+   Another example of how to use this cmdlet
 #>
-	param
-	(
-		[string] $username,
-		[string] $password,
-        [string] $url,
-        [string] $method,
-        $body
-	)
+function Get-NTNXVM
+{
+    [CmdletBinding()]
+    [Alias()]
+    [OutputType([int])]
+    Param
+    (
+    )
 
-    begin
+    Begin
     {
-	 	#Setup authentication header for REST call
-        $myvarHeader = @{"Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+$password ))}   
     }
-
-    process
+    Process
     {
-        if ($body) {
-            try {
-                $myvarHeader += @{"Accept"="application/json"}
-		        $myvarHeader += @{"Content-Type"="application/json"}
-			    $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -ErrorAction Stop
-		    }
-		    catch {
-			    OutputLogData -category "ERROR" -message "$($_.Exception.Message)"
-			    Exit
-		    }
-        } else {
-            try {
-			    $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -ErrorAction Stop
-		    }
-		    catch {
-			    OutputLogData -category "ERROR" -message "$($_.Exception.Message)"
-			    Exit
-		    }
-        }
+        $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/vms/"
+        $result = Invoke-PrismRESTCall -username $username -password $password -method "GET" -url $myvarUrl
     }
-
-    end
+    End
     {
-        return $myvarRESTOutput
-        Remove-variable username
-        Remove-variable password
-        Remove-variable url
-        Remove-variable myvarHeader
+        return $result
     }
-}#end function PrismRESTCall
-
+}
 #endregion
+
+<#
+.Synopsis
+   Short description
+.DESCRIPTION
+   Long description
+.EXAMPLE
+   Example of how to use this cmdlet
+.EXAMPLE
+   Another example of how to use this cmdlet
+#>
+function Get-NTNXImage
+{
+    [CmdletBinding()]
+    [Alias()]
+    [OutputType([int])]
+    Param
+    (
+        
+    )
+
+    Begin
+    {
+    }
+    Process
+    {
+        $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/images/"
+        $result = Invoke-PrismRESTCall -username $username -password $password -method "GET" -url $myvarUrl
+    }
+    End
+    {
+        return $result
+    }
+}
+
+<#
+.Synopsis
+   Short description
+.DESCRIPTION
+   Long description
+.EXAMPLE
+   Example of how to use this cmdlet
+.EXAMPLE
+   Another example of how to use this cmdlet
+#>
+function Remove-NTNXImage
+{
+    [CmdletBinding()]
+    [Alias()]
+    [OutputType([int])]
+    Param
+    (
+        # Param1 help description
+        [Parameter(Mandatory=$true,
+                   ValueFromPipelineByPropertyName=$true,
+                   Position=0)]
+        $ImageId
+    )
+
+    Begin
+    {
+    }
+    Process
+    {
+        $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/images/$ImageId"
+        $result = Invoke-PrismRESTCall -username $username -password $password -method "DELETE" -url $myvarUrl
+    }
+    End
+    {
+        return $result
+    }
+}
 
 #region Variables
 #initialize variables
@@ -253,6 +320,7 @@ $myvarOutputLogFile += "OutputLog.log"
 # command line arguments initialization
 ############################################################################	
 #let's initialize parameters if they haven't been specified
+if (!$import -and !$export) {throw "$(get-date) [ERROR] You must specify import or export!"}
 if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism"}
 if (!$username) {$username = read-host "Enter the Prism username"}
 if (!$password) {
@@ -263,7 +331,7 @@ else
 {
     $spassword = ConvertTo-SecureString $password –asplaintext –force
 }
-if (!$container) {$container = read-host "Enter the name of the Nutanix container you want ot import from or export to"}
+if (!$container) {$container = read-host "Enter the name of the Nutanix container you want to import from or export to"}
 if ($export -and (!$vm)) {$vm = read-host "Enter the name of the VM you want to export"}
 
 
@@ -274,46 +342,27 @@ if ($export -and (!$vm)) {$vm = read-host "Enter the name of the VM you want to 
 ##   main processing   ##
 #########################
 
-#region Connect to Prism using PoSH cmdlets
-
-    OutputLogData -category "INFO" -message "Connecting to Nutanix cluster $prism..."
-    try
-    {
-        $myvarNutanixCluster = Connect-NutanixCluster -Server $prism -UserName $username -Password $spassword –acceptinvalidsslcerts -ForcedConnection -ErrorAction Stop
-    }
-    catch
-    {#error handling
-	    Write-Warning $($_.Exception.Message)
-	    OutputLogData -category "ERROR" -message "Could not connect to $prism"
-	    Exit
-    }
-    OutputLogData -category "INFO" -message "Connected to Nutanix cluster $prism."
-
-#endregion
-
 #region Import VM(s)
 if ($import) {
 
 #region Connect network drive to Nutanix container
-OutputLogData -category "INFO" -message "Connecting to \\$prism\$container..."
+Write-Host "$(get-date) [INFO] Connecting to \\$prism\$container..." -ForegroundColor Green
 try {
     $myvarConnectedDrive = New-PSDrive -Name "N" -PSProvider FileSystem -Root "\\$prism\$container" -ErrorAction Stop
 }
 catch {
-    Write-Warning $($_.Exception.Message)
-    OutputLogData -category "ERROR" -message "Could not connect to \\$prism\$container, exiting!"
-	Exit
+    throw "$(get-date) [ERROR] Could not connect to \\$prism\$container : $($_.Exception.Message)"
 }
 #endregion
 
 #region Process XML files
-OutputLogData -category "INFO" -message "Processing XML files in \\$prism\$container..."
+Write-Host "$(get-date) [INFO] Processing XML files in \\$prism\$container..." -ForegroundColor Green
 $myvarXMLFiles = Get-ChildItem N:\ | where {$_.extension -eq '.xml'}
 
 foreach ($myvarXMLFile in $myvarXMLFiles) {
 
-        #region Read from XML
-        OutputLogData -category "INFO" -message "Processing $myvarXMLFile..."
+    #region Read from XML
+        Write-Host "$(get-date) [INFO] Processing $myvarXMLFile..." -ForegroundColor Green
         try #let's make sure we can import the XML file content
         {
             #remove NUL characters from the XML file if there are any
@@ -322,18 +371,14 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         }#end try xml import
         catch
         {
-	        Write-Warning $($_.Exception.Message)
-            OutputLogData -category "ERROR" -message "Could not read the XML file $myvarXMLFile, exiting."
-	        Exit
+	        throw "$(get-date) [ERROR] Could not read the XML file $myvarXMLFile : $($_.Exception.Message)"
         }#end catch xml import error
         #endregion
 
     #region Import into image library
-
-        OutputLogData -category "INFO" -message "Importing disks for VM $($myvarXML.domain.name)..."
+        Write-Host "$(get-date) [INFO] Importing disks for VM $($myvarXML.domain.name)..." -ForegroundColor Green
         $myvarVmDisks = @()
         #create a disk image in the ahv library given a source file
-        $myvarUrl = "https://"+$prism+":9440/api/nutanix/v0.8/images/"
         if ($myvarXML.domain.description) {
             $myvarAnnotation = $myvarXML.domain.description
         }
@@ -346,30 +391,32 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             $myvarDiskName = $myvarVmDisk.source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
             if (!(Test-Path N:\$myvarDiskName.qcow2)) {
-                OutputLogData -category "ERROR" -message "Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
-	            Exit
+                throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
             }
             
             $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
-            $myvarImage = Get-NTNXImage | where {$_.Name -eq $myvarImageName}
-            if ($myvarImage) {OutputLogData -category "WARNING" -message "Image $myvarImageName already exists in the library: skipping import..."}
+            $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/images/"
+            $myvarImages = Invoke-PrismRESTCall -username $username -password $password -method "GET" -url $myvarUrl
+            $myvarImage = $myvarImages.entities | where {$_.name -eq $myvarImageName}
+            if ($myvarImage) {Write-Host "$(get-date) [WARNING] Image $myvarImageName already exists in the library: skipping import..." -ForegroundColor Yellow}
             else {
+                $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/images/"
                 $myvarSource = "nfs://127.0.0.1/"+$container+"/"+$myvarDiskName+".qcow2"
-                $myvarBody = @{annotation=$myvarAnnotation;image_type="disk_image";imageImportSpec=@{containerName=$container;url=$myvarSource};name=$myvarImageName}
+                $myvarBody = @{annotation=$myvarAnnotation;image_type="disk_image";image_import_spec=@{storage_container_name=$container;url=$myvarSource};name=$myvarImageName}
                 $myvarBody = ConvertTo-Json $myvarBody
-                $myvarImageImportTaskId = PrismRESTCall -method "Post" -username $username -password $password -url $myvarUrl -body $myvarBody
+                $myvarImageImportTaskId = Invoke-PrismRESTCall -method "POST" -username $username -password $password -url $myvarUrl -body $myvarBody
                 Do {
 		            Start-Sleep -Seconds 15
                     $myvarTask = (Get-NTNXTask -TaskId $myvarImageImportTaskId)
-                    if ($myvarTask) {OutputLogData -category "INFO" -message "Waiting for the Image import task for $myvarImageName to complete ($($myvarTask.percentageComplete)%)..."}
-                    else {OutputLogData -category "INFO" -message "Image import task for $myvarImageName has completed!"}
+                    if ($myvarTask) {Write-Host "$(get-date) [INFO] Waiting for the Image import task for $myvarImageName to complete ($($myvarTask.percentage_complete)%)..." -ForegroundColor Green}
+                    else {Write-Host "$(get-date) [INFO] Image import task for $myvarImageName has completed!" -ForegroundColor Green}
 	            } While ($myvarTask.progressStatus -eq "Running")
             }
         }
 
     #endregion
 
-    #region Create VM
+    #region Create VM (POST v2 /vms/)
 
         $myvarVMName = $myvarXML.domain.name
         $myvarMemoryUnit = $myvarXML.domain.memory.unit
@@ -383,133 +430,227 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         $myvarCpuSockets = $myvarXML.domain.cpu.topology.sockets
         $myvarCpuCores = $myvarXML.domain.cpu.topology.cores
 
-        $myvarVmInfo = Get-NTNXVM | where {$_.vmName -eq $myvarVMName}
-        if ($myvarVmInfo) {OutputLogData -category "WARNING" -message "VM $myvarVMName already exists: skipping creation!"}
-        else {
-            OutputLogData -category "INFO" -message "Creating VM $myvarVMName..."
-            try 
-            {
-                $myvarCreateVMTaskId = New-NTNXVirtualMachine -Name $myvarVMName -NumVcpus $myvarCpuSockets -NumCoresPerVcpu $myvarCpuCores -MemoryMb $myvarMemoryMB -ErrorAction Stop
+        $myvarVMs = Get-NTNXVM
+        $myvarVmInfo = $myvarVMs.entities | where {$_.name -eq $myvarVMName}
+        if ($myvarVmInfo) {
+            Write-Host "$(get-date) [WARNING] VM $myvarVMName already exists: skipping creation!" -ForegroundColor Yellow
+            $vm_uuid = $myvarVmInfo.uuid
+        } else {
+            Write-Host "$(get-date) [INFO] Creating VM $myvarVMName..." -ForegroundColor Green
+            
+            #create the vm
+            Write-Host "$(get-date) [INFO] Creating vm $myvarVMName..." -ForegroundColor Green
+            if ($myvarVmInfo.description) {$description = $myvarVmInfo.description} else {$description = "This vm was imported on $(get-date) using the ahv-migration.ps1 script"}
+            $memory_mb = $myvarMemoryMB
+            $name = $myvarVMName
+            $num_cores_per_vcpu = $myvarCpuCores
+            $num_vcpus = $myvarCpuSockets
+
+            $body = @{
+                description=$description;
+                memory_mb=$memory_mb;
+                name=$name;
+                num_cores_per_vcpu=$num_cores_per_vcpu;
+                num_vcpus=$num_vcpus
             }
-            catch
-            {#error handling
-	            Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not create VM $myvarVMName"
-	            Exit
-            }
+            $body = ConvertTo-Json $body
+            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/vms/"
+            $method = "POST"
+            $vmCreateTask = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password -body $body
+
+            #check on vm create task status
+            Write-Host "$(get-date) [INFO] Checking status of the vm creation task $($vmCreateTask.task_uuid)..." -ForegroundColor Green
             Do {
-		        Start-Sleep -Seconds 5
-                $myvarTask = (Get-NTNXTask -TaskId $myvarCreateVMTaskId)
-                if ($myvarTask) {OutputLogData -category "INFO" -message "Waiting for the create VM task for $myvarVMName to complete ($($myvarTask.percentageComplete)%)..."}
-                else {OutputLogData -category "INFO" -message "Image create VM task for $myvarVMName has completed!"}
-	        } While ($myvarTask.progressStatus -eq "Running")
+                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/tasks/$($vmCreateTask.task_uuid)"
+                $method = "GET"
+                $vmCreateTaskStatus = Get-PrismRESTCall -method $method -username $username -password $password -url $url
+                if ($vmCreateTaskStatus.progress_status -eq "Failed") {
+                    Write-Host "$(get-date) [ERROR] VM creation task for $myvarVMName failed. Exiting!" -ForegroundColor Red
+                    Exit
+                } elseIf ($vmCreateTaskStatus.progress_status -eq "Succeeded") {
+                    Write-Host "$(get-date) [SUCCESS] VM $myvarVMName create task status has $($vmCreateTaskStatus.progress_status)!" -ForegroundColor Cyan
+                } else {
+                    Write-Host "$(get-date) [WARNING] VM $myvarVMName create task status is $($vmCreateTaskStatus.progress_status) with $($vmCreateTaskStatus.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 5
+                }
+            } While ($vmCreateTaskStatus.progress_status -ne "Succeeded")
+
+            $vm_uuid = $vmCreateTaskStatus.entity_list.entity_id
         }#end else vm exists
+        
     #endregion
 
-    #region Connect VM to Network
+    #region attach network (POST v2 /vms/{uuid}/nics/)
+    Write-Host "$(get-date) [INFO] Retrieving network information from $prism..." -ForegroundColor Green
+    $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/networks/"
+    $method = "GET"
+    $clusterNetworks = Get-PrismRESTCall -method $method -url $url -username $username -password $password
+    Write-Host "$(get-date) [SUCCESS] Successfully retrieved the list of networks on $prism!" -ForegroundColor Cyan
 
-        OutputLogData -category "INFO" -message "Connecting VM to the network..."
-        $myvarAHVNetworks = Get-NTNXNetwork
-        $myvarVmNICs = @()
-        $myvarVmNICs = $myvarXML.domain.devices.interface
+    $myvarVmNICs = @()
+    $myvarVmNICs = $myvarXML.domain.devices.interface
 
-        foreach ($myvarVmNIC in $myvarVmNICs) {
-            $myvarNetwork = $myvarVmNIC.source.bridge
-
-            $myvarVmInfo = Get-NTNXVM | where {$_.vmName -eq $myvarVMName}
-            $myvarVmId = ($myvarVmInfo.vmid.split(":"))[2]
-        
-            $myvarTargetNetwork = $myvarAHVNetworks | where {$_.name -eq $myvarNetwork}
-            if (!$myvarTargetNetwork) {
-                $myvarVLAN = Read-Host "We could not find a network with the label $myvarNetwork. Which VLAN id should this VM be connected to?"
-                $myvarTargetNetwork = $myvarAHVNetworks | where {$_.vlanId -eq $myvarVLAN}
-                if (!$myvarTargetNetwork) {
-                    Do {
-                        $myvarVLAN = Read-Host "This VLAN id does not exist on AHV. Which VLAN id should this VM be connected to?"
-                        $myvarTargetNetwork = $myvarAHVNetworks | where {$_.vlanId -eq $myvarVLAN}
-                    }
-                    While (!$myvarTargetNetwork)
-                }#endif no network
-            }#endif no network
-
-            $myvarNic = New-NTNXObject -Name VMNicSpecDTO
-            $myvarNic[1].networkUuid = $myvarTargetNetwork.uuid
-            $myvarNic[1].adapterType = "E1000"
-
-            try 
-            {
-                $myvarConnectVmTaskId = Add-NTNXVMNic -Vmid $myvarVmId -SpecList $myvarNic[1] -ErrorAction Stop
-            }
-            catch
-            {#error handling
-	            Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not connect VM $myvarVMName"
-	            Exit
+    Write-Host "$(get-date) [INFO] Attaching network devices to $myvarVMName..." -ForegroundColor Green
+    ForEach ($nic in $myvarVmNICs) {
+        #check if the network already exists, otherwise prompt for a network name
+        if (!($clusterNetworks.Entities | where {$_.uuid -eq $nic.network_uuid})) {
+            Write-Host "$(get-date) [WARNING] Network uuid $($nic.network_uuid) does not exist on $prism..." -ForegroundColor Yellow
+            Foreach ($networkEntry in $clusterNetworks.Entities) {
+                Write-Host "$(get-date) [INFO] Network $($networkEntry.name) with VLAN id $($networkEntry.vlan_id) is available on $prism..." -ForegroundColor Green
             }
             Do {
-		        Start-Sleep -Seconds 5
-                $myvarTask = (Get-NTNXTask -TaskId $myvarConnectVmTaskId)
-                if ($myvarTask) {OutputLogData -category "INFO" -message "Waiting for the connect VM task for $myvarVMName to complete ($($myvarTask.percentageComplete)%)..."}
-                else {OutputLogData -category "INFO" -message "Connect VM task for $myvarVMName has completed!"}
-	        } While ($myvarTask.progressStatus -eq "Running")
+                $network_label = Read-Host "Please enter the network label (case sensitive) you want to connect this VM to"
+                $network = $clusterNetworks.Entities | where {$_.name -eq $network_label}
+                if ($network) {
+                    $network_uuid = $network.uuid
+                } else {
+                    Write-Host "$(get-date) [ERROR] Network $network_label does not exist on $prism..." -ForegroundColor Red
+                }
+            }
+            While (!$network)
+        } else {
+            $network_uuid = $nic.network_uuid
         }
 
+        $mac_address = $nic.mac.address
+        $model = "E1000"
+
+        #attach nic to vm
+        $body = @{
+            uuid=$vm_uuid;
+            spec_list=@(@{
+                mac_address=$mac_address;
+                network_uuid=$network_uuid;
+                model=$model
+            })
+        }
+        $body = ConvertTo-Json $body -Depth 5
+        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/nics/"
+        $method = "POST"
+        $nicAttachTask = Get-PrismRESTCall -method $method -url $url -username $username -password $password -body $body
+
+        #check on attach nic task status
+        Write-Host "$(get-date) [INFO] Checking status of the NIC attach task $($nicAttachTask.task_uuid)..." -ForegroundColor Green
+        Do {
+            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/tasks/$($nicAttachTask.task_uuid)"
+            $method = "GET"
+            $nicAttachTaskStatus = Get-PrismRESTCall -method $method -username $username -password $password -url $url
+            if ($nicAttachTaskStatus.progress_status -eq "Failed") {
+                Write-Host "$(get-date) [ERROR] NIC $mac_address attach task for $myvarVMName failed. Exiting!" -ForegroundColor Red
+                Exit
+            } elseIf ($nicAttachTaskStatus.progress_status -eq "Succeeded") {
+                Write-Host "$(get-date) [SUCCESS] NIC $mac_address attach task status has $($nicAttachTaskStatus.progress_status)!" -ForegroundColor Cyan
+            } else {
+                Write-Host "$(get-date) [WARNING] NIC $mac_address attach task status is $($nicAttachTaskStatus.progress_status) with $($nicAttachTaskStatus.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 5
+            }
+        } While ($nicAttachTaskStatus.progress_status -ne "Succeeded")
+
+    }#end foreach nic
+        
     #endregion
 
-    #region Add VM disk(s)
+    #region attach disks (POST v2 /vms/{uuid}/disks/attach)
+        Write-Host "$(get-date) [INFO] Retrieving the list of images in $prism library..." -ForegroundColor Green
+        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/images/"
+        $method = "GET"
+        $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved the list of images in $prism library!" -ForegroundColor Cyan
 
-        OutputLogData -category "INFO" -message "Adding disks..."
-        foreach ($myvarVmDisk in $myvarVmDisks) {
-            $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
-            $myvarDiskImage = Get-NTNXImage | where {$_.name -eq $myvarImageName}
-            $myvarDiskUuId = $myvarDiskImage.vmDiskId
-            $myvarDisk = New-NTNXObject -Name VMDiskDTO
-            $myvarDiskClone = New-NTNXObject -Name VMDiskSpecCloneDTO
-            $myvarDiskClone.vmDiskUuid = $myvarDiskUuId
-            $myvarDisk.vmDiskClone = $myvarDiskClone
+        $vm_uuid = $vmCreateTaskStatus.entity_list.entity_id
+        Write-Host "$(get-date) [INFO] Attaching disks to VM $myvarVMName ($vm_uuid)..." -ForegroundColor Green
 
-            try 
-            {
-                $myvarAddVmDiskTaskId = Add-NTNXVMDisk -Vmid $myvarVmId -Disk $myvarDisk -ErrorAction Stop
+        $myvarVmDisks = $myvarXML.domain.devices.disk | where {$_.device -eq "Disk"}
+
+        ForEach ($disk in $myvarVmDisks) {
+            
+                #figure out what the disk name should be
+                $myvarDiskName = $myvarVmDisk.source.name
+                $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
+                if (!(Test-Path N:\$myvarDiskName.qcow2)) {
+                    throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
+                }
+                $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
+
+                $diskImageName = $myvarVMName+"_"+$($disk.boot.order)+"_"+$($disk.target.dev)+"_"+$myvarDiskName+".qcow2"
+
+                #get the corresponding image disk id
+                $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+                if (!$image) {throw "$(get-date) [ERROR] Could not find image $myvarImageName on $prism"}
+                $vmdisk_uuid = $image.vm_disk_id
+
+                #create the attach disk task
+                Write-Host "$(get-date) [INFO] Attaching disk $myvarImageName to $myvarVMName..." -ForegroundColor Green
+                $body = @{
+                    uuid=$vm_uuid;
+                    vm_disks=@(@{
+                        is_cdrom=$false;
+                        vm_disk_clone=@{
+                            disk_address=@{
+                                vmdisk_uuid=$vmdisk_uuid
+                            }
+                        }
+                    })
+                }
+                $body = ConvertTo-Json $body -Depth 5
+                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/disks/attach"
+                $method = "POST"
+                $diskAttachTask = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password -body $body
+
+                #check on attach disk task status
+                Write-Host "$(get-date) [INFO] Checking status of the disk attach task $($diskAttachTask.task_uuid)..." -ForegroundColor Green
+                Do {
+                    $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/tasks/$($diskAttachTask.task_uuid)"
+                    $method = "GET"
+                    $diskAttachTaskStatus = Invoke-PrismRESTCall -method $method -username $username -password $password -url $url
+                    if ($diskAttachTaskStatus.progress_status -eq "Failed") {
+                        Write-Host "$(get-date) [ERROR] Disk attach task for $myvarImageName for $myvarVMName failed. Exiting!" -ForegroundColor Red
+                        Exit
+                    } elseIf ($diskAttachTaskStatus.progress_status -eq "Succeeded") {
+                        Write-Host "$(get-date) [SUCCESS] Disk attach task status for $myvarImageName has $($diskAttachTaskStatus.progress_status)!" -ForegroundColor Cyan
+                    } else {
+                        Write-Host "$(get-date) [WARNING] Disk attach task status for $myvarImageName is $($diskAttachTaskStatus.progress_status) with $($diskAttachTaskStatus.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 5
+                    }
+                } While ($diskAttachTaskStatus.progress_status -ne "Succeeded")
+
+        }#end foreach disk
+
+        #endregion
+
+    #region attach cdrom
+    $myvarVmCDROMs = $myvarXML.domain.devices.disk | where {$_.device -eq "cdrom"}
+    ForEach ($disk in $myvarVmCDROMs) {     
+        Write-Host "$(get-date) [INFO] Attaching CDROM to $myvarVMName..." -ForegroundColor Green
+        $body = @{
+            uuid=$vm_uuid;
+            vm_disks=@(@{
+                is_cdrom=$true;
+                is_empty=$true
+            })
+        }
+        $body = ConvertTo-Json $body
+        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/disks/attach"
+        $method = "POST"
+        $diskAttachTask = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password -body $body
+
+        #check on attach cdrom task status
+        Write-Host "$(get-date) [INFO] Checking status of the CDROM attach task $($diskAttachTask.task_uuid)..." -ForegroundColor Green
+        Do {
+            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/tasks/$($diskAttachTask.task_uuid)"
+            $method = "GET"
+            $diskAttachTaskStatus = Invoke-PrismRESTCall -method $method -username $username -password $password -url $url
+            if ($diskAttachTaskStatus.progress_status -eq "Failed") {
+                Write-Host "$(get-date) [ERROR] CDROM attach task for $myvarVMName failed. Exiting!" -ForegroundColor Red
+                Exit
+            } elseIf ($diskAttachTaskStatus.progress_status -eq "Succeeded") {
+                Write-Host "$(get-date) [SUCCESS] CDROM attach task status has $($diskAttachTaskStatus.progress_status)!" -ForegroundColor Cyan
+            } else {
+                Write-Host "$(get-date) [WARNING] CDROM attach task status is $($diskAttachTaskStatus.progress_status) with $($diskAttachTaskStatus.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 5
             }
-            catch
-            {#error handling
-	            Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not add disk $myvarImageName to VM $myvarVMName"
-	            Exit
-            }
-            Do {
-		        Start-Sleep -Seconds 5
-                $myvarTask = (Get-NTNXTask -TaskId $myvarAddVmDiskTaskId)
-                if ($myvarTask) {OutputLogData -category "INFO" -message "Waiting for the VM add disk task for $myvarVMName to complete ($($myvarTask.percentageComplete)%)..."}
-                else {OutputLogData -category "INFO" -message "VM add disk task for $myvarVMName has completed!"}
-	        } While ($myvarTask.progressStatus -eq "Running")
-        }#end foreach vmdisk
-
-    #endregion
-
-    #region Add CDROM device
-
-        OutputLogData -category "INFO" -message "Adding cdrom device..."
-        $myvarDisk = New-NTNXObject -Name VMDiskDTO
-        $myvarDisk.isCdrom = $true
-        $myvarDisk.isEmpty = $true
-        try 
-            {
-                $myvarAddVmDiskTaskId = Add-NTNXVMDisk -Vmid $myvarVmId -Disk $myvarDisk -ErrorAction Stop
-            }
-            catch
-            {#error handling
-	            Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not add cdrom device to VM $myvarVMName"
-	            Exit
-            }
-            Do {
-		        Start-Sleep -Seconds 5
-                $myvarTask = (Get-NTNXTask -TaskId $myvarAddVmDiskTaskId)
-                if ($myvarTask) {OutputLogData -category "INFO" -message "Waiting for the VM add cdrom task for $myvarVMName to complete ($($myvarTask.percentageComplete)%)..."}
-                else {OutputLogData -category "INFO" -message "VM add cdrom task for $myvarVMName has completed!"}
-	        } While ($myvarTask.progressStatus -eq "Running")
+        } While ($diskAttachTaskStatus.progress_status -ne "Succeeded")
+    }#endif foreach disk
 
     #endregion
 
@@ -519,8 +660,9 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         #region Remove images from library
         foreach ($myvarVmDisk in $myvarVmDisks) {
             $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
-            OutputLogData -category "INFO" -message "Removing image $myvarImageName from the library..."
-            $myvarImage = Get-NTNXImage | where {$_.Name -eq $myvarImageName}
+            Write-Host "$(get-date) [INFO] Removing image $myvarImageName from the library..." -ForegroundColor Green
+            $myvarImages = Get-NTNXImage
+            $myvarImage = $myvarImages.entities | where {$_.name -eq $myvarImageName}
             $myvarImageId = $myvarImage.uuid
             try 
             {
@@ -528,39 +670,36 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             }
             catch
             {#error handling
-	            Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not remove image $myvarImageName from the image library"
+	            throw "$(get-date) [ERROR] Could not remove image $myvarImageName from the image library : $($_.Exception.Message)"
             }
             Do {
 		        Start-Sleep -Seconds 5
                 $myvarTask = (Get-NTNXTask -TaskId $myvarRemoveImageTaskId)
-                if ($myvarTask) {OutputLogData -category "INFO" -message "Waiting for the remove image task for $myvarVMName to complete ($($myvarTask.percentageComplete)%)..."}
-                else {OutputLogData -category "INFO" -message "Remove image task for $myvarImageName has completed!"}
+                if ($myvarTask) {Write-Host "$(get-date) [INFO] Waiting for the remove image task for $myvarVMName to complete ($($myvarTask.percentage_complete)%)..." -ForegroundColor Green}
+                else {Write-Host "$(get-date) [INFO] Remove image task for $myvarImageName has completed!" -ForegroundColor Green}
 	        } While ($myvarTask.progressStatus -eq "Running")
 
             $myvarDiskName = $myvarVmDisk.source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
-            OutputLogData -category "INFO" -message "Deleting source file $myvarDiskName.qcow2..."
+            Write-Host "$(get-date) [INFO] Deleting source file $myvarDiskName.qcow2..." -ForegroundColor Green
             try {
                 $myvarResults = Remove-Item N:\$myvarDiskName.qcow2 -ErrorAction Stop
             }
             catch
             {
-                Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not delete source file $myvarDiskName.qcow2!"
+                throw "$(get-date) [ERROR] Could not delete source file $myvarDiskName.qcow2! : $($_.Exception.Message)"
             }
         }#end foreach vmdisk
         #endregion
     
         #remove XML file from container
-        OutputLogData -category "INFO" -message "Deleting XML file $($myvarXMLFile.Name)..."
+        Write-Host "$(get-date) [INFO] Deleting XML file $($myvarXMLFile.Name)..." -ForegroundColor Green
         try {
             $myvarResults = Remove-Item N:\$($myvarXMLFile.Name)
         }
         catch
         {
-            Write-Warning $($_.Exception.Message)
-	        OutputLogData -category "ERROR" -message "Could not delete XML file $($myvarXMLFile.Name)!"
+            throw "$(get-date) [ERROR] Could not delete XML file $($myvarXMLFile.Name) : $($_.Exception.Message)"
         }
 
     }#endif cleanup
@@ -574,127 +713,8 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
 #region Export VM
 if ($export) {
     
-    #check PoSH version
-    if ($PSVersionTable.PSVersion.Major -lt 5) {
-        OutputLogData -category "ERROR" -message "Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"
-        exit
-    }
-
-    #let's load SSHSessions
-    if (!Import-Module SSHSessions) {
-        OutputLogData -category "WARNING" -message "We need to install the SSHSessions module!"
-        Install-Module SSHSessions
-        Import-Module SSHSessions
-    }
-
-    #get vm information
-    OutputLogData -category "INFO" -message "Retrieving VM object $vm..."
-    try {
-        $myvarVmInfo = Get-NTNXVM | where {$_.vmName -eq $vm} -ErrorAction Stop
-    }
-    catch {
-        Write-Warning $($_.Exception.Message)
-	    OutputLogData -category "ERROR" -message "Could not find VM $vm"
-	    Exit
-    }
-    $myvarVmId = ($myvarVmInfo.vmid.split(":"))[2]
-    $myvarVmDiskPaths = $myvarVmInfo.nutanixVirtualDisks
-    if ($myvarVmInfo.powerState -eq "on") {
-        OutputLogData -category "ERROR" -message "VM $vm is powered on! Do you want to shut it down?"
-        Do {
-            Read-Host ($myvarUserInput = "y/n")
-        }
-        While ($myvarUserInput -notmatch "y|n")
-        if ($myvarUserInput -eq "n") {Exit}
-        else {
-            OutputLogData -category "INFO" -message "Shutting down $vm..."
-            try {
-                Set-NTNXVMPowerOff -VmId $myvarVmId -ErrorAction Stop
-            }
-            catch {
-                Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not shutdown VM $vm"
-	            Exit
-            }
-        }
-        OutputLogData -category "INFO" -message "Retrieving VM object $vm..."
-        try {
-            $myvarVmInfo = Get-NTNXVM | where {$_.vmName -eq $vm} -ErrorAction Stop
-        }
-        catch {
-            Write-Warning $($_.Exception.Message)
-	        OutputLogData -category "ERROR" -message "Could not find VM $vm"
-	        Exit
-        }
-    }
-
-    #get vmdisks
-    OutputLogData -category "INFO" -message "Retrieving disks for VM object $vm..."
-    try {
-        $myvarVmDisks = Get-NTNXVMDisk -Vmid $myvarVmId | where {$_.isCdrom -eq $false} -ErrorAction Stop
-    }
-    catch {
-        Write-Warning $($_.Exception.Message)
-	    OutputLogData -category "ERROR" -message "Could not find any disks for VM $vm"
-	    Exit
-    }
-    #open ssh session to cluster
-    OutputLogData -category "INFO" -message "Opening ssh session to $prism..."
-    try {
-        $myvarSSHSession = New-SshSession -ComputerName $prism -Username "nutanix" -ErrorAction Stop
-    }
-    catch {
-        Write-Warning $($_.Exception.Message)
-	    OutputLogData -category "ERROR" -message "Could not open ssh session to $prism"
-	    Exit
-    }
-    #convert all disks to qcow2
-    OutputLogData -category "INFO" -message "Exporting all disks for VM object $vm..."
-    foreach ($myvarVmDisk in $myvarVmDisks) {
-        OutputLogData -category "INFO" -message "Converting disk $($myvarVmDisk.id) to /$container/$vm`_$($myvarVmDisk.id).qcow2..."
-        $myvarVmDiskPath = $myvarVmDiskPaths | where {$_ -match $myvarVmDisk.vmDiskUuid}
-        try {
-            OutputLogData -category "INFO" -message "Running command /usr/local/nutanix/bin/qemu-img convert -f raw -O qcow2 -c nfs://127.0.0.1$myvarVmDiskPath nfs://127.0.0.1/$container/$vm`_$($myvarVmDisk.id).qcow2"
-            Invoke-SshCommand -ComputerName $prism -Command "/usr/local/nutanix/bin/qemu-img convert -f raw -O qcow2 -c nfs://127.0.0.1$myvarVmDiskPath nfs://127.0.0.1/$container/$vm`_$($myvarVmDisk.id).qcow2" -ErrorAction Stop
-        }
-        catch {
-            Write-Warning $($_.Exception.Message)
-	        OutputLogData -category "ERROR" -message "Could not invoke ssh command to convert disk $($myvarVmDisk.id)"
-	        Exit
-        }
-    }
-
-    if ($myvarVmInfo.powerState -eq "off") {
-        OutputLogData -category "ERROR" -message "VM $vm is powered off! Do you want to power it on?"
-        Do {
-            Read-Host ($myvarUserInput = "y/n")
-        }
-        While ($myvarUserInput -notmatch "y|n")
-        if ($myvarUserInput -eq "n") {Continue}
-        else {
-            OutputLogData -category "INFO" -message "Powering on $vm..."
-            try {
-                Set-NTNXVMPowerOn -VmId $myvarVmId -ErrorAction Stop
-            }
-            catch {
-                Write-Warning $($_.Exception.Message)
-	            OutputLogData -category "ERROR" -message "Could not power on VM $vm"
-	            Continue
-            }
-        }
-        OutputLogData -category "INFO" -message "Retrieving VM object $vm..."
-        try {
-            $myvarVmInfo = Get-NTNXVM | where {$_.vmName -eq $vm} -ErrorAction Stop
-        }
-        catch {
-            Write-Warning $($_.Exception.Message)
-	        OutputLogData -category "ERROR" -message "Could not find VM $vm"
-	        Exit
-        }
-    }
-    #create xml
-    #OutputLogData -category "INFO" -message "Exporting XML definition for VM object $vm..."
-    #
+    Write-Host "$(get-date) [ERROR] Export is no longer an available feature of this script!" -ForegroundColor Red
+   
 }
 #endregion
 
@@ -704,12 +724,9 @@ if ($export) {
 #########################
 ##       cleanup       ##
 #########################
-
-    OutputLogData -category "INFO" -message "Disconnecting from Nutanix cluster $prism..."
-	Disconnect-NutanixCluster -Servers $prism #cleanup after ourselves and disconnect from the Nutanix cluster
-
+    
 	#let's figure out how much time this all took
-	OutputLogData -category "SUM" -message "total processing time: $($myvarElapsedTime.Elapsed.ToString())"
+    Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 	
 	#cleanup after ourselves and delete all custom variables
 	Remove-Variable myvar* -ErrorAction SilentlyContinue
