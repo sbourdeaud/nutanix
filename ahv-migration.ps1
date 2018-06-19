@@ -235,7 +235,6 @@ function Get-NTNXVM
         return $result
     }
 }
-#endregion
 
 <#
 .Synopsis
@@ -308,6 +307,7 @@ function Remove-NTNXImage
         return $result
     }
 }
+#endregion
 
 #region Variables
 #initialize variables
@@ -551,72 +551,70 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
     #endregion
 
     #region attach disks (POST v2 /vms/{uuid}/disks/attach)
-        Write-Host "$(get-date) [INFO] Retrieving the list of images in $prism library..." -ForegroundColor Green
-        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/images/"
-        $method = "GET"
-        $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
-        Write-Host "$(get-date) [SUCCESS] Successfully retrieved the list of images in $prism library!" -ForegroundColor Cyan
+    Write-Host "$(get-date) [INFO] Retrieving the list of images in $prism library..." -ForegroundColor Green
+    $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/images/"
+    $method = "GET"
+    $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
+    Write-Host "$(get-date) [SUCCESS] Successfully retrieved the list of images in $prism library!" -ForegroundColor Cyan
 
-        $vm_uuid = $vmCreateTaskStatus.entity_list.entity_id
-        Write-Host "$(get-date) [INFO] Attaching disks to VM $myvarVMName ($vm_uuid)..." -ForegroundColor Green
+    $vm_uuid = $vmCreateTaskStatus.entity_list.entity_id
+    Write-Host "$(get-date) [INFO] Attaching disks to VM $myvarVMName ($vm_uuid)..." -ForegroundColor Green
 
-        $myvarVmDisks = $myvarXML.domain.devices.disk | where {$_.device -eq "Disk"}
+    $myvarVmDisks = $myvarXML.domain.devices.disk | where {$_.device -eq "Disk"}
 
-        ForEach ($disk in $myvarVmDisks) {
+    ForEach ($disk in $myvarVmDisks) {
             
-                #figure out what the disk name should be
-                $myvarDiskName = $myvarVmDisk.source.name
-                $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
-                if (!(Test-Path N:\$myvarDiskName.qcow2)) {
-                    throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
-                }
-                $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
+            #figure out what the disk name should be
+            $myvarDiskName = $disk.source.name
+            $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
+            if (!(Test-Path N:\$myvarDiskName.qcow2)) {
+                throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
+            }
+            $myvarImageName = $myvarXML.domain.name+"_"+$disk.target.dev
 
-                $diskImageName = $myvarVMName+"_"+$($disk.boot.order)+"_"+$($disk.target.dev)+"_"+$myvarDiskName+".qcow2"
+            #get the corresponding image disk id
+            $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+            if (!$image) {throw "$(get-date) [ERROR] Could not find image $myvarImageName on $prism"}
+            $vmdisk_uuid = $image.vm_disk_id
 
-                #get the corresponding image disk id
-                $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
-                if (!$image) {throw "$(get-date) [ERROR] Could not find image $myvarImageName on $prism"}
-                $vmdisk_uuid = $image.vm_disk_id
-
-                #create the attach disk task
-                Write-Host "$(get-date) [INFO] Attaching disk $myvarImageName to $myvarVMName..." -ForegroundColor Green
-                $body = @{
-                    uuid=$vm_uuid;
-                    vm_disks=@(@{
-                        is_cdrom=$false;
-                        vm_disk_clone=@{
-                            disk_address=@{
-                                vmdisk_uuid=$vmdisk_uuid
-                            }
+            #create the attach disk task
+            Write-Host "$(get-date) [INFO] Attaching disk $myvarImageName to $myvarVMName..." -ForegroundColor Green
+            $body = @{
+                uuid=$vm_uuid;
+                vm_disks=@(@{
+                    is_cdrom=$false;
+                    vm_disk_clone=@{
+                        disk_address=@{
+                            vmdisk_uuid=$vmdisk_uuid
                         }
-                    })
-                }
-                $body = ConvertTo-Json $body -Depth 5
-                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/disks/attach"
-                $method = "POST"
-                $diskAttachTask = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password -body $body
-
-                #check on attach disk task status
-                Write-Host "$(get-date) [INFO] Checking status of the disk attach task $($diskAttachTask.task_uuid)..." -ForegroundColor Green
-                Do {
-                    $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/tasks/$($diskAttachTask.task_uuid)"
-                    $method = "GET"
-                    $diskAttachTaskStatus = Invoke-PrismRESTCall -method $method -username $username -password $password -url $url
-                    if ($diskAttachTaskStatus.progress_status -eq "Failed") {
-                        Write-Host "$(get-date) [ERROR] Disk attach task for $myvarImageName for $myvarVMName failed. Exiting!" -ForegroundColor Red
-                        Exit
-                    } elseIf ($diskAttachTaskStatus.progress_status -eq "Succeeded") {
-                        Write-Host "$(get-date) [SUCCESS] Disk attach task status for $myvarImageName has $($diskAttachTaskStatus.progress_status)!" -ForegroundColor Cyan
-                    } else {
-                        Write-Host "$(get-date) [WARNING] Disk attach task status for $myvarImageName is $($diskAttachTaskStatus.progress_status) with $($diskAttachTaskStatus.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
-                        Start-Sleep -Seconds 5
                     }
-                } While ($diskAttachTaskStatus.progress_status -ne "Succeeded")
+                })
+            }
+            $body = ConvertTo-Json $body -Depth 5
+            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/disks/attach"
+            $method = "POST"
+            $diskAttachTask = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password -body $body
 
-        }#end foreach disk
+            #check on attach disk task status
+            Write-Host "$(get-date) [INFO] Checking status of the disk attach task $($diskAttachTask.task_uuid)..." -ForegroundColor Green
+            Do {
+                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/tasks/$($diskAttachTask.task_uuid)"
+                $method = "GET"
+                $diskAttachTaskStatus = Invoke-PrismRESTCall -method $method -username $username -password $password -url $url
+                if ($diskAttachTaskStatus.progress_status -eq "Failed") {
+                    Write-Host "$(get-date) [ERROR] Disk attach task for $myvarImageName for $myvarVMName failed. Exiting!" -ForegroundColor Red
+                    Exit
+                } elseIf ($diskAttachTaskStatus.progress_status -eq "Succeeded") {
+                    Write-Host "$(get-date) [SUCCESS] Disk attach task status for $myvarImageName has $($diskAttachTaskStatus.progress_status)!" -ForegroundColor Cyan
+                } else {
+                    Write-Host "$(get-date) [WARNING] Disk attach task status for $myvarImageName is $($diskAttachTaskStatus.progress_status) with $($diskAttachTaskStatus.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 5
+                }
+            } While ($diskAttachTaskStatus.progress_status -ne "Succeeded")
 
-        #endregion
+    }#end foreach disk
+
+    #endregion
 
     #region attach cdrom
     $myvarVmCDROMs = $myvarXML.domain.devices.disk | where {$_.device -eq "cdrom"}
