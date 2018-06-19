@@ -397,7 +397,17 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
             $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/images/"
             $myvarImages = Invoke-PrismRESTCall -username $username -password $password -method "GET" -url $myvarUrl
-            $myvarImage = $myvarImages.entities | where {$_.name -eq $myvarImageName}
+            if ($myvarImages.metadata.next_cursor) {#response has more than 1 page, let's iterate
+                Write-Host "$(get-date) [INFO] Library has more than 100 entries, iterating thru pages of results..." -ForegroundColor Green
+                do {
+                    $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+                    $url = $imageList.metadata.next_cursor
+                    $method = "GET"
+                    $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
+                } while ($imageList.metadata.next_cursor -ne $null -and $image -eq $null)
+            } else {#response had a single page, so let's grab our image from that single page
+                $myvarImage = $myvarImages.entities | where {$_.name -eq $myvarImageName}
+            }
             if ($myvarImage) {Write-Host "$(get-date) [WARNING] Image $myvarImageName already exists in the library: skipping import..." -ForegroundColor Yellow}
             else {
                 $myvarUrl = "https://"+$prism+":9440/PrismGateway/services/rest/v2.0/images/"
@@ -513,7 +523,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         }
 
         $mac_address = $nic.mac.address
-        $model = ""
+        $model = "e1000"
 
         #attach nic to vm
         $body = @{
@@ -573,7 +583,18 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             $myvarImageName = $myvarXML.domain.name+"_"+$disk.target.dev
 
             #get the corresponding image disk id
-            $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+            if ($imageList.metadata.next_cursor) {#response has more than 1 page, let's iterate
+                Write-Host "$(get-date) [INFO] Library has more than 100 entries, iterating thru pages of results..." -ForegroundColor Green
+                do {
+                    $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+                    $url = $imageList.metadata.next_cursor
+                    $method = "GET"
+                    $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
+                } while ($imageList.metadata.next_cursor -ne $null -and $image -eq $null)
+                Write-Host "$(get-date) [SUCCESS] We found our image!" -ForegroundColor Cyan
+            } else {#response had a single page, so let's grab our image from that single page
+                $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+            }
             if (!$image) {throw "$(get-date) [ERROR] Could not find image $myvarImageName on $prism"}
             $vmdisk_uuid = $image.vm_disk_id
 
