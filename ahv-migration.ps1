@@ -513,7 +513,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         }
 
         $mac_address = $nic.mac.address
-        $model = "E1000"
+        $model = ""
 
         #attach nic to vm
         $body = @{
