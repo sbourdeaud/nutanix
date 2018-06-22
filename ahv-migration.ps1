@@ -417,15 +417,15 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
                 $myvarImageImportTaskId = Invoke-PrismRESTCall -method "POST" -username $username -password $password -url $myvarUrl -body $myvarBody
 
                 #check on image import task status
-                Write-Host "$(get-date) [INFO] Checking status of the image import task $($myvarImageImportTaskId)..." -ForegroundColor Green
+                Write-Host "$(get-date) [INFO] Checking status of the image $myvarImage import task $($myvarImageImportTaskId.task_uuid) for VM $($myvarXML.domain.name)..." -ForegroundColor Green
                 Do {
                     $myvarTask = (Get-NTNXTask -TaskId $myvarImageImportTaskId)
                     if ($myvarTask.progress_status -eq "Failed") {
-                        throw "$(get-date) [ERROR] VM creation task for $myvarVMName failed. Exiting!"
+                        throw "$(get-date) [ERROR] Image $myvarImage import task for VM $($myvarXML.domain.name) failed. Exiting!"
                     } elseIf ($myvarTask.progress_status -eq "Succeeded") {
-                        Write-Host "$(get-date) [SUCCESS] VM $myvarVMName create task status has $($myvarTask.progress_status)!" -ForegroundColor Cyan
+                        Write-Host "$(get-date) [SUCCESS] Image $myvarImage import task for VM $($myvarXML.domain.name) has $($myvarTask.progress_status)!" -ForegroundColor Cyan
                     } else {
-                        Write-Host "$(get-date) [WARNING] VM $myvarVMName create task status is $($myvarTask.progress_status) with $($myvarTask.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                        Write-Host "$(get-date) [WARNING] Image $myvarImage import task status for VM $($myvarXML.domain.name) is $($myvarTask.progress_status) with $($myvarTask.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
                         Start-Sleep -Seconds 5
                     }
                 } While ($myvarTask.progress_status -ne "Succeeded")
