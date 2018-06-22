@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   This script can be used to import VMs which have been exported from Scale Computing.  It assumes XML and qcow2 files have been desposited into a container on the Nutanix cluster.
 .DESCRIPTION
@@ -415,12 +415,20 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
                 $myvarBody = @{annotation=$myvarAnnotation;image_type="disk_image";image_import_spec=@{storage_container_name=$container;url=$myvarSource};name=$myvarImageName}
                 $myvarBody = ConvertTo-Json $myvarBody
                 $myvarImageImportTaskId = Invoke-PrismRESTCall -method "POST" -username $username -password $password -url $myvarUrl -body $myvarBody
+
+                #check on image import task status
+                Write-Host "$(get-date) [INFO] Checking status of the image import task $($myvarImageImportTaskId)..." -ForegroundColor Green
                 Do {
-		            Start-Sleep -Seconds 15
                     $myvarTask = (Get-NTNXTask -TaskId $myvarImageImportTaskId)
-                    if ($myvarTask) {Write-Host "$(get-date) [INFO] Waiting for the Image import task for $myvarImageName to complete ($($myvarTask.percentage_complete)%)..." -ForegroundColor Green}
-                    else {Write-Host "$(get-date) [INFO] Image import task for $myvarImageName has completed!" -ForegroundColor Green}
-	            } While ($myvarTask.progressStatus -eq "Running")
+                    if ($myvarTask.progress_status -eq "Failed") {
+                        throw "$(get-date) [ERROR] VM creation task for $myvarVMName failed. Exiting!"
+                    } elseIf ($myvarTask.progress_status -eq "Succeeded") {
+                        Write-Host "$(get-date) [SUCCESS] VM $myvarVMName create task status has $($myvarTask.progress_status)!" -ForegroundColor Cyan
+                    } else {
+                        Write-Host "$(get-date) [WARNING] VM $myvarVMName create task status is $($myvarTask.progress_status) with $($myvarTask.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 5
+                    }
+                } While ($myvarTask.progress_status -ne "Succeeded")
             }
         }
 
