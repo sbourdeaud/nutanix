@@ -443,7 +443,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         {
 	        "KiB" {$myvarMemoryMB = $myvarMemory / 976.5625}
 	        "MiB" {$myvarMemoryMB = $myvarMemory / 0.953674316406}
-	        "GiB" {$myvarMemoryMB = $myvarMemory / 0.000931322574615}
+	        "GiB" {$myvarMemoryMB = [Math]::Floor([decimal]($myvarMemory / 0.000931322574615))}
         }
         $myvarCpuSockets = $myvarXML.domain.cpu.topology.sockets
         $myvarCpuCores = $myvarXML.domain.cpu.topology.cores
@@ -531,7 +531,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         }
 
         $mac_address = $nic.mac.address
-        $model = "e1000"
+        $model = $nic.model.type
 
         #attach nic to vm
         $body = @{
