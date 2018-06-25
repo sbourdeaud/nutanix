@@ -14,7 +14,7 @@
 .PARAMETER import
   Switch to specify you want to import VMs.  All XML files in the container will be processed.
 .PARAMETER export
-  Switch to specify you want to export a given AHV virtual machine instead.  The script will use SSHSessions to start the qemu-img conversion process on the AHV VM raw files and drop them in the specified container.
+  No longer a usable parameter.
 .PARAMETER cleanup
   When used with import, the cleanup switch will have the script remove imported disk images from the AHV image library as well as delete the xml and qcow2 file(s) in the container once the AHV VM has been created successfully.
 .PARAMETER vm
@@ -28,10 +28,8 @@
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .EXAMPLE
-  Import all VMs in the ctr1 container and cleanup after a successful import:
-  PS> .\ahv-migration.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -container ctr1 -import -cleanup
-  Export AHV virtual machine vm1 in the ctr1 container:
-  PS> .\ahv-migration.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -container ctr1 -export -vm vm1
+ .\ahv-migration.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -container ctr1 -import -cleanup
+ Import all VMs in the ctr1 container and cleanup after a successful import:
 .LINK
   http://www.nutanix.com/services
   https://github.com/sbourdeaud/nutanix
@@ -72,7 +70,7 @@ $HistoryText = @'
  ---------- ---- ---------------------------------------------------------------
  03/13/2017 sb   Initial release.
  06/18/2018 sb   Modified prep-work section to handle updates better and added bettertls module to deal with tls 1.2.
-                 Fixed an issue with disk uuid enumeration with recent releases of AOS.
+ 06/25/2018 sb   Multiple fixes in the import image library and vm creation routines.  Replaced all NTNX cmdlets with native REST API calls. Fixed disk attach routine so that disks are imported in taregt device name alphabetical order.
 ################################################################################
 '@
 $myvarScriptName = ".\ahv-migration.ps1"
@@ -171,7 +169,7 @@ add-type @"
 ########################
 <#
 .Synopsis
-   Gets status for a given Prism task uuid
+   Gets status for a given Prism task uuid (replaces NTNX cmdlet)
 .DESCRIPTION
    Gets status for a given Prism task uuid
 #>
@@ -205,13 +203,9 @@ function Get-NTNXTask
 
 <#
 .Synopsis
-   Short description
+   Gets a VM object using REST API (replaces NTNX cmdlet)
 .DESCRIPTION
-   Long description
-.EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   Gets a VM object using REST API (replaces NTNX cmdlet)
 #>
 function Get-NTNXVM
 {
@@ -238,13 +232,9 @@ function Get-NTNXVM
 
 <#
 .Synopsis
-   Short description
+   Gets an AHV library image object using REST (replaces NTNX cmdlet)
 .DESCRIPTION
-   Long description
-.EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   Gets an AHV library image object using REST (replaces NTNX cmdlet)
 #>
 function Get-NTNXImage
 {
@@ -272,13 +262,9 @@ function Get-NTNXImage
 
 <#
 .Synopsis
-   Short description
+   Deletes an AHV image from the library using REST (replaces NTNX cmdlet)
 .DESCRIPTION
-   Long description
-.EXAMPLE
-   Example of how to use this cmdlet
-.EXAMPLE
-   Another example of how to use this cmdlet
+   Deletes an AHV image from the library using REST (replaces NTNX cmdlet)
 #>
 function Remove-NTNXImage
 {
@@ -417,15 +403,15 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
                 $myvarImageImportTaskId = Invoke-PrismRESTCall -method "POST" -username $username -password $password -url $myvarUrl -body $myvarBody
 
                 #check on image import task status
-                Write-Host "$(get-date) [INFO] Checking status of the image $myvarImage import task $($myvarImageImportTaskId.task_uuid) for VM $($myvarXML.domain.name)..." -ForegroundColor Green
+                Write-Host "$(get-date) [INFO] Checking status of the image $myvarImageName import task $($myvarImageImportTaskId.task_uuid) for VM $($myvarXML.domain.name)..." -ForegroundColor Green
                 Do {
                     $myvarTask = (Get-NTNXTask -TaskId $myvarImageImportTaskId)
                     if ($myvarTask.progress_status -eq "Failed") {
-                        throw "$(get-date) [ERROR] Image $myvarImage import task for VM $($myvarXML.domain.name) failed. Exiting!"
+                        throw "$(get-date) [ERROR] Image $myvarImageName import task for VM $($myvarXML.domain.name) failed. Exiting!"
                     } elseIf ($myvarTask.progress_status -eq "Succeeded") {
-                        Write-Host "$(get-date) [SUCCESS] Image $myvarImage import task for VM $($myvarXML.domain.name) has $($myvarTask.progress_status)!" -ForegroundColor Cyan
+                        Write-Host "$(get-date) [SUCCESS] Image $myvarImageName import task for VM $($myvarXML.domain.name) has $($myvarTask.progress_status)!" -ForegroundColor Cyan
                     } else {
-                        Write-Host "$(get-date) [WARNING] Image $myvarImage import task status for VM $($myvarXML.domain.name) is $($myvarTask.progress_status) with $($myvarTask.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                        Write-Host "$(get-date) [WARNING] Image $myvarImageName import task status for VM $($myvarXML.domain.name) is $($myvarTask.progress_status) with $($myvarTask.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
                         Start-Sleep -Seconds 5
                     }
                 } While ($myvarTask.progress_status -ne "Succeeded")
@@ -580,15 +566,15 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
 
     $myvarVmDisks = $myvarXML.domain.devices.disk | where {$_.device -eq "Disk"}
 
-    ForEach ($disk in $myvarVmDisks) {
+    ForEach ($disk in ($myvarVmDisks.target.dev | Sort-Object)) {
             
             #figure out what the disk name should be
-            $myvarDiskName = $disk.source.name
+            $myvarDiskName = ($myvarVmDisks | where {$_.target.dev -eq $disk}).source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
             if (!(Test-Path N:\$myvarDiskName.qcow2)) {
                 throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
             }
-            $myvarImageName = $myvarXML.domain.name+"_"+$disk.target.dev
+            $myvarImageName = $myvarXML.domain.name+"_"+$disk
 
             #get the corresponding image disk id
             if ($imageList.metadata.next_cursor) {#response has more than 1 page, let's iterate
