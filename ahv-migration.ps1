@@ -343,7 +343,7 @@ catch {
 
 #region Process XML files
 Write-Host "$(get-date) [INFO] Processing XML files in \\$prism\$container..." -ForegroundColor Green
-$myvarXMLFiles = Get-ChildItem N:\ | where {$_.extension -eq '.xml'}
+$myvarXMLFiles = Get-ChildItem N:\ | Where-Object {$_.extension -eq '.xml'}
 
 foreach ($myvarXMLFile in $myvarXMLFiles) {
 
@@ -372,7 +372,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             $myvarAnnotation = "Imported using ahv-migration.ps1 script"
         }
     
-        $myvarVmDisks = $myvarXML.domain.devices.disk | where {$_.device -eq "Disk"}
+        $myvarVmDisks = $myvarXML.domain.devices.disk | Where-Object {$_.device -eq "Disk"}
         foreach ($myvarVmDisk in $myvarVmDisks) {
             $myvarDiskName = $myvarVmDisk.source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
@@ -386,13 +386,13 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             if ($myvarImages.metadata.next_cursor) {#response has more than 1 page, let's iterate
                 Write-Host "$(get-date) [INFO] Library has more than 100 entries, iterating thru pages of results..." -ForegroundColor Green
                 do {
-                    $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+                    $image = $imageList.Entities | Where-Object {$_.Name -eq $myvarImageName}
                     $url = $imageList.metadata.next_cursor
                     $method = "GET"
                     $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
                 } while ($imageList.metadata.next_cursor -ne $null -and $image -eq $null)
             } else {#response had a single page, so let's grab our image from that single page
-                $myvarImage = $myvarImages.entities | where {$_.name -eq $myvarImageName}
+                $myvarImage = $myvarImages.entities | Where-Object {$_.name -eq $myvarImageName}
             }
             if ($myvarImage) {Write-Host "$(get-date) [WARNING] Image $myvarImageName already exists in the library: skipping import..." -ForegroundColor Yellow}
             else {
@@ -441,7 +441,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         $myvarCpuCores = $myvarXML.domain.cpu.topology.cores
 
         $myvarVMs = Get-NTNXVM
-        $myvarVmInfo = $myvarVMs.entities | where {$_.name -eq $myvarVMName}
+        $myvarVmInfo = $myvarVMs.entities | Where-Object {$_.name -eq $myvarVMName}
         if ($myvarVmInfo) {
             Write-Host "$(get-date) [WARNING] VM $myvarVMName already exists: skipping creation!" -ForegroundColor Yellow
             $vm_uuid = $myvarVmInfo.uuid
@@ -503,14 +503,14 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
     Write-Host "$(get-date) [INFO] Attaching network devices to $myvarVMName..." -ForegroundColor Green
     ForEach ($nic in $myvarVmNICs) {
         #check if the network already exists, otherwise prompt for a network name
-        if (!($clusterNetworks.Entities | where {$_.uuid -eq $nic.network_uuid})) {
+        if (!($clusterNetworks.Entities | Where-Object {$_.uuid -eq $nic.network_uuid})) {
             Write-Host "$(get-date) [WARNING] Network uuid $($nic.network_uuid) does not exist on $prism..." -ForegroundColor Yellow
             Foreach ($networkEntry in $clusterNetworks.Entities) {
                 Write-Host "$(get-date) [INFO] Network $($networkEntry.name) with VLAN id $($networkEntry.vlan_id) is available on $prism..." -ForegroundColor Green
             }
             Do {
                 $network_label = Read-Host "Please enter the network label (case sensitive) you want to connect this VM to"
-                $network = $clusterNetworks.Entities | where {$_.name -eq $network_label}
+                $network = $clusterNetworks.Entities | Where-Object {$_.name -eq $network_label}
                 if ($network) {
                     $network_uuid = $network.uuid
                 } else {
@@ -570,12 +570,12 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
     $vm_uuid = $vmCreateTaskStatus.entity_list.entity_id
     Write-Host "$(get-date) [INFO] Attaching disks to VM $myvarVMName ($vm_uuid)..." -ForegroundColor Green
 
-    $myvarVmDisks = $myvarXML.domain.devices.disk | where {$_.device -eq "Disk"}
+    $myvarVmDisks = $myvarXML.domain.devices.disk | Where-Object {$_.device -eq "Disk"}
 
     ForEach ($disk in ($myvarVmDisks.target.dev | Sort-Object)) {
             
             #figure out what the disk name should be
-            $myvarDiskName = ($myvarVmDisks | where {$_.target.dev -eq $disk}).source.name
+            $myvarDiskName = ($myvarVmDisks | Where-Object {$_.target.dev -eq $disk}).source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
             if (!(Test-Path N:\$myvarDiskName.qcow2)) {
                 throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
@@ -586,14 +586,14 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             if ($imageList.metadata.next_cursor) {#response has more than 1 page, let's iterate
                 Write-Host "$(get-date) [INFO] Library has more than 100 entries, iterating thru pages of results..." -ForegroundColor Green
                 do {
-                    $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+                    $image = $imageList.Entities | Where-Object {$_.Name -eq $myvarImageName}
                     $url = $imageList.metadata.next_cursor
                     $method = "GET"
                     $imageList = Invoke-PrismRESTCall -method $method -url $url -username $username -password $password
                 } while ($imageList.metadata.next_cursor -ne $null -and $image -eq $null)
                 Write-Host "$(get-date) [SUCCESS] We found our image!" -ForegroundColor Cyan
             } else {#response had a single page, so let's grab our image from that single page
-                $image = $imageList.Entities | where {$_.Name -eq $myvarImageName}
+                $image = $imageList.Entities | Where-Object {$_.Name -eq $myvarImageName}
             }
             if (!$image) {throw "$(get-date) [ERROR] Could not find image $myvarImageName on $prism"}
             $vmdisk_uuid = $image.vm_disk_id
@@ -638,7 +638,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
     #endregion
 
     #region attach cdrom
-    $myvarVmCDROMs = $myvarXML.domain.devices.disk | where {$_.device -eq "cdrom"}
+    $myvarVmCDROMs = $myvarXML.domain.devices.disk | Where-Object {$_.device -eq "cdrom"}
     ForEach ($disk in $myvarVmCDROMs) {     
         Write-Host "$(get-date) [INFO] Attaching CDROM to $myvarVMName..." -ForegroundColor Green
         $body = @{
@@ -681,7 +681,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             $myvarImageName = $myvarXML.domain.name+"_"+$myvarVmDisk.target.dev
             Write-Host "$(get-date) [INFO] Removing image $myvarImageName from the library..." -ForegroundColor Green
             $myvarImages = Get-NTNXImage
-            $myvarImage = $myvarImages.entities | where {$_.name -eq $myvarImageName}
+            $myvarImage = $myvarImages.entities | Where-Object {$_.name -eq $myvarImageName}
             $myvarImageId = $myvarImage.uuid
             try 
             {
