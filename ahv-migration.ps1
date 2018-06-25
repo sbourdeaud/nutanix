@@ -70,7 +70,7 @@ $HistoryText = @'
  ---------- ---- ---------------------------------------------------------------
  03/13/2017 sb   Initial release.
  06/18/2018 sb   Modified prep-work section to handle updates better and added bettertls module to deal with tls 1.2.
- 06/25/2018 sb   Multiple fixes in the import image library and vm creation routines.  Replaced all NTNX cmdlets with native REST API calls. Fixed disk attach routine so that disks are imported in taregt device name alphabetical order.
+ 06/25/2018 sb   Multiple fixes in the import image library and vm creation routines.  Replaced all NTNX cmdlets with native REST API calls.
 ################################################################################
 '@
 $myvarScriptName = ".\ahv-migration.ps1"
@@ -429,8 +429,14 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
         {
 	        "KiB" {$myvarMemoryMB = $myvarMemory / 976.5625}
 	        "MiB" {$myvarMemoryMB = $myvarMemory / 0.953674316406}
-	        "GiB" {$myvarMemoryMB = [Math]::Floor([decimal]($myvarMemory / 0.000931322574615))}
+	        "GiB" {$myvarMemoryMB = $myvarMemory / 0.000931322574615}
         }
+        #convert memory value to nearest round GB
+        $myvarMemoryMB = [math]::Round($myvarMemoryMB) #this gives us a round number of MB
+        $myvarMemoryMB = $myvarMemoryMB / 1024 #converts to GB
+        $myvarMemoryMB = [math]::Truncate($myvarMemoryMB) #rounds down to nearest GB value
+        $myvarMemoryMB = $myvarMemoryMB * 1024 #converts back to MB, which is what AHV wants as input
+
         $myvarCpuSockets = $myvarXML.domain.cpu.topology.sockets
         $myvarCpuCores = $myvarXML.domain.cpu.topology.cores
 
@@ -445,7 +451,7 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
             #create the vm
             Write-Host "$(get-date) [INFO] Creating vm $myvarVMName..." -ForegroundColor Green
             if ($myvarVmInfo.description) {$description = $myvarVmInfo.description} else {$description = "This vm was imported on $(get-date) using the ahv-migration.ps1 script"}
-            $memory_mb = $myvarMemoryMB
+            $memory_mb = [math]::Round($myvarMemoryMB)
             $name = $myvarVMName
             $num_cores_per_vcpu = $myvarCpuCores
             $num_vcpus = $myvarCpuSockets
