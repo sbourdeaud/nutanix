@@ -572,15 +572,15 @@ foreach ($myvarXMLFile in $myvarXMLFiles) {
 
     $myvarVmDisks = $myvarXML.domain.devices.disk | Where-Object {$_.device -eq "Disk"}
 
-    ForEach ($disk in ($myvarVmDisks.target.dev | Sort-Object)) {
+    ForEach ($disk in $myvarVmDisks) {
             
             #figure out what the disk name should be
-            $myvarDiskName = ($myvarVmDisks | Where-Object {$_.target.dev -eq $disk}).source.name
+            $myvarDiskName = $disk.source.name
             $myvarDiskName = $myvarDiskName -creplace '^[^/]*/', ''
             if (!(Test-Path N:\$myvarDiskName.qcow2)) {
                 throw "$(get-date) [ERROR] Disk $myvarDiskName.qcow2 is not in \\$prism\$container"
             }
-            $myvarImageName = $myvarXML.domain.name+"_"+$disk
+            $myvarImageName = $myvarXML.domain.name+"_"+$disk.target.dev
 
             #get the corresponding image disk id
             if ($imageList.metadata.next_cursor) {#response has more than 1 page, let's iterate
