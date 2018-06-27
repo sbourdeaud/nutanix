@@ -316,6 +316,7 @@ $HistoryText = @'
  05/11/2018 sb   Initial release.
  05/28/2018 sb   Added checks for PowerCLI version and corrected a parameter check bug with -failover -planned.
  05/31/2018 sb   Added prismCreds parameter.
+ 06/27/2018 sb   Added BetterTls module for Tls 1.2
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -326,6 +327,39 @@ if ($History) {$HistoryText; exit}
 
 #check if we have all the required PoSH modules
 Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
+
+#region module BetterTls
+if (!(Get-Module -Name BetterTls)) {
+    Write-Host "$(get-date) [INFO] Importing module 'BetterTls'..." -ForegroundColor Green
+    try
+    {
+        Import-Module -Name BetterTls -ErrorAction Stop
+        Write-Host "$(get-date) [SUCCESS] Imported module 'BetterTls'!" -ForegroundColor Cyan
+    }#end try
+    catch #we couldn't import the module, so let's install it
+    {
+        Write-Host "$(get-date) [INFO] Installing module 'BetterTls' from the Powershell Gallery..." -ForegroundColor Green
+        try {Install-Module -Name BetterTls -Scope CurrentUser -ErrorAction Stop}
+        catch {throw "$(get-date) [ERROR] Could not install module 'BetterTls': $($_.Exception.Message)"}
+
+        try
+        {
+            Import-Module -Name BetterTls -ErrorAction Stop
+            Write-Host "$(get-date) [SUCCESS] Imported module 'BetterTls'!" -ForegroundColor Cyan
+        }#end try
+        catch #we couldn't import the module
+        {
+            Write-Host "$(get-date) [ERROR] Unable to import the module BetterTls : $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/BetterTls/0.1.0.0" -ForegroundColor Yellow
+            Exit
+        }#end catch
+    }#end catch
+}
+Write-Host "$(get-date) [INFO] Disabling Tls..." -ForegroundColor Green
+try {Disable-Tls -Tls -Confirm:$false -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not disable Tls : $($_.Exception.Message)"}
+Write-Host "$(get-date) [INFO] Enabling Tls 1.2..." -ForegroundColor Green
+try {Enable-Tls -Tls12 -Confirm:$false -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not enable Tls 1.2 : $($_.Exception.Message)"}
+#endregion
 
 #region module sbourdeaud is used for facilitating Prism REST calls
 if (!(Get-Module -Name sbourdeaud)) {
