@@ -472,7 +472,7 @@ Function Update-DRSVMToHostRule
 
 #region prepwork
 # get rid of annoying error messages
-if (!$debugme) {$ErrorActionPreference = "SilentlyContinue"}
+#if (!$debugme) {$ErrorActionPreference = "SilentlyContinue"}
 #check if we need to display help and/or history
 $HistoryText = @'
  Maintenance Log
@@ -485,12 +485,17 @@ $HistoryText = @'
  09/15/2016 sb   Changed password input to secure string
  06/05/2018 sb   Updated script to use REST API instead of NTNX cmdlets
  06/27/2018 sb   Added BetterTls module for Tls 1.2
+ 07/17/2018 sb   Added check for PoSH version and removed silentlycontinue as
+                 default for erroractionpreference
 ################################################################################
 '@
 $myvarScriptName = ".\add-DRSAffinityRulesForMA.ps1"
  
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
+
+#check PoSH version
+if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
 #let's make sure the PowerCLI modules are being used
 #check if we have all the required PoSH modules
