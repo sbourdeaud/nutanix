@@ -764,8 +764,11 @@ add-type @"
 						}
 					}#end foreacch IP C2 loop
 				}#end foreach VMK loop
-			}#end foreach VMhost loop
-			
+            }#end foreach VMhost loop
+            
+            if (!$myvarNtnxC1_vmhosts) {throw "$(get-date) [ERROR] No vmhosts were found for $ntnx_cluster1"}
+            if (!$myvarNtnxC2_vmhosts) {throw "$(get-date) [ERROR] No vmhosts were found for $ntnx_cluster2"}
+            
 			#check all vmhosts are part of the same vSphere cluster
 			OutputLogData -category "INFO" -message "Checking that all hosts are part of the same compute cluster..."
 			$myvarvSphereCluster = $myvarNtnxC1_vmhosts[0] | Get-Cluster  #we look at which cluster the first vmhost in cluster 1 belongs to.
