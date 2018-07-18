@@ -23,6 +23,8 @@
   Hostname or IP address of the vCenter Server.
 .PARAMETER noruleupdate
   Use this switch if you do NOT want to update DRS rules. Only groups will be updated. This can be useful when using the script within the context of a failback.
+.PARAMETER prismCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
   Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
   PS> .\add-DRSAffinityRulesForMA.ps1 -ntnx_cluster1 ntnxc1.local -ntnx_cluster2 ntnxc2.local -username admin -password nutanix/4u -vcenter vcenter1.local
@@ -30,7 +32,7 @@
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 22nd 2016
+  Revision: July 18th 2018
 #>
 
 #region parameters
@@ -47,11 +49,11 @@ Param
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$ntnx_cluster1,
 	[parameter(mandatory = $false)] [string]$ntnx_cluster2,
-	[parameter(mandatory = $false)] [string]$username,
-	[parameter(mandatory = $false)] [string]$password,
-	[parameter(mandatory = $false)] [string]$vcenter,
+    [parameter(mandatory = $false)] [string]$username,
+    [parameter(mandatory = $false)] [string]$password,
+    [parameter(mandatory = $false)] [string]$vcenter,
+    [parameter(mandatory = $false)] [PSCredential]$prismCreds,
     [parameter(mandatory = $false)] [switch]$noruleupdate
-    
 )
 #endregion
 
@@ -641,17 +643,23 @@ add-type @"
 	$myvarvCenterServers = $vcenter.Split(",") #make sure we parse the argument in case it contains several entries
 	if (!$ntnx_cluster1) {$ntnx_cluster1 = read-host "Enter the hostname or IP address of the first Nutanix cluster"}#prompt for the first Nutanix cluster name
 	if (!$ntnx_cluster2) {$ntnx_cluster2 = read-host "Enter the hostname or IP address of the second Nutanix cluster"}#prompt for the second Nutanix cluster name
-	if (!$username) {$username = read-host "Enter the Nutanix cluster username"}#prompt for the Nutanix cluster username
-	if ($password) {
-		$PrismSecurePassword = $password | ConvertTo-SecureString -AsPlainText -Force
-		Remove-Variable password #clear the password variable so we don't leak it
-	}
-	else 
-	{
-		$PrismSecurePassword = read-host "Enter the Nutanix cluster password" -AsSecureString #prompt for the Nutanix cluster password
-		#$spassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)) | ConvertTo-SecureString -AsPlainText -Force #we already have a secrue string
-		#Remove-Variable password #clear the password variable so we don't leak it
-	}
+	if (!$prismCreds) {
+        if (!$username) {$username = Read-Host "Enter the Prism username"} #if Prism username has not been specified, assume we are using admin
+
+        if (!$password) #if it was not passed as an argument, let's prompt for it
+        {
+            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
+        }
+        else #if it was passed as an argument, let's convert the string to a secure string and flush the memory
+        {
+            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+            Remove-Variable password
+        }
+    } else {
+        $prismCredentials = Get-CustomCredentials -credname $prismCreds
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+    }
 #endregion    	
 
 #region processing
@@ -963,12 +971,12 @@ add-type @"
 	Remove-Variable myvar* -ErrorAction SilentlyContinue
 	Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
 	Remove-Variable help -ErrorAction SilentlyContinue
-    	Remove-Variable history -ErrorAction SilentlyContinue
+    Remove-Variable history -ErrorAction SilentlyContinue
 	Remove-Variable log -ErrorAction SilentlyContinue
 	Remove-Variable ntnx_cluster1 -ErrorAction SilentlyContinue
 	Remove-Variable ntnx_cluster2 -ErrorAction SilentlyContinue
 	Remove-Variable username -ErrorAction SilentlyContinue
 	Remove-Variable password -ErrorAction SilentlyContinue
 	Remove-Variable vcenter -ErrorAction SilentlyContinue
-    	Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
