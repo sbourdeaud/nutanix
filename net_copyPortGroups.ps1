@@ -152,7 +152,7 @@ function OutputLogData {
 	
 	if ($sourcevSwitch -eq "all") {#if we want to copy all port groups on all virtual switches
 		#enumerate virtual switches on the source host
-		$sourceHostObject |Get-VirtualSwitch |Foreach {
+		$sourceHostObject |Get-VirtualSwitch |Foreach-Object {
 			$switch = $_.Name
 			#process all target hosts
 			foreach ($mytargetHost in $targetHosts) {
@@ -170,7 +170,7 @@ function OutputLogData {
 					#$vSwitch = $_
 				}#endif
 				#enumerate port groups on the source host
-				$sourceHostObject | Get-VirtualPortGroup -VirtualSwitch $switch |where {$_.VirtualSwitchName -eq $switch}| Foreach {
+				$sourceHostObject | Get-VirtualPortGroup -VirtualSwitch $switch | Where-Object {$_.VirtualSwitchName -eq $switch}| Foreach-Object {
 					$myPG = $_.name
 					#create the port group on the target host if it does not exist
 					If (($mytargetHostObject |Get-VirtualPortGroup -Name $myPG -ErrorAction SilentlyContinue)-eq $null){
@@ -186,7 +186,7 @@ function OutputLogData {
 		foreach ($mytargetHost in $targetHosts) {
 			$mytargetHostObject = Get-VMHost -Name $mytargetHost
 			#let's check to see if the vswitch already exists
-			If (($mytargetHostObject |Get-VirtualSwitch -Name $myvSwitch.Name -ErrorAction SilentlyContinue)-eq $null){
+			If (($mytargetHostObject |Get-VirtualSwitch -Name $myvSwitch.Name -ErrorAction SilentlyContinue) -eq $null){
 				OutputLogData -category "INFO" -message "Creating Virtual Switch $myvSwitch on $mytargetHost”
 				$NewSwitch = $mytargetHostObject |New-VirtualSwitch -Name $myvSwitch.Name -NumPorts $myvSwitch.NumPorts -Mtu $myvSwitch.Mtu
 			}#endif

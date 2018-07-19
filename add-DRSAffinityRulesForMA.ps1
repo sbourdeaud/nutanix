@@ -52,7 +52,7 @@ Param
     [parameter(mandatory = $false)] [string]$username,
     [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] [string]$vcenter,
-    [parameter(mandatory = $false)] [PSCredential]$prismCreds,
+    [parameter(mandatory = $false)] $prismCreds,
     [parameter(mandatory = $false)] [switch]$noruleupdate
 )
 #endregion
@@ -63,7 +63,7 @@ Param
 ########################
 
 #this function is used to output log data
-Function OutputLogData 
+Function OutputLogData
 {
 	#input: log category, log message
 	#output: text to standard output
@@ -116,7 +116,7 @@ Function OutputLogData
 }#end function OutputLogData
 
 #this function is used to create a DRS host group
-Function New-DrsHostGroup 
+Function New-DrsHostGroup
 {
 <#
 .SYNOPSIS
@@ -136,7 +136,7 @@ Function New-DrsHostGroup
 .EXAMPLE
   PS> New-DrsHostGroup -Host ESX001,ESX002 -Name "HostGroup01" -Cluster (Get-CLuster CL01)
 #>
- 
+
     Param(
         [parameter(valuefrompipeline = $true, mandatory = $true,
         HelpMessage = "Enter a host entity")]
@@ -147,7 +147,7 @@ Function New-DrsHostGroup
         [parameter(mandatory = $true,
         HelpMessage = "Enter a name for the group")]
             [String]$Name)
- 
+
     begin {
         switch ($Cluster.gettype().name) {
             "String" {$cluster = Get-Cluster $cluster | Get-View}
@@ -161,17 +161,17 @@ Function New-DrsHostGroup
         $group.Info = New-Object VMware.Vim.ClusterHostGroup
         $group.Info.Name = $Name
     }
- 
+
     Process {
         switch ($VMHost.gettype().name) {
-            "String[]" {Get-VMHost -Name $VMHost | %{$group.Info.Host += $_.Extensiondata.MoRef}}
-            "String" {Get-VMHost -Name $VMHost | %{$group.Info.Host += $_.Extensiondata.MoRef}}
+            "String[]" {Get-VMHost -Name $VMHost | ForEach-Object {$group.Info.Host += $_.Extensiondata.MoRef}}
+            "String" {Get-VMHost -Name $VMHost | ForEach-Object {$group.Info.Host += $_.Extensiondata.MoRef}}
             "VMHostImpl" {$group.Info.Host += $VMHost.Extensiondata.MoRef}
             "HostSystem" {$group.Info.Host += $VMHost.MoRef}
             default {throw "No valid type for parameter -VMHost specified"}
         }
     }
- 
+
     End {
         if ($group.Info.Host) {
             $spec.GroupSpec += $group
@@ -184,7 +184,7 @@ Function New-DrsHostGroup
 }
 
 #this function is used to create a DRS VM group
-Function New-DrsVmGroup 
+Function New-DrsVmGroup
 {
 <#
 .SYNOPSIS
@@ -204,7 +204,7 @@ Function New-DrsVmGroup
 .EXAMPLE
   PS> New-DrsVmGroup -VM VM001,VM002 -Name "VmGroup01" -Cluster (Get-CLuster CL01)
 #>
- 
+
     Param(
         [parameter(valuefrompipeline = $true, mandatory = $true,
         HelpMessage = "Enter a vm entity")]
@@ -215,7 +215,7 @@ Function New-DrsVmGroup
         [parameter(mandatory = $true,
         HelpMessage = "Enter a name for the group")]
             [String]$Name)
- 
+
     begin {
         switch ($Cluster.gettype().name) {
             "String" {$cluster = Get-Cluster $cluster | Get-View}
@@ -229,17 +229,17 @@ Function New-DrsVmGroup
         $group.Info = New-Object VMware.Vim.ClusterVmGroup
         $group.Info.Name = $Name
     }
- 
+
     Process {
         switch ($VM.gettype().name) {
-            "String[]" {Get-VM -Name $VM | %{$group.Info.VM += $_.Extensiondata.MoRef}}
-            "String" {Get-VM -Name $VM | %{$group.Info.VM += $_.Extensiondata.MoRef}}
+            "String[]" {Get-VM -Name $VM | ForEach-Object {$group.Info.VM += $_.Extensiondata.MoRef}}
+            "String" {Get-VM -Name $VM | ForEach-Object {$group.Info.VM += $_.Extensiondata.MoRef}}
             "VirtualMachineImpl" {$group.Info.VM += $VM.Extensiondata.MoRef}
             "VirtualMachine" {$group.Info.VM += $VM.MoRef}
             default {throw "No valid type for parameter -VM specified"}
         }
     }
- 
+
     End {
         if ($group.Info.VM) {
             $spec.GroupSpec += $group
@@ -276,7 +276,7 @@ Function New-DRSVMToHostRule
 .EXAMPLE
   PS> New-DrsVMToHostRule -VMGroup "VMGroup01" -HostGroup "HostGroup01" -Name "VMToHostRule01" -Cluster CL01 -AntiAffine -Mandatory
 #>
- 
+
     Param(
         [parameter(mandatory = $true,
         HelpMessage = "Enter a VM DRS group name")]
@@ -292,14 +292,14 @@ Function New-DRSVMToHostRule
             [String]$Name,
             [Switch]$AntiAffine,
             [Switch]$Mandatory)
- 
+
     switch ($Cluster.gettype().name) {
         "String" {$cluster = Get-Cluster $cluster | Get-View}
         "ClusterImpl" {$cluster = $cluster | Get-View}
         "Cluster" {}
         default {throw "No valid type for parameter -Cluster specified"}
     }
- 
+
     $spec = New-Object VMware.Vim.ClusterConfigSpecEx
     $rule = New-Object VMware.Vim.ClusterRuleSpec
     $rule.operation = "add"
@@ -319,7 +319,7 @@ Function New-DRSVMToHostRule
 }
 
 #this function is used to edit an existing DRS rule
-Function Update-DrsVMGroup 
+Function Update-DrsVMGroup
 {
 <#
 .SYNOPSIS
@@ -328,29 +328,29 @@ Update DRS VM group with a new collection of VM´s
 .DESCRIPTION
 Use this function to update the ClusterVMgroup with VMs that are sent in by parameters
 
-.PARAMETER  xyz 
+.PARAMETER  xyz
 
 .NOTES
 Author: Niklas Akerlund / RTS (most of the code came from http://communities.vmware.com/message/1667279 @LucD22 and GotMoo)
 Date: 2012-06-28
 #>
-	param 
+	param
     (
 	    $cluster,
 	    $VMs,
 	    $groupVMName
     )
-	
+
     $cluster = Get-Cluster $cluster
     $spec = New-Object VMware.Vim.ClusterConfigSpecEx
-    $groupVM = New-Object VMware.Vim.ClusterGroupSpec 
+    $groupVM = New-Object VMware.Vim.ClusterGroupSpec
     #Operation edit will replace the contents of the GroupVMName with the new contents seleced below.
-    $groupVM.operation = "edit" 
+    $groupVM.operation = "edit"
 
     $groupVM.Info = New-Object VMware.Vim.ClusterVmGroup
-    $groupVM.Info.Name = $groupVMName 
+    $groupVM.Info.Name = $groupVMName
 
-    Get-VM $VMs | %{$groupVM.Info.VM += $_.Extensiondata.MoRef}
+    Get-VM $VMs | ForEach-Object {$groupVM.Info.VM += $_.Extensiondata.MoRef}
     $spec.GroupSpec += $groupVM
 
     #Apply the settings to the cluster
@@ -358,7 +358,7 @@ Date: 2012-06-28
 }
 
 #this function is used to edit an existing DRS rule
-Function Update-DrsHostGroup 
+Function Update-DrsHostGroup
 {
 <#
 .SYNOPSIS
@@ -367,29 +367,29 @@ Update DRS Host group with a new collection of Hosts
 .DESCRIPTION
 Use this function to update the ClusterHostgroup with Hosts that are sent in by parameters
 
-.PARAMETER  xyz 
+.PARAMETER  xyz
 
 .NOTES
 Author: Niklas Akerlund / RTS (most of the code came from http://communities.vmware.com/message/1667279 @LucD22 and GotMoo)
 Date: 2012-06-28
 #>
-	param 
+	param
     (
 	    $cluster,
 	    $Hosts,
 	    $groupHostName
     )
-	
+
     $cluster = Get-Cluster $cluster
     $spec = New-Object VMware.Vim.ClusterConfigSpecEx
-    $groupHost = New-Object VMware.Vim.ClusterGroupSpec 
+    $groupHost = New-Object VMware.Vim.ClusterGroupSpec
     #Operation edit will replace the contents of the GroupVMName with the new contents seleced below.
-    $groupHost.operation = "edit" 
+    $groupHost.operation = "edit"
 
     $groupHost.Info = New-Object VMware.Vim.ClusterHostGroup
-    $groupHost.Info.Name = $groupHostName 
+    $groupHost.Info.Name = $groupHostName
 
-    Get-VMHost $Hosts | %{$groupHost.Info.Host += $_.Extensiondata.MoRef}
+    Get-VMHost $Hosts | ForEach-Object {$groupHost.Info.Host += $_.Extensiondata.MoRef}
     $spec.GroupSpec += $groupHost
 
     #Apply the settings to the cluster
@@ -421,7 +421,7 @@ Function Update-DRSVMToHostRule
 .EXAMPLE
   PS> New-DrsVMToHostRule -VMGroup "VMGroup01" -HostGroup "HostGroup01" -Name "VMToHostRule01" -Cluster CL01 -AntiAffine -Mandatory
 #>
- 
+
     Param(
         [parameter(mandatory = $true,
         HelpMessage = "Enter a VM DRS group name")]
@@ -443,14 +443,14 @@ Function Update-DRSVMToHostRule
             [String]$Name,
             [Switch]$AntiAffine,
             [Switch]$Mandatory)
- 
+
     switch ($Cluster.gettype().name) {
         "String" {$cluster = Get-Cluster $cluster | Get-View}
         "ClusterImpl" {$cluster = $cluster | Get-View}
         "Cluster" {}
         default {throw "No valid type for parameter -Cluster specified"}
     }
- 
+
     $spec = New-Object VMware.Vim.ClusterConfigSpecEx
     $rule = New-Object VMware.Vim.ClusterRuleSpec
     $rule.operation = "edit"
@@ -482,7 +482,7 @@ $HistoryText = @'
  ---------- ---- ---------------------------------------------------------------
  10/06/2015 sb   Initial release.
  06/21/2016 sb   Updated code to support refresh of existing rules as well as
-                 partial groups and rules creation.  Changed default groups and 
+                 partial groups and rules creation.  Changed default groups and
                  rule naming to simplify them.  Added the -noruleupdate switch.
  09/15/2016 sb   Changed password input to secure string
  06/05/2018 sb   Updated script to use REST API instead of NTNX cmdlets
@@ -492,7 +492,7 @@ $HistoryText = @'
 ################################################################################
 '@
 $myvarScriptName = ".\add-DRSAffinityRulesForMA.ps1"
- 
+
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
 
@@ -578,7 +578,7 @@ if (!(Get-Module VMware.PowerCLI)) {
         Import-Module VMware.VimAutomation.Core -ErrorAction Stop
         Write-Host "$(get-date) [SUCCESS] Loaded VMware.PowerCLI module" -ForegroundColor Cyan
     }
-    catch { 
+    catch {
         Write-Host "$(get-date) [WARNING] Could not load VMware.PowerCLI module!" -ForegroundColor Yellow
         try {
             Write-Host "$(get-date) [INFO] Installing VMware.PowerCLI module..." -ForegroundColor Green
@@ -591,7 +591,7 @@ if (!(Get-Module VMware.PowerCLI)) {
             }
             catch {throw "$(get-date) [ERROR] Could not load the VMware.PowerCLI module : $($_.Exception.Message)"}
         }
-        catch {throw "$(get-date) [ERROR] Could not install the VMware.PowerCLI module. Install it manually from https://www.powershellgallery.com/items?q=powercli&x=0&y=0 : $($_.Exception.Message)"} 
+        catch {throw "$(get-date) [ERROR] Could not install the VMware.PowerCLI module. Install it manually from https://www.powershellgallery.com/items?q=powercli&x=0&y=0 : $($_.Exception.Message)"}
     }
 }
 
@@ -637,14 +637,16 @@ add-type @"
 #region parameters validation
 	############################################################################
 	# command line arguments initialization
-	############################################################################	
+	############################################################################
 	#let's initialize parameters if they haven't been specified
 	if (!$vcenter) {$vcenter = read-host "Enter vCenter server name or IP address"}#prompt for vcenter server name
 	$myvarvCenterServers = $vcenter.Split(",") #make sure we parse the argument in case it contains several entries
 	if (!$ntnx_cluster1) {$ntnx_cluster1 = read-host "Enter the hostname or IP address of the first Nutanix cluster"}#prompt for the first Nutanix cluster name
 	if (!$ntnx_cluster2) {$ntnx_cluster2 = read-host "Enter the hostname or IP address of the second Nutanix cluster"}#prompt for the second Nutanix cluster name
 	if (!$prismCreds) {
-        if (!$username) {$username = Read-Host "Enter the Prism username"} #if Prism username has not been specified, assume we are using admin
+        if (!$username) {
+            $username = Read-Host "Enter the Prism username"
+        } #if Prism username has not been specified ask for it
 
         if (!$password) #if it was not passed as an argument, let's prompt for it
         {
@@ -655,35 +657,35 @@ add-type @"
             $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
             Remove-Variable password
         }
-    } else {
+    } else { #we are using custom credentials, so let's grab the username and password from that
         $prismCredentials = Get-CustomCredentials -credname $prismCreds
         $username = $prismCredentials.UserName
         $PrismSecurePassword = $prismCredentials.Password
     }
-#endregion    	
+#endregion
 
 #region processing
 	################################
 	##  Main execution here       ##
 	################################
-	
+
 	#building a variable containing the Nutanix cluster names
 	$myvarNutanixClusters = @($ntnx_cluster1,$ntnx_cluster2)
 	#initialize variables we'll need to store information about the Nutanix clusters
 	$myvarNtnxC1_hosts, $myvarNtnxC2_hosts, $myvarNtnxC1_MaActiveCtrs, $myvarNtnxC2_MaActiveCtrs = @()
-	$myvarCounter = 1
-	
+	$myvarCounter = 1 #we use this to store results differently for cluster 1 and 2
+
 	#connect to each Nutanix cluster to figure out the info we need
 	foreach ($myvarNutanixCluster in $myvarNutanixClusters)
 	{
-		
+
 		###########################################
 		# processing for each Nutanix cluster here#
 		###########################################
-			
-		if ($myvarCounter -eq 1)
+
+		if ($myvarCounter -eq 1) #we're processing data from cluster 1
 		{
-                #put get hosts here and access hypervisor_address property
+                #get hosts and access hypervisor_address property
                 Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
                 $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/hosts/"
                 $method = "GET"
@@ -696,12 +698,12 @@ add-type @"
                 $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
                 $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                $myvarNtnxC1_MaActiveCtrs = ($myvarMaActivePDs.entities | where {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
+                $myvarNtnxC1_MaActiveCtrs = ($myvarMaActivePDs.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
 			}
-		if ($myvarCounter -eq 2)
+		if ($myvarCounter -eq 2) #we're processing data from cluster 2
 		{
-				#put get hosts here and access hypervisor_address property
+				#get hosts and access hypervisor_address property
                 Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
                 $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/hosts/"
                 $method = "GET"
@@ -714,17 +716,17 @@ add-type @"
                 $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
                 $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                $myvarNtnxC2_MaActiveCtrs = ($myvarMaActivePDs.entities | where {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
+                $myvarNtnxC2_MaActiveCtrs = ($myvarMaActivePDs.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
 			}
-		
+
 		#increment the counter
 		++$myvarCounter
 	}#end foreach Nutanix cluster loop
-	
-	
+
+
 	#connect to vcenter now
-	foreach ($myvarvCenter in $myvarvCenterServers)	
+	foreach ($myvarvCenter in $myvarvCenterServers)
 	{
 		OutputLogData -category "INFO" -message "Connecting to vCenter server $myvarvCenter..."
 		if (!($myvarvCenterObject = Connect-VIServer $myvarvCenter))#make sure we connect to the vcenter server OK...
@@ -737,15 +739,15 @@ add-type @"
 		{
 			OutputLogData -category "INFO" -message "Connected to vCenter server $myvarvCenter."
 		}#endelse
-		
+
 		if ($myvarvCenterObject)
 		{
-		
+
 			##################################
 			#main processing for vcenter here#
 			##################################
 
-            
+
             #######################
             # PROCESS VMHOSTS
 
@@ -770,7 +772,7 @@ add-type @"
 					}#end foreacch IP C1 loop
 					foreach ($myvarHostIP in $myvarNtnxC2_hosts) #compare to the host IP addresses we got from the Nutanix cluster 2
 					{
-						if ($myvarHostVmk.IP -eq $myvarHostIP) 
+						if ($myvarHostVmk.IP -eq $myvarHostIP)
 						{
 							OutputLogData -category "INFO" -message "$myvarVMHost.Name is a host in $ntnx_cluster2..."
 							$myvarNtnxC2_vmhosts += $myvarVMHost #if we get a match, that vcenter host is in cluster 2
@@ -778,23 +780,23 @@ add-type @"
 					}#end foreacch IP C2 loop
 				}#end foreach VMK loop
             }#end foreach VMhost loop
-            
+
             if (!$myvarNtnxC1_vmhosts) {throw "$(get-date) [ERROR] No vmhosts were found for $ntnx_cluster1"}
             if (!$myvarNtnxC2_vmhosts) {throw "$(get-date) [ERROR] No vmhosts were found for $ntnx_cluster2"}
-            
+
 			#check all vmhosts are part of the same vSphere cluster
 			OutputLogData -category "INFO" -message "Checking that all hosts are part of the same compute cluster..."
 			$myvarvSphereCluster = $myvarNtnxC1_vmhosts[0] | Get-Cluster  #we look at which cluster the first vmhost in cluster 1 belongs to.
 			$myvarvSphereClusterName = $myvarvSphereCluster.Name
 			$myvarvSphereClusterVMHosts = $myvarNtnxC1_vmhosts + $myvarNtnxC2_vmhosts #let's create an array with all vmhosts that should be in the compute cluster
-			
+
             #get existing DRS groups
             $myvarDRSGroups = (get-cluster $myvarvSphereClusterName).ExtensionData.ConfigurationEx.group
 
             #get existing DRS rules
             $myvarClusterComputeResourceView = Get-View -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvarvSphereClusterName}
             $myvarClusterDRSRules = $myvarClusterComputeResourceView.ConfigurationEx.Rule
-            
+
             foreach ($myvarvSphereClusterVMHost in $myvarvSphereClusterVMHosts) #let's now lok at each vmhost and which cluster they belong to
 			{
 				$myvarVMHostCluster = $myvarvSphereClusterVMHost | Get-Cluster #which cluster does this host belong to?
@@ -806,7 +808,7 @@ add-type @"
 					break #we'l stop right here since at least one vmhost is not in the right compute cluster
 				}
 			}#end foreach cluster vmhost loop
-						
+
 			#check that vSphere cluster has HA and DRS enabled
 			OutputLogData -category "INFO" -message "Checking HA is enabled on $myvarvSphereClusterName..."
 			if ($myvarvSphereCluster.HaEnabled -ne $true) {OutputLogData -category "WARN" -message "HA is not enabled on $myvarvSphereClusterName!"}
@@ -816,9 +818,9 @@ add-type @"
 				OutputLogData -category "ERROR" -message "DRS is not enabled on $myvarvSphereClusterName!"
 				break #exit since DRS is not enabled
 			}
-			
+
             #check to see if the host group already exists
-            $myvarDRSHostGroups = $myvarDRSGroups |?{$_.host} #keep host groups
+            $myvarDRSHostGroups = $myvarDRSGroups | Where-Object {$_.host} #keep host groups
 
             #CREATE DRS affinity groups for hosts in each nutanix cluster
             $myvarNtnxC1_DRSHostGroupName = "DRS_HG_MA_" + $ntnx_cluster1
@@ -852,11 +854,11 @@ add-type @"
             # PROCESS VMS and RULES
 
             #check existing vm groups
-            $myvarDRSVMGroups = $myvarDRSGroups |?{$_.vm} #keep vm groups
+            $myvarDRSVMGroups = $myvarDRSGroups |Where-Object {$_.vm} #keep vm groups
 
             #retrieve names of VMs in each active datastore
 			$myvarNtnxC1_vms, $myvarNtnxC2_vms = @()
-			
+
             ##########################################################
             #Process VM DRS Groups and DRS Rules for Nutanix cluster 1
             foreach ($myvarDatastore in $myvarNtnxC1_MaActiveCtrs)
@@ -865,8 +867,8 @@ add-type @"
 				$myvarNtnxC1_vms += Get-Datastore -Name $myvarDatastore | Get-VM
 
                 $myvarDRSVMGroupName = "DRS_VM_MA_" + $myvarDatastore
-                
-                
+
+
                 #compare. if not exist then create
                 if (!($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName})) #the DRS VM Group does not exist, so let's create it
                 {
@@ -879,25 +881,25 @@ add-type @"
                     OutputLogData -category "INFO" -message "Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster1..."
                     Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $myvarNtnxC1_vms -groupVMName $myvarDRSVMGroupName
                 }
-                
+
 
                 #retrieve DRS rule
                 $myvarDRSRuleName = "DRS_Rule_MA_" + $myvarDatastore
 
-                
+
                 #if not exist create
                 if (!($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName})) #the DRS VM Group does not exist, so let's create it
                 {
 				    #create DRS affinity rules for VMs to Hosts
 				    OutputLogData -category "INFO" -message "Creating DRS rule $myvarDRSRuleName on cluster $myvarvSphereCluster so that VMs in $myvarDRSVMGroupName should run on hosts in $myvarNtnxC1_DRSHostGroupName..."
-				    
+
 				    New-DrsVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC1_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster
                 }
                 else #the DRS rule is already there
                 {
-                    
+
                     if (!($noruleupdate))
-                    {                     
+                    {
                         OutputLogData -category "INFO" -message "Updating DRS rule $myvarDRSRuleName on cluster $myvarvSphereCluster for $myvarDatastore..."
                         Update-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC1_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -RuleKey $(($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}).Key) -RuleUuid $(($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}).RuleUuid)
                     }
@@ -915,7 +917,7 @@ add-type @"
 
                 $myvarDRSVMGroupName = "DRS_VM_MA_" + $myvarDatastore
 
-                
+
                 #compare. if not exist then create
                 if (!($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName}))
                 {
@@ -927,7 +929,7 @@ add-type @"
                     OutputLogData -category "INFO" -message "Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster2..."
                     Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $myvarNtnxC2_vms -groupVMName $myvarDRSVMGroupName
                 }
-                
+
 
                 $myvarDRSRuleName = "DRS_Rule_MA_" + $myvarDatastore
                 #retrieve DRS rule
@@ -936,12 +938,12 @@ add-type @"
                 {
 				    #create DRS affinity rules for VMs to Hosts
 				    OutputLogData -category "INFO" -message "Creating DRS rule $myvarDRSVMGroupName on cluster $myvarvSphereClusterName so that VMs in $myvarDRSVMGroupName should run on hosts in $myvarNtnxC2_DRSHostGroupName..."
-				    
+
 				    New-DrsVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC2_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster
                 }
                 else #the DRS rule is already there
                 {
-                    
+
                     if (!($noruleupdate))
                     {
                         OutputLogData -category "INFO" -message "Updating DRS rule $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for $myvarDatastore..."
@@ -951,13 +953,13 @@ add-type @"
 
 			}#end foreach datastore in C2 loop
 
-			
-		
+
+
 		}#endif
         OutputLogData -category "INFO" -message "Disconnecting from vCenter server $vcenter..."
 		Disconnect-viserver -Confirm:$False #cleanup after ourselves and disconnect from vcenter
 	}#end foreach vCenter
-#endregion	
+#endregion
 
 #region cleanup
 #########################
@@ -966,7 +968,7 @@ add-type @"
 
 	#let's figure out how much time this all took
 	OutputLogData -category "SUM" -message "total processing time: $($myvarElapsedTime.Elapsed.ToString())"
-	
+
 	#cleanup after ourselves and delete all custom variables
 	Remove-Variable myvar* -ErrorAction SilentlyContinue
 	Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
