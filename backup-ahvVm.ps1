@@ -99,25 +99,25 @@ function detach-disks
 #>
 param
 	(
-		[string] 
+		[string]
         $username,
-		
-        [SecureString] 
+
+        [SecureString]
         $password,
-        
-        [string] 
+
+        [string]
         $prism,
 
-        [string] 
+        [string]
         $vm,
 
-        [string] 
+        [string]
         $uuid
 	)
 
     begin {}
 
-    process 
+    process
     {
 
     #retrieve details about the proxy vm and its currently attached disks
@@ -128,7 +128,7 @@ param
     Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of attached disks on $vm!" -ForegroundColor Cyan
     #determine which disks need to be detached
     $diskToDetach_uuids = @()
-    foreach ($disk in ($vmDetails.vm_disk_info | where {$_.disk_address.device_index -ne 0})) {
+    foreach ($disk in ($vmDetails.vm_disk_info | Where-Object {$_.disk_address.device_index -ne 0})) {
         $diskToDetach_uuids += $disk.disk_address.vmdisk_uuid
     }
     if (!$diskToDetach_uuids)
@@ -185,7 +185,7 @@ $HistoryText = @'
 ################################################################################
 '@
 $myvarScriptName = ".\template_prism_rest.ps1"
- 
+
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
 
@@ -201,7 +201,7 @@ if ($History) {$HistoryText; exit}
                 [ValidateSet('y','n')]$ChocoInstall = Read-Host "Do you want to install the chocolatey package manager? (y/n)"
                 if ($ChocoInstall -eq "y") {
                     Write-Host "$(get-date) [INFO] Downloading and running chocolatey installation script from chocolatey.org..." -ForegroundColor Green
-                    iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+                    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
                     Write-Host "$(get-date) [INFO] Downloading and installing the latest Powershell version from chocolatey.org..." -ForegroundColor Green
                     choco install -y powershell
                 } else {
@@ -328,8 +328,8 @@ add-type @"
 #region parameters validation
 	############################################################################
 	# command line arguments initialization
-	############################################################################	
-    
+	############################################################################
+
     if (!$diskDetachAll -and !$snapDeleteAll) {
         if ($isLinux -and ($backupPath[-1] -ne "/")) {$backupPath += "/"} elseIf (!$isLinux -and ($backupPath[-1] -ne "\")) {$backupPath += "\"}
         if (!(Test-Path $backupPath)) {
@@ -347,14 +347,14 @@ add-type @"
         $proxy = Read-Host "Enter the name of the proxy vm from which disks must be detached"
     }
 
-    
+
 #endregion
 
-#region processing	
+#region processing
 	################################
 	##  Main execution here       ##
 	################################
-   
+
     #retrieving all AHV vm information
     Write-Host "$(get-date) [INFO] Retrieving list of VMs..." -ForegroundColor Green
     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
@@ -362,19 +362,19 @@ add-type @"
     $vmList = Get-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
     Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs list from $cluster!" -ForegroundColor Cyan
 
-    
-    if ($proxy) {$proxyUuid = ($vmList.entities | where {$_.name -eq $proxy}).uuid}
-    
+
+    if ($proxy) {$proxyUuid = ($vmList.entities | Where-Object {$_.name -eq $proxy}).uuid}
+
     if ($diskDetachAll) {#detach all disks from the proxy if this is what was asked
         detach-disks -username $username -password $PrismSecurePassword -vm $proxy -uuid $proxyUuid -prism $cluster
     #otherwise start normal processing
     } ElseIf ($restore) {#let's restore that vm
-        
+
         Foreach ($vm in $vms) {
 
         #region preparing stuff
         #figuring out the uuid for the vm and the proxy
-        $vmUuid = ($vmList.entities | where {$_.name -eq $vm}).uuid
+        $vmUuid = ($vmList.entities | Where-Object {$_.name -eq $vm}).uuid
 
         #check if the json file is there
         if (!(Test-Path $backupPath/$vm.json)) {
@@ -412,11 +412,11 @@ add-type @"
 
                 #check to see if the image already exists
                 Write-Host "$(get-date) [INFO] Checking if the vm disk file $diskImageName already exists in the library..." -ForegroundColor Green
-                if ($imageList.entities | where {$_.name -eq $diskImageName}) {
+                if ($imageList.entities | Where-Object {$_.name -eq $diskImageName}) {
                     Write-Host "$(get-date) [WARNING] Image $diskImageName already exists in $cluster library! Skipping import..." -ForegroundColor Yellow
                 } else {#the image does not exist yet
-                    
-                    $container = $storageContainers.entities | where {$_.storage_container_uuid -eq $disk.storage_container_uuid}
+
+                    $container = $storageContainers.entities | Where-Object {$_.storage_container_uuid -eq $disk.storage_container_uuid}
                     if (!$container) {
                         Write-Host "$(get-date) [WARN] Can't find a storage container on $cluster with uuid $($disk.storage_container_uuid)." -ForegroundColor Yellow
                         Foreach ($validContainer in $storageContainers.entities) {
@@ -424,7 +424,7 @@ add-type @"
                         }
                         Do {
                             $container_uuid = Read-Host "Please enter the name of the container where you have copied this vm data file"
-                            $container = $storageContainers.entities | where {$_.storage_container_uuid -eq $container_uuid}
+                            $container = $storageContainers.entities | Where-Object {$_.storage_container_uuid -eq $container_uuid}
                             if (!$container) {
                                    Write-Host "$(get-date) [WARN] Can't find a storage container on $cluster with uuid $($disk.storage_container_uuid)." -ForegroundColor Yellow
                                     Foreach ($validContainer in $storageContainers.entities) {
@@ -441,7 +441,7 @@ add-type @"
                     $method = "GET"
                     $vdisksGET = Get-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
 
-                    if (!($vdisksGET.entities | where {$_.name -eq $diskImageName})) {Write-Host "$(get-date) [ERROR] Could not find file $diskImageName in container $($container.name) on $cluster! Please make sure to copy ALL vm disk files from the backup location to the root directory of that container before attempting to restore the vm! Exiting." -ForegroundColor Red; Exit}
+                    if (!($vdisksGET.entities | Where-Object {$_.name -eq $diskImageName})) {Write-Host "$(get-date) [ERROR] Could not find file $diskImageName in container $($container.name) on $cluster! Please make sure to copy ALL vm disk files from the backup location to the root directory of that container before attempting to restore the vm! Exiting." -ForegroundColor Red; Exit}
                     Write-Host "$(get-date) [SUCCESS] Found $diskImageName in container $($container.name) on $cluster!" -ForegroundColor Cyan
 
                     #create image
@@ -486,9 +486,9 @@ add-type @"
         #endregion
 
         #region create vm (POST v2 /vms/)
-        
+
         #first check that the vm doesn't already exist
-        if ($VmList.Entities | where {$_.name -eq $vm}) {Write-Host "$(get-date) [ERROR] VM $vm already exists on $cluster! Exiting." -ForegroundColor Red; Exit}
+        if ($VmList.Entities | Where-Object {$_.name -eq $vm}) {Write-Host "$(get-date) [ERROR] VM $vm already exists on $cluster! Exiting." -ForegroundColor Red; Exit}
 
         #create the vm
         Write-Host "$(get-date) [INFO] Creating vm $vm..." -ForegroundColor Green
@@ -546,7 +546,7 @@ add-type @"
                 $diskImageName = $vm+"_"+$($disk.disk_address.device_bus)+"_"+$($disk.disk_address.device_index)+"_"+$($disk.disk_address.vmdisk_uuid)+".qcow2"
 
                 #get the corresponding image disk id
-                $image = $imageList.Entities | where {$_.Name -eq $diskImageName}
+                $image = $imageList.Entities | Where-Object {$_.Name -eq $diskImageName}
                 if (!$image) {}
                 $vmdisk_uuid = $image.vm_disk_id
                 $device_bus = $disk.disk_address.device_bus
@@ -642,14 +642,14 @@ add-type @"
         Write-Host "$(get-date) [INFO] Attaching network devices to $vm..." -ForegroundColor Green
         ForEach ($nic in $vmInfo.vm_nics) {
             #check if the network already exists, otherwise prompt for a network name
-            if (!($clusterNetworks.Entities | where {$_.uuid -eq $nic.network_uuid})) {
+            if (!($clusterNetworks.Entities | Where-Object {$_.uuid -eq $nic.network_uuid})) {
                 Write-Host "$(get-date) [WARNING] Network uuid $($nic.network_uuid) does not exist on $cluster..." -ForegroundColor Yellow
                 Foreach ($networkEntry in $clusterNetworks.Entities) {
                     Write-Host "$(get-date) [INFO] Network $($networkEntry.name) with VLAN id $($networkEntry.vlan_id)is available on $cluster..." -ForegroundColor Green
                 }
                 Do {
                     $network_label = Read-Host "Please enter the network label (case sensitive) you want to connect this VM to. (To find out which network label this VM was previously connected to, please look for its previous cluster network json configuration file in $backupPath)"
-                    $network = $clusterNetworks.Entities | where {$_.name -eq $network_label}
+                    $network = $clusterNetworks.Entities | Where-Object {$_.name -eq $network_label}
                     if ($network) {
                         $network_uuid = $network.uuid
                     } else {
@@ -696,9 +696,9 @@ add-type @"
             } While ($nicAttachTaskStatus.progress_status -ne "Succeeded")
 
         }#end foreach nic
-        
+
         #endregion
-        
+
         #region remove disks from image library
         Write-Host "$(get-date) [INFO] Cleaning up the image library..." -ForegroundColor Green
         #Refreshing list of existing images
@@ -716,7 +716,7 @@ add-type @"
                 Write-Host "$(get-date) [INFO] Removing $diskImageName from the library..." -ForegroundColor Green
                 #check to see if the image already exists
                 Write-Host "$(get-date) [INFO] Checking if the vm disk file $diskImageName exists in the library..." -ForegroundColor Green
-                $image = $imageList.entities | where {$_.name -eq $diskImageName}
+                $image = $imageList.entities | Where-Object {$_.name -eq $diskImageName}
                 if ($image) {
                     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/images/$($image.uuid)"
                     $method = "DELETE"
@@ -747,7 +747,7 @@ add-type @"
         }#end foreach vm
 
     } Else {#let's backup that vm
-        
+
         #getting info about the cluster networks
         Write-Host "$(get-date) [INFO] Retrieving the list of networks on $cluster..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
@@ -762,7 +762,7 @@ add-type @"
         Foreach ($vm in $vms) {
 
         #region preparing, retrieving and saving vm & network information
-        
+
         #getting identifier (required for api v3)
         #$deleteIdentifiers = Get-PrismRESTCall -method DELETE -username $username -password $password -url "https://$($cluster):9440/api/nutanix/v3/idempotence_identifiers/$($env:COMPUTERNAME)"
         if ($IsLinux) {$client_identifier = hostname} else {$client_identifier = "$env:COMPUTERNAME"}
@@ -779,10 +779,10 @@ add-type @"
         #endregion
 
         #figuring out the uuid for the vm and the proxy
-        $vmUuid = ($vmList.entities | where {$_.name -eq $vm}).uuid
+        $vmUuid = ($vmList.entities | Where-Object {$_.name -eq $vm}).uuid
 
         #first check that the vm exists
-        if ($vmList.Entities | where {$_.name -eq $vm}) {Write-Host "$(get-date) [SUCCESS] $vm exists on $cluster!" -ForegroundColor Cyan} else {Write-Host "$(get-date) [ERROR] $vm could not be found on $cluster!" -ForegroundColor Red; Exit}
+        if ($vmList.Entities | Where-Object {$_.name -eq $vm}) {Write-Host "$(get-date) [SUCCESS] $vm exists on $cluster!" -ForegroundColor Cyan} else {Write-Host "$(get-date) [ERROR] $vm could not be found on $cluster!" -ForegroundColor Red; Exit}
 
         #getting info about the source vm
         Write-Host "$(get-date) [INFO] Retrieving the configuration of $vm..." -ForegroundColor Green
@@ -790,7 +790,8 @@ add-type @"
         $method = "GET"
         $vmConfig = Get-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved the configuration of $vm..." -ForegroundColor Cyan
-        
+        if ($debugme) {Write-Host -ForegroundColor Purple "$(get-date) [DEBUG] vmConfig: $vmConfig"}
+
         #saving the source vm configuration information
         Write-Host "$(get-date) [INFO] Saving $vm configuration to $($backupPath)$($vm).json..." -ForegroundColor Green
         $vmConfig | ConvertTo-Json -Depth 4 | Out-File -FilePath "$($backupPath)$($vm).json"
@@ -808,18 +809,18 @@ add-type @"
             Write-Host "$(get-date) [INFO] Retrieving snapshot list..." -ForegroundColor Green
             $backupSnapshots = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -body $body
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved the snapshot list..." -ForegroundColor Cyan
-            
+
             ForEach ($snapshot in $backupSnapshots.entities) {
                 Write-Host "$(get-date) [INFO] Deleting snapshot $($snapshot.metadata.uuid)..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots/$($snapshot.metadata.uuid)"
                 $method = "DELETE"
-                Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url                
+                Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
                 Write-Host "$(get-date) [SUCCESS] Successfully deleted snapshot $($snapshot.metadata.uuid)!" -ForegroundColor Cyan
             }
 
         #otherwise continue with normal processing
         } else {#we're not just deleting snapshots
-            
+
             #region snapshot the vm                                                                                                                                                            #region creating a snapshot
             Write-Host "$(get-date) [INFO] Creating a crash consistent snapshot of vm $vm..." -ForegroundColor Green
             $snapshotName = "backup.snapshot.$(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$vm"
@@ -846,7 +847,7 @@ add-type @"
                 $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots/$($snapshotAllocatedId.uuid_list[0])"
                 $method = "GET"
                 $snapshotStatus = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
-                if ($debugme) {Write-Host -ForegroundColor Red "snapshotStatus: $($snapshotStatus.status)"}
+                if ($debugme) {Write-Host -ForegroundColor Purple "$(get-date) [DEBUG] snapshotStatus.status: $($snapshotStatus.status)"}
                 if ($snapshotStatus.status.state -eq "kError") {
                     Write-Host "$(get-date) [ERROR] $($snapshotStatus.status.message_list.message)" -ForegroundColor Red
                     Exit
@@ -858,7 +859,7 @@ add-type @"
                 }
             } While ($snapshotStatus.status.state -ne "COMPLETE")
             #endregion
-            if ($debugme) {Write-Host -ForegroundColor Red "snapshot file list: $($snapshotStatus.status.snapshot_file_list)"}
+            if ($debugme) {Write-Host -ForegroundColor Purple "$(get-date) [DEBUG] snapshotStatus.status.snapshot_file_list: $($snapshotStatus.status.snapshot_file_list)"}
             #process with a proxy
             if ($proxy) {
                 #region attach disks to proxy
@@ -867,9 +868,9 @@ add-type @"
                 #building our reference variable to map disks/snapshots/scsi_index
                 [System.Collections.ArrayList]$diskToAttachRefArray = New-Object System.Collections.ArrayList($null)
                 foreach ($snapshotFile in $snapshotStatus.status.snapshot_file_list) {
-                    if ($debugme) {write-host -ForegroundColor Red "vmConfig.vm_disk_info: $($vmConfig.vm_disk_info)"}
-                    foreach ($disk in ($vmConfig.vm_disk_info | where {$_.is_cdrom -eq $false})) {
-                        if ($debugme) {write-host -ForegroundColor Red "snashotFile.file_path: $($snapshotFile.file_path)"}
+                    if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] vmConfig.vm_disk_info: $($vmConfig.vm_disk_info)"}
+                    foreach ($disk in ($vmConfig.vm_disk_info | Where-Object {$_.is_cdrom -eq $false})) {
+                        if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] snashotFile.file_path: $($snapshotFile.file_path)"}
                         if ($snapshotFile.file_path -like "*$($disk.disk_address.vmdisk_uuid)") {
                             $diskToAttachRef = @{"source_device_bus"=$disk.disk_address.device_bus;"source_device_index"=$disk.disk_address.device_index;"source_vmdisk_uuid"=$disk.disk_address.vmdisk_uuid;"snapshot_file_path"=$snapshotFile.snapshot_file_path}
                             $diskToAttachRefArray.Add((New-Object PSObject -Property $diskToAttachRef)) | Out-Null
@@ -877,8 +878,8 @@ add-type @"
                     }
                 }
 
-                if ($debugme) {write-host -ForegroundColor Red "DEBUG: diskToAttachRefArray: $diskToAttachRefArray"}
-                
+                if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] diskToAttachRefArray: $diskToAttachRefArray"}
+
                 #attaching disks in order of scsi device index
                 $content = @{
                     uuid = "$proxyUuid"
@@ -895,7 +896,7 @@ add-type @"
                     )
                 }
                 $body = (ConvertTo-Json $content -Depth 4)
-                if ($debugme) {write-host -ForegroundColor Red "DEBUG: json body: $body"}
+                if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] JSON body: $body"}
 
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($proxyUuid)/disks/attach"
                 $method = "POST"
@@ -926,7 +927,7 @@ add-type @"
                         $method = "GET"
                         $proxyVmDetails = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
                         Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of attached disks on $proxy!" -ForegroundColor Cyan
-                        $proxyVmDisksAttached = $proxyVmDetails.vm_disk_info | where {$_.disk_address.device_index -ne 0}
+                        $proxyVmDisksAttached = $proxyVmDetails.vm_disk_info | Where-Object {$_.disk_address.device_index -ne 0}
 
                         Write-Host "$(get-date) [INFO] Starting backup tasks..." -ForegroundColor Green
                         #getting Linux disk device information
@@ -942,7 +943,7 @@ add-type @"
                         #endregion
 
                         #region backing up devices
-                        $devicesToBackup = $diskinfo | where {$_.Device -ne "/dev/sda"} | select -Property Device | Sort-Object -Property Device
+                        $devicesToBackup = $diskinfo | Where-Object {$_.Device -ne "/dev/sda"} | Select-Object -Property Device | Sort-Object -Property Device
 
                         if ($proxyVmDisksAttached.Count -ne $devicesToBackup.Count) {
                             Write-Host "$(get-date) [WARNING] The number of attached disks does not match the number of visible devices in-guest!" -ForegroundColor Yellow
@@ -961,7 +962,7 @@ add-type @"
                         #endregion
                     }
                 } else {
-                    if ($env:COMPUTERNAME -ne $proxy) 
+                    if ($env:COMPUTERNAME -ne $proxy)
                     {
                         Write-Host "$(get-date) [ERROR] $($env:COMPUTERNAME) is not the backup proxy $proxy. You must run this script on the proxy vm!" -ForegroundColor Red
                     } else {
@@ -973,7 +974,7 @@ add-type @"
                 }
 
                 detach-disks -username $username -password $PrismSecurePassword -vm $proxy -uuid $proxyUuid -prism $cluster
-                
+
             }#endif proxy
 
             #process without a proxy
@@ -992,7 +993,7 @@ add-type @"
                 #delete each restored disk in the restore folder from the container
                 #endregion
             }#endif not proxy
-        
+
         #region cleaning things up
         #now that we are done processing, delete the vm snapshot we created earlier
         Write-Host "$(get-date) [INFO] Deleting snapshot $snapshotName..." -ForegroundColor Green
@@ -1000,7 +1001,7 @@ add-type @"
         $method = "DELETE"
         $snapshotDeletionStatus = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
         Write-Host "$(get-date) [SUCCESS] Successfully deleted snapshot $snapshotName!" -ForegroundColor Cyan
-        
+
         #and release the snapshot identifiers we previously requested
         Write-Host "$(get-date) [INFO] Deleting snapshot identifiers for $($client_identifier)..." -ForegroundColor Green
         $url = "https://$($cluster):9440/api/nutanix/v3/idempotence_identifiers/$($client_identifier)"
@@ -1024,5 +1025,5 @@ add-type @"
 
 	#let's figure out how much time this all took
     Write-Host "$(get-date) [SUM] total processing time: $($ElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
-	
+
 #endregion
