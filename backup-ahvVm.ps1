@@ -846,7 +846,7 @@ add-type @"
                 $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots/$($snapshotAllocatedId.uuid_list[0])"
                 $method = "GET"
                 $snapshotStatus = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
-                if ($debugme) {Write-Host -ForegroundColor Red "snapshotStatus: $snapshotStatus"}
+                if ($debugme) {Write-Host -ForegroundColor Red "snapshotStatus: $($snapshotStatus.status)"}
                 if ($snapshotStatus.status.state -eq "kError") {
                     Write-Host "$(get-date) [ERROR] $($snapshotStatus.status.message_list.message)" -ForegroundColor Red
                     Exit
