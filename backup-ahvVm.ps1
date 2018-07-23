@@ -857,7 +857,7 @@ add-type @"
                 }
             } While ($snapshotStatus.status.state -ne "COMPLETE")
             #endregion
-
+            if ($debugme) {Write-Host -ForegroundColor Red "snapshot file list: $($snapshotStatus.status.snapshot_file_list)"}
             #process with a proxy
             if ($proxy) {
                 #region attach disks to proxy
@@ -866,7 +866,9 @@ add-type @"
                 #building our reference variable to map disks/snapshots/scsi_index
                 [System.Collections.ArrayList]$diskToAttachRefArray = New-Object System.Collections.ArrayList($null)
                 foreach ($snapshotFile in $snapshotStatus.status.snapshot_file_list) {
+                    if ($debugme) {write-host -ForegroundColor Red "vmConfig.vm_disk_info: $($vmConfig.vm_disk_info)"}
                     foreach ($disk in ($vmConfig.vm_disk_info | where {$_.is_cdrom -eq $false})) {
+                        if ($debugme) {write-host -ForegroundColor Red "snashotFile.file_path: $($snapshotFile.file_path)"}
                         if ($snapshotFile.file_path -like "*$($disk.disk_address.vmdisk_uuid)") {
                             $diskToAttachRef = @{"source_device_bus"=$disk.disk_address.device_bus;"source_device_index"=$disk.disk_address.device_index;"source_vmdisk_uuid"=$disk.disk_address.vmdisk_uuid;"snapshot_file_path"=$snapshotFile.snapshot_file_path}
                             $diskToAttachRefArray.Add((New-Object PSObject -Property $diskToAttachRef)) | Out-Null
