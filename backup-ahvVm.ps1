@@ -873,6 +873,8 @@ add-type @"
                         }
                     }
                 }
+
+                if ($debugme) {write-host -ForegroundColor Red "DEBUG: diskToAttachRefArray: $diskToAttachRefArray"}
                 
                 #attaching disks in order of scsi device index
                 $content = @{
@@ -890,6 +892,8 @@ add-type @"
                     )
                 }
                 $body = (ConvertTo-Json $content -Depth 4)
+                if ($debugme) {write-host -ForegroundColor Red "DEBUG: json body: $body"}
+
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($proxyUuid)/disks/attach"
                 $method = "POST"
                 $diskAttachTaskUuid = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -body $body
