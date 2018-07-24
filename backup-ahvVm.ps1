@@ -790,7 +790,7 @@ add-type @"
         $method = "GET"
         $vmConfig = Get-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved the configuration of $vm..." -ForegroundColor Cyan
-        if ($debugme) {Write-Host -ForegroundColor Purple "$(get-date) [DEBUG] vmConfig: $vmConfig"}
+        if ($debugme) {Write-Host -ForegroundColor Magenta "$(get-date) [DEBUG] vmConfig: $vmConfig"}
 
         #saving the source vm configuration information
         Write-Host "$(get-date) [INFO] Saving $vm configuration to $($backupPath)$($vm).json..." -ForegroundColor Green
@@ -847,7 +847,7 @@ add-type @"
                 $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots/$($snapshotAllocatedId.uuid_list[0])"
                 $method = "GET"
                 $snapshotStatus = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
-                if ($debugme) {Write-Host -ForegroundColor Purple "$(get-date) [DEBUG] snapshotStatus.status: $($snapshotStatus.status)"}
+                if ($debugme) {Write-Host -ForegroundColor Magenta "$(get-date) [DEBUG] snapshotStatus.status: $($snapshotStatus.status)"}
                 if ($snapshotStatus.status.state -eq "kError") {
                     Write-Host "$(get-date) [ERROR] $($snapshotStatus.status.message_list.message)" -ForegroundColor Red
                     Exit
@@ -859,7 +859,7 @@ add-type @"
                 }
             } While ($snapshotStatus.status.state -ne "COMPLETE")
             #endregion
-            if ($debugme) {Write-Host -ForegroundColor Purple "$(get-date) [DEBUG] snapshotStatus.status.snapshot_file_list: $($snapshotStatus.status.snapshot_file_list)"}
+            if ($debugme) {Write-Host -ForegroundColor Magenta "$(get-date) [DEBUG] snapshotStatus.status.snapshot_file_list: $($snapshotStatus.status.snapshot_file_list)"}
             #process with a proxy
             if ($proxy) {
                 #region attach disks to proxy
@@ -868,9 +868,9 @@ add-type @"
                 #building our reference variable to map disks/snapshots/scsi_index
                 [System.Collections.ArrayList]$diskToAttachRefArray = New-Object System.Collections.ArrayList($null)
                 foreach ($snapshotFile in $snapshotStatus.status.snapshot_file_list) {
-                    if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] vmConfig.vm_disk_info: $($vmConfig.vm_disk_info)"}
+                    if ($debugme) {write-host -ForegroundColor Magenta "$(get-date) [DEBUG] vmConfig.vm_disk_info: $($vmConfig.vm_disk_info)"}
                     foreach ($disk in ($vmConfig.vm_disk_info | Where-Object {$_.is_cdrom -eq $false})) {
-                        if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] snashotFile.file_path: $($snapshotFile.file_path)"}
+                        if ($debugme) {write-host -ForegroundColor Magenta "$(get-date) [DEBUG] snashotFile.file_path: $($snapshotFile.file_path)"}
                         if ($snapshotFile.file_path -like "*$($disk.disk_address.vmdisk_uuid)") {
                             $diskToAttachRef = @{"source_device_bus"=$disk.disk_address.device_bus;"source_device_index"=$disk.disk_address.device_index;"source_vmdisk_uuid"=$disk.disk_address.vmdisk_uuid;"snapshot_file_path"=$snapshotFile.snapshot_file_path}
                             $diskToAttachRefArray.Add((New-Object PSObject -Property $diskToAttachRef)) | Out-Null
@@ -878,7 +878,7 @@ add-type @"
                     }
                 }
 
-                if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] diskToAttachRefArray: $diskToAttachRefArray"}
+                if ($debugme) {write-host -ForegroundColor Magenta "$(get-date) [DEBUG] diskToAttachRefArray: $diskToAttachRefArray"}
 
                 #attaching disks in order of scsi device index
                 $content = @{
@@ -896,7 +896,7 @@ add-type @"
                     )
                 }
                 $body = (ConvertTo-Json $content -Depth 4)
-                if ($debugme) {write-host -ForegroundColor Purple "$(get-date) [DEBUG] JSON body: $body"}
+                if ($debugme) {write-host -ForegroundColor Magenta "$(get-date) [DEBUG] JSON body: $body"}
 
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($proxyUuid)/disks/attach"
                 $method = "POST"
