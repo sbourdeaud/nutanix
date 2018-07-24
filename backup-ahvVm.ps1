@@ -873,6 +873,7 @@ add-type @"
                         if ($debugme) {write-host -ForegroundColor Magenta "$(get-date) [DEBUG] snashotFile.file_path: $($snapshotFile.file_path)"}
                         if ($snapshotFile.file_path -like "*$($disk.disk_address.vmdisk_uuid)") {
                             $diskToAttachRef = @{"source_device_bus"=$disk.disk_address.device_bus;"source_device_index"=$disk.disk_address.device_index;"source_vmdisk_uuid"=$disk.disk_address.vmdisk_uuid;"snapshot_file_path"=$snapshotFile.snapshot_file_path}
+                            if ($debugme) {write-host -ForegroundColor Magenta "$(get-date) [DEBUG] diskToAttachRef: $diskToAttachRef"}
                             $diskToAttachRefArray.Add((New-Object PSObject -Property $diskToAttachRef)) | Out-Null
                         }
                     }
