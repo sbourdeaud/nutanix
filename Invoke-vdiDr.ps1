@@ -1390,10 +1390,28 @@ add-type @"
             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
             #extract desktop pools
             Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
             #extract Active Directory users & groups
             Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
 
@@ -1416,6 +1434,15 @@ add-type @"
                     }
 
                     Write-Host "$(get-date) [INFO] Adding virtual machines to desktop pool $desktop_pool..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"; Exit}
                     Write-Host "$(get-date) [SUCCESS] Added virtual machines to desktop pool $desktop_pool." -ForegroundColor Cyan
 
@@ -1455,6 +1482,15 @@ add-type @"
                             $MapEntry.value = $vmUserId
                             #update the machine
                             Write-Host "$(get-date) [INFO] Updating assigned user for $($vm.vmName)..." -ForegroundColor Green
+                            if ($confirmSteps) {
+                                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                                while ($promptUser -notmatch '[ynYN]')
+                                switch ($promptUser)
+                                {
+                                    "y" {}
+                                    "n" {Exit}
+                                }
+                            }
                             try {$result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"; Exit}
                             Write-Host "$(get-date) [SUCCESS] Updated assigned user for $($vm.vmName) to $($vm.assignedUser)." -ForegroundColor Cyan
                         }
