@@ -328,6 +328,7 @@ $HistoryText = @'
  05/28/2018 sb   Added checks for PowerCLI version and corrected a parameter check bug with -failover -planned.
  05/31/2018 sb   Added prismCreds parameter.
  06/27/2018 sb   Added BetterTls module for Tls 1.2
+ 07/27/2018 sb   Multiple enhancements as documented on GitHub (pre-tests @customer site)
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -487,6 +488,7 @@ add-type @"
 	############################################################################
 	#let's initialize parameters if they haven't been specified
 
+    if ($prompt -and $noprompt) {Write-Host -ForefroundColor Red "$(get-date) [ERROR] You can only use prompt OR noprompt, not both at the same time!"; Exit}
     if (!$scan -and !$failover -and !$deactivate -and !$cleanup) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] You haven't specified any workflow (-scan, -failover, -deactivate or -cleanup)"; Exit}
     if ($scan -and ($failover -or $deactivate -or $cleanup)) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] You can only specify a single workflow at a time (-scan, -failover, -deactivate or -cleanup)"; Exit}
     if ($failover -and ($scan -or $deactivate -or $cleanup)) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] You can only specify a single workflow at a time (-scan, -failover, -deactivate or -cleanup)"; Exit}
