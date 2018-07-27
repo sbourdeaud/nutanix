@@ -97,6 +97,10 @@
   Specifies a custom credentials file name for vCenter authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$vcCreds.txt).
 .PARAMETER hvCreds
   Specifies a custom credentials file name for Horizon View authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$hvCreds.txt).
+.PARAMETER noprompt
+  Specifies that you do not want to be prompted for confirmation at each specific step. If neither prompt nor noprompt are used, the script will prompt once to determine if steps should be confirmed at the beginning of code execution (except for the scan workflow).
+.PARAMETER prompt
+  Specifies that you want to be prompted for confirmation at each specific step. If neither prompt nor noprompt are used, the script will prompt once to determine if steps should be confirmed at the beginning of code execution (except for the scan workflow).
 .EXAMPLE
 .\Invoke-vdiDr.ps1 -source_cluster <ip> -source_vc <ip> -source_hv <ip> -referentialPath c:\temp -scan -prismCreds prism_api-user
 Trigger a scan of the source environment to create reference file and update protection domains as required. Use the previously stored credentials in the %USERPROFILE%\Documents\WindowsPowerShell\Credentials\prism_api-user.txt file (use the Set-CustomCredentials function in the sbourdeaud module to create the credentials file).
@@ -153,7 +157,9 @@ Param
     [parameter(mandatory = $false)] $desktop_pools,
     [parameter(mandatory = $false)] $prismCreds,
     [parameter(mandatory = $false)] $vcCreds,
-    [parameter(mandatory = $false)] $hvCreds
+    [parameter(mandatory = $false)] $hvCreds,
+    [parameter(mandatory = $false)] [switch]$noprompt,
+    [parameter(mandatory = $false)] [switch]$prompt
 )
 #endregion
 
@@ -543,9 +549,11 @@ add-type @"
     if ($cleanup -and (!$planned -and !$unplanned)) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] You need to specify -planned or -unplanned with -cleanup!"; Exit}
     if ($cleanup -and ($planned -and $unplanned)) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] You can only specify -planned or -unplanned with -cleanup, not both at the same time!"; Exit}
 
-    if ($desktop_pools) {$desktop_pools = $desktop_pools.Split(",")}
-    if ($protection_domains) {$protection_domains = $protection_domains.Split(",")}
+    if ($desktop_pools) {$desktop_pools = $desktop_pools.Split(",")} #make sure we process desktop_pools as an array
+    if ($protection_domains) {$protection_domains = $protection_domains.Split(",")} #make sure we process protection_domains as an array
 
+    if ($prompt) {$confirmSteps = $true}
+    if ($noprompt) {$confirmSteps = $false}
 #endregion
 
 #region processing
@@ -712,6 +720,18 @@ add-type @"
     #region -failover
     if ($failover) {
 
+        #insert here prompt for step by step confirmation
+        if ((!$prompt) -and (!$noprompt))
+        {
+            do {$promptUser = Read-Host -Prompt "Do you want to confirm every step? (y/n)"}
+            while ($promptUser -notmatch '[ynYN]')
+            switch ($promptUser)
+            {
+                "y" {$confirmSteps = $true}
+                "n" {$confirmSteps = $false}
+            }
+        }
+
         #region prechecks
         #code to check pre-requisites before starting the workflow. That will prevent us from having a half completed workflow which would require manual recovery
         Write-Host ""
@@ -748,6 +768,15 @@ add-type @"
 
             #extract desktop pools
             Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
@@ -782,6 +811,15 @@ add-type @"
         #region check there are matching protection domains in the correct status and with remote sites defined
             #let's retrieve the list of protection domains from the source
             Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
             $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -844,6 +882,15 @@ add-type @"
             #region check there are matching protection domains in the correct status on the target prism
                 #let's retrieve the list of protection domains from the target
                 Write-Host "$(get-date) [INFO] Retrieving protection domains from target Nutanix cluster $target_cluster ..." -ForegroundColor Green
+                if ($confirmSteps) {
+                    do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                    while ($promptUser -notmatch '[ynYN]')
+                    switch ($promptUser)
+                    {
+                        "y" {}
+                        "n" {Exit}
+                    }
+                }
                 $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
                 $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -932,16 +979,43 @@ add-type @"
 
             #extract desktop pools
             Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #map the user id to a username
             Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #extract Virtual Machines summary information
             Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
@@ -977,12 +1051,30 @@ add-type @"
                 #remove machines from the desktop pool
                 if ($vms -is [array]) {#we use different methods based on the number of vms in the pool
                     Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {$result = $source_hvObjectAPI.Machine.Machine_DeleteMachines($vms.Id,$null)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"; Exit}
                     Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
                     $poolProcessed = $true
                 } else {
                     if ($vms -ne $null) {#there is only a single vm in the pool to remove, so we use a different method
                         Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
+                        if ($confirmSteps) {
+                            do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                            while ($promptUser -notmatch '[ynYN]')
+                            switch ($promptUser)
+                            {
+                                "y" {}
+                                "n" {Exit}
+                            }
+                        }
                         try {$result = $source_hvObjectAPI.Machine.Machine_Delete($vms.Id,$null)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"; Exit}
                         Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
                         $poolProcessed = $true
@@ -1009,6 +1101,15 @@ add-type @"
             Write-Host "$(get-date) [INFO] Processing items on SOURCE Nutanix cluster $source_cluster..." -ForegroundColor Green
             #let's retrieve the list of protection domains from the source
             Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
             $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1046,6 +1147,15 @@ add-type @"
 
                 #migrate the protection domain
                 Write-Host "$(get-date) [INFO] Migrating $pd2migrate to $($remoteSite.remote_site_names) ..." -ForegroundColor Green
+                if ($confirmSteps) {
+                    do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                    while ($promptUser -notmatch '[ynYN]')
+                    switch ($promptUser)
+                    {
+                        "y" {}
+                        "n" {Exit}
+                    }
+                }
                 $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2migrate/migrate"
                 $method = "POST"
                 $content = @{
@@ -1060,6 +1170,15 @@ add-type @"
             #let's make sure all protection domain migrations have been processed successfully
             #retrieve the list of tasks in the cluster
             Write-Host "$(get-date) [INFO] Retrieving list of tasks on the SOURCE cluster $source_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
             $method = "GET"
             $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1120,6 +1239,15 @@ add-type @"
                 #process all vms for that desktop pool
                 ForEach ($vm in $vms) {
                     Write-Host "$(get-date) [INFO] Removing $($vm.vmName) from inventory in $source_vc ..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {$result = Get-VM -Name $vm.vmName | Where-Object {$_.ExtensionData.Summary.OverallStatus -eq 'gray'} | remove-vm -Confirm:$false} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove VM $($vm.vmName): $($_.Exception.Message)"; Exit}
                     Write-Host "$(get-date) [SUCCESS] Removed $($vm.vmName) from inventory in $source_vc." -ForegroundColor Cyan
                 }
@@ -1157,6 +1285,15 @@ add-type @"
                     #move vms to their correct folder
                     $folder = Get-Folder -Name (($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
                     Write-Host "$(get-date) [INFO] Trying to move $($vm.vmName) to folder $($folder.Name)..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {
                         $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
                         if ($vmObject.Folder.Name -ne $folder.Name) {
@@ -1170,6 +1307,15 @@ add-type @"
 
                     #connect vms to the portgroup
                     Write-Host "$(get-date) [INFO] Re-connecting the virtual machine $($vm.vmName) virtual NIC..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {
                          if (!$target_pg) {#no target portgroup has been specified, so we need to figure out where to connect our vnics
                             $standard_portgroup = $false
@@ -1341,6 +1487,15 @@ add-type @"
             Write-Host "$(get-date) [INFO] Processing items on TARGET Nutanix cluster $target_cluster..." -ForegroundColor Green
             #let's retrieve the list of protection domains from the target
             Write-Host "$(get-date) [INFO] Retrieving protection domains from target Nutanix cluster $target_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
             $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1363,6 +1518,15 @@ add-type @"
 
                 #activate the protection domain
                 Write-Host "$(get-date) [INFO] Activating protection domain $($pd2activate.name) on $target_cluster ..." -ForegroundColor Green
+                if ($confirmSteps) {
+                    do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                    while ($promptUser -notmatch '[ynYN]')
+                    switch ($promptUser)
+                    {
+                        "y" {}
+                        "n" {Exit}
+                    }
+                }
                 $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pd2activate.name)/activate"
                 $method = "POST"
                 $content = @{}
@@ -1375,6 +1539,15 @@ add-type @"
             #let's make sure all protection domain migrations have been processed successfully
             #retrieve the list of tasks in the cluster
             Write-Host "$(get-date) [INFO] Retrieving list of tasks on the TARGET cluster $target_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
             $method = "GET"
             $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1436,6 +1609,15 @@ add-type @"
                     #move vms to their correct folder
                     $folder = Get-Folder -Name (($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
                     Write-Host "$(get-date) [INFO] Trying to move $($vm.vmName) to folder $($folder.Name)..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {
                         $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
                         if ($vmObject.Folder.Name -ne $folder.Name) {
@@ -1449,6 +1631,15 @@ add-type @"
 
                     #connect vms to the portgroup
                     Write-Host "$(get-date) [INFO] Re-connecting the virtual machine $($vm.vmName) virtual NIC..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {
                          if (!$target_pg) {#no target portgroup has been specified, so we need to figure out where to connect our vnics
                             $standard_portgroup = $false
@@ -1517,10 +1708,28 @@ add-type @"
             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
             #extract desktop pools
             Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
             #extract Active Directory users & groups
             Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
 
@@ -1543,6 +1752,15 @@ add-type @"
                     }
 
                     Write-Host "$(get-date) [INFO] Adding virtual machines to desktop pool $desktop_pool..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"; Exit}
                     Write-Host "$(get-date) [SUCCESS] Added virtual machines to desktop pool $desktop_pool." -ForegroundColor Cyan
 
@@ -1575,13 +1793,22 @@ add-type @"
                                     catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] $($_.Exception.Message)"; Exit}
                                 } else {break} #we found our user, let's get out of this loop
                             }
-                            if (!$vmUserId) {Write-Host "$(get-date) [ERROR] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Red; continue}   
+                            if (!$vmUserId) {Write-Host "$(get-date) [ERROR] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Red; continue}
                             #create the MapEntry object required for updating the machine
                             $MapEntry = New-Object "Vmware.Hv.MapEntry"
                             $MapEntry.key = "base.user"
                             $MapEntry.value = $vmUserId
                             #update the machine
                             Write-Host "$(get-date) [INFO] Updating assigned user for $($vm.vmName)..." -ForegroundColor Green
+                            if ($confirmSteps) {
+                                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                                while ($promptUser -notmatch '[ynYN]')
+                                switch ($promptUser)
+                                {
+                                    "y" {}
+                                    "n" {Exit}
+                                }
+                            }
                             try {$result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"; Exit}
                             Write-Host "$(get-date) [SUCCESS] Updated assigned user for $($vm.vmName) to $($vm.assignedUser)." -ForegroundColor Cyan
                         }
@@ -1602,6 +1829,19 @@ add-type @"
 
     #region -cleanup
     if ($cleanup) {
+
+        #insert here prompt for step by step confirmation
+        if ((!$prompt) -and (!$noprompt))
+        {
+            do {$promptUser = Read-Host -Prompt "Do you want to confirm every step? (y/n)"}
+            while ($promptUser -notmatch '[ynYN]')
+            switch ($promptUser)
+            {
+                "y" {$confirmSteps = $true}
+                "n" {$confirmSteps = $false}
+            }
+        }
+
         #region -planned
         if ($planned) {
 
@@ -1610,6 +1850,15 @@ add-type @"
 
             #let's retrieve the list of protection domains from the source
             Write-Host "$(get-date) [INFO] Retrieving protection domains from source Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
             $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1642,6 +1891,15 @@ add-type @"
 
                 #remove all schedules from the protection domain
                 Write-Host "$(get-date) [INFO] Removing all schedules from protection domain $pd2update on $source_cluster ..." -ForegroundColor Green
+                if ($confirmSteps) {
+                    do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                    while ($promptUser -notmatch '[ynYN]')
+                    switch ($promptUser)
+                    {
+                        "y" {}
+                        "n" {Exit}
+                    }
+                }
                 $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2update/schedules"
                 $method = "DELETE"
                 $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1676,6 +1934,15 @@ add-type @"
             }
             #let's retrieve the list of protection domains from the target
             Write-Host "$(get-date) [INFO] Retrieving protection domains from SOURCE Nutanix cluster $source_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
             $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1704,11 +1971,29 @@ add-type @"
 
             #extract desktop pools
             Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #extract Virtual Machines summary information
             Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
@@ -1734,11 +2019,29 @@ add-type @"
                 #remove machines from the desktop pool
                 if ($vms -is [array]) {#we use different methods based on the number of vms in the pool
                     Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {$result = $source_hvObjectAPI.Machine.Machine_DeleteMachines($vms.Id,$null)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"; Exit}
                     Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
                 } else {
                     if ($vms -ne $null) {#there is only a single vm in the pool to remove, so we use a different method
                         Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
+                        if ($confirmSteps) {
+                            do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                            while ($promptUser -notmatch '[ynYN]')
+                            switch ($promptUser)
+                            {
+                                "y" {}
+                                "n" {Exit}
+                            }
+                        }
                         try {$result = $source_hvObjectAPI.Machine.Machine_Delete($vms.Id,$null)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv : $($_.Exception.Message)"; Exit}
                         Write-Host "$(get-date) [SUCCESS] Removed machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv" -ForegroundColor Cyan
                     } else {#there were no vms in the pool
@@ -1762,6 +2065,15 @@ add-type @"
 
                 #activate the protection domain
                 Write-Host "$(get-date) [INFO] De-activating protection domain $pd2deactivate on $source_cluster ..." -ForegroundColor Green
+                if ($confirmSteps) {
+                    do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                    while ($promptUser -notmatch '[ynYN]')
+                    switch ($promptUser)
+                    {
+                        "y" {}
+                        "n" {Exit}
+                    }
+                }
                 $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
                 $method = "POST"
                 $content = @{}
@@ -1795,6 +2107,15 @@ add-type @"
                 #process all vms for that desktop pool
                 ForEach ($vm in $vms) {
                     Write-Host "$(get-date) [INFO] Removing $($vm.vmName) from inventory in $source_vc ..." -ForegroundColor Green
+                    if ($confirmSteps) {
+                        do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                        while ($promptUser -notmatch '[ynYN]')
+                        switch ($promptUser)
+                        {
+                            "y" {}
+                            "n" {Exit}
+                        }
+                    }
                     try {$result = Get-VM -Name $vm.vmName | Where-Object {$_.ExtensionData.Summary.OverallStatus -eq 'gray'} | remove-vm -Confirm:$false} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove VM $($vm.vmName): $($_.Exception.Message)"; Exit}
                     Write-Host "$(get-date) [SUCCESS] Removed $($vm.vmName) from inventory in $source_vc." -ForegroundColor Cyan
                 }
@@ -1811,8 +2132,30 @@ add-type @"
 
     #region -deactivate
     if ($deactivate) {
+
+        #insert here prompt for step by step confirmation
+        if ((!$prompt) -and (!$noprompt))
+        {
+            do {$promptUser = Read-Host -Prompt "Do you want to confirm every step? (y/n)"}
+            while ($promptUser -notmatch '[ynYN]')
+            switch ($promptUser)
+            {
+                "y" {$confirmSteps = $true}
+                "n" {$confirmSteps = $false}
+            }
+        }
+
         #let's retrieve the list of protection domains from the target
         Write-Host "$(get-date) [INFO] Retrieving protection domains from target Nutanix cluster $target_cluster ..." -ForegroundColor Green
+        if ($confirmSteps) {
+            do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+            while ($promptUser -notmatch '[ynYN]')
+            switch ($promptUser)
+            {
+                "y" {}
+                "n" {Exit}
+            }
+        }
         $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
         $method = "GET"
         $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
@@ -1826,6 +2169,15 @@ add-type @"
 
             #activate the protection domain
             Write-Host "$(get-date) [INFO] De-activating protection domain $pd2deactivate on $target_cluster ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
             $method = "POST"
             $content = @{}
@@ -1845,7 +2197,7 @@ add-type @"
 
 	#let's figure out how much time this all took
 	Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
-	
+
     #cleanup after ourselves and delete all custom variables
 	Remove-Variable myvar* -ErrorAction SilentlyContinue
 	Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
