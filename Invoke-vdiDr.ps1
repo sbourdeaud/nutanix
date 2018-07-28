@@ -1250,7 +1250,7 @@ add-type @"
                             "n" {Exit}
                         }
                     }
-                    try {$result = Get-VM -Name $vm.vmName | Where-Object {$_.ExtensionData.Summary.OverallStatus -eq 'gray'} | remove-vm -Confirm:$false} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not remove VM $($vm.vmName): $($_.Exception.Message)"; Exit}
+                    try {$result = Get-VM -Name $vm.vmName | Where-Object {$_.ExtensionData.Summary.OverallStatus -eq 'gray'} | remove-vm -Confirm:$false} catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not remove VM $($vm.vmName): $($_.Exception.Message)"}
                     Write-Host "$(get-date) [SUCCESS] Removed $($vm.vmName) from inventory in $source_vc." -ForegroundColor Cyan
                 }
             }
@@ -1305,7 +1305,7 @@ add-type @"
                             Write-Host "$(get-date) [INFO] VM $($vm.vmName) is already in folder $($folder.Name)" -ForegroundColor Green
                         }
                     }
-                    catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"; Exit}
+                    catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"}
 
                     #connect vms to the portgroup
                     Write-Host "$(get-date) [INFO] Re-connecting the virtual machine $($vm.vmName) virtual NIC..." -ForegroundColor Green
@@ -1344,8 +1344,8 @@ add-type @"
                             }
                          } else { #fetching the specified portgroup
                             Write-Host "$(get-date) [INFO] Retrieving the specified target portgroup $target_pg..." -ForegroundColor Green
-                            try {$target_pgObject = Get-VirtualPortGroup -Name $target_pg} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not retrieve the specified target portgroup : $($_.Exception.Message)"; Exit}
-                            if ($target_pgObject -is [array]) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] There is more than one portgroup with the specified name!"; Exit}
+                            try {$target_pgObject = Get-VirtualPortGroup -Name $target_pg} catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not retrieve the specified target portgroup : $($_.Exception.Message)"; Continue}
+                            if ($target_pgObject -is [array]) {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] There is more than one portgroup with the specified name!"; Continue}
                             Write-Host "$(get-date) [SUCCESS] Retrieved the specified target portgroup $target_pg" -ForegroundColor Cyan
                          }
                          #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
@@ -1353,7 +1353,7 @@ add-type @"
                             $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
                          }
                     }
-                    catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"; Exit}
+                    catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"; Continue}
                     if (!$standard_portgroup) {Write-Host "$(get-date) [SUCCESS] Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)" -ForegroundColor Cyan} else {Write-Host "$(get-date) [INFO] Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..." -ForegroundColor Green}
                 }
             }
@@ -1443,7 +1443,7 @@ add-type @"
                             "n" {Exit}
                         }
                     }
-                    try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"; Exit}
+                    try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"; Continue}
                     Write-Host "$(get-date) [SUCCESS] Added virtual machines to desktop pool $desktop_pool." -ForegroundColor Cyan
 
                     #register users to their vms
@@ -1475,7 +1475,7 @@ add-type @"
                                     catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] $($_.Exception.Message)"; Exit}
                                 } else {break} #we found our user, let's get out of this loop
                             }
-                            if (!$vmUserId) {Write-Host "$(get-date) [ERROR] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Red; continue}
+                            if (!$vmUserId) {Write-Host "$(get-date) [WARNING] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Yellow; continue}
                             #create the MapEntry object required for updating the machine
                             $MapEntry = New-Object "Vmware.Hv.MapEntry"
                             $MapEntry.key = "base.user"
@@ -1491,7 +1491,7 @@ add-type @"
                                     "n" {Exit}
                                 }
                             }
-                            try {$result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)} catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"; Exit}
+                            try {$result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)} catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"; Continue}
                             Write-Host "$(get-date) [SUCCESS] Updated assigned user for $($vm.vmName) to $($vm.assignedUser)." -ForegroundColor Cyan
                         }
                     }
