@@ -437,6 +437,10 @@ if ((Get-Module -Name VMware.VimAutomation.Core).Version.Major -lt 10) {
     Write-Host -ForegroundColor Red "$(get-date) [ERROR] Please upgrade PowerCLI to version 10 or above by running the command 'Update-Module VMware.PowerCLI' as an admin user"
     Exit
 }
+Write-Host "$(get-date) [INFO] Setting the PowerCLI configuration to ignore invalid certificates..." -ForegroundColor Green
+try {$result = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false -ErrorAction Stop}
+catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] Could not change the VMware.PowerCLI module configuration: $($_.Exception.Message)"; Exit}
+Write-Host "$(get-date) [SUCCESS] Successfully configured the PowerCLI configuration to ignore invalid certificates" -ForegroundColor Cyan
 #endregion
 
 #region get ready to use the Nutanix REST API
@@ -593,6 +597,12 @@ add-type @"
         #map the user id to a username
         Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
         $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
+        $source_hvADUsersList = @()
+        $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+        do {
+            if ($source_hvADUsersList.length -ne 0) {$source_hvADUsers = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvADUsers.Id)}
+            $source_hvADUsersList += $source_hvADUsers.Results
+        } while ($source_hvADUsers.remainingCount -gt 0)
         Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
         #extract Virtual Machines summary information
@@ -605,16 +615,7 @@ add-type @"
         ForEach ($vm in $source_hvVMs.Results) { #let's process each vm
         #########TODO: add code to filter VMs which belong only to the specified desktop_pool
             #figure out the vm assigned username
-            $hvADUsers = $source_hvADUsers #save the ADUsers query results as this is a paginated result and we need to search a specific user
-            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService" #we'll use this object to retrieve other pages from the ADUsers request
-            while ($hvADUsers.Results -ne $null) { #start a loop to look at each page of the ADUsers query results
-                if (!($vmUsername = ($hvADUsers.Results | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName)) { #grab the user name whose id matches the id of the assigned user on the desktop machine
-                    #couldn't find our userId, let's fetch the next page of AD objects
-                    if ($hvADUsers.id -eq $null) {break}
-                    try {$hvADUsers = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$hvADUsers.id)}
-                    catch{Write-Host -ForegroundColor Red "$(get-date) [ERROR] $($_.Exception.Message)"; Exit}
-                } else {break} #we found our user, let's get out of this loop
-            }
+            $vmUsername = ($source_hvADUsersList | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName #grab the user name whose id matches the id of the assigned user on the desktop machine
 
             #figure out the desktop pool name
             $vmDesktopPool = ($source_hvDesktopPools.Results | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
@@ -995,20 +996,6 @@ add-type @"
             }
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
-
-            #map the user id to a username
-            Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
-            if ($confirmSteps) {
-                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
-                while ($promptUser -notmatch '[ynYN]')
-                switch ($promptUser)
-                {
-                    "y" {}
-                    "n" {Exit}
-                }
-            }
-            $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
-            Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #extract Virtual Machines summary information
             Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
@@ -1416,6 +1403,12 @@ add-type @"
                 }
             }
             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
+            $target_hvADUsersList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($target_hvADUsersList.length -ne 0) {$target_hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvADUsers.Id)}
+                $target_hvADUsersList += $target_hvADUsers.Results
+            } while ($target_hvADUsers.remainingCount -gt 0)
             Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
 
             #process each desktop pool
@@ -1468,17 +1461,9 @@ add-type @"
                                 Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
                             }
 
-                            $hvADUsers = $target_hvADUsers #save the ADUsers query results as this is a paginated result and we need to search a specific user
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService" #we'll use this object to retrieve other pages from the ADUsers request
-                            while ($hvADUsers.Results -ne $null) { #start a loop to look at each page of the ADUsers query results
-                                if (!($vmUserId = ($hvADUsers.Results | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id)) { #grab the user name whose id matches the id of the assigned user on the desktop machine
-                                    #couldn't find our userId, let's fetch the next page of AD objects
-                                    if ($hvADUsers.id -eq $null) {break}
-                                    try {$hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$hvADUsers.id)}
-                                    catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] $($_.Exception.Message)"; Exit}
-                                } else {break} #we found our user, let's get out of this loop
-                            }
+                            $vmUserId = ($target_hvADUsersList | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
                             if (!$vmUserId) {Write-Host "$(get-date) [WARNING] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Yellow; continue}
+
                             #create the MapEntry object required for updating the machine
                             $MapEntry = New-Object "Vmware.Hv.MapEntry"
                             $MapEntry.key = "base.user"
@@ -1772,6 +1757,12 @@ add-type @"
                 }
             }
             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
+            $target_hvADUsersList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($target_hvADUsersList.length -ne 0) {$target_hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvADUsers.Id)}
+                $target_hvADUsersList += $target_hvADUsers.Results
+            } while ($target_hvADUsers.remainingCount -gt 0)
             Write-Host "$(get-date) [SUCCESS] Retrieved Active Directory user information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
 
             #process each desktop pool
@@ -1824,16 +1815,7 @@ add-type @"
                                 Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
                             }
 
-                            $hvADUsers = $target_hvADUsers #save the ADUsers query results as this is a paginated result and we need to search a specific user
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService" #we'll use this object to retrieve other pages from the ADUsers request
-                            while ($hvADUsers.Results -ne $null) { #start a loop to look at each page of the ADUsers query results
-                                if (!($vmUserId = ($hvADUsers.Results | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id)) { #grab the user name whose id matches the id of the assigned user on the desktop machine
-                                    #couldn't find our userId, let's fetch the next page of AD objects
-                                    if ($hvADUsers.id -eq $null) {break}
-                                    try {$hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$hvADUsers.id)}
-                                    catch {Write-Host -ForegroundColor Red "$(get-date) [ERROR] $($_.Exception.Message)"; Exit}
-                                } else {break} #we found our user, let's get out of this loop
-                            }
+                            $vmUserId = ($target_hvADUsersList | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
                             if (!$vmUserId) {Write-Host "$(get-date) [WARNING] Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!" -ForegroundColor Yellow; continue}
                             #create the MapEntry object required for updating the machine
                             $MapEntry = New-Object "Vmware.Hv.MapEntry"
