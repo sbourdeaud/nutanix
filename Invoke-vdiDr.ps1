@@ -592,6 +592,13 @@ add-type @"
         #extract desktop pools
         Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
         $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+        #####TODO add code here to paginate thru the query results
+        $source_hvDesktopPoolsList = @()
+        $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+        do {
+            if ($source_hvDesktopPoolsList.length -ne 0) {$source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)}
+            $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
+        } while ($source_hvDesktopPools.remainingCount -gt 0)
         Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
         #map the user id to a username
@@ -608,17 +615,24 @@ add-type @"
         #extract Virtual Machines summary information
         Write-Host "$(get-date) [INFO] Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..." -ForegroundColor Green
         $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
+        #####TODO add code here to paginate thru the query results
+        $source_hvVMsList = @()
+        $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+        do {
+            if ($source_hvVMsList.length -ne 0) {$source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)}
+            $source_hvVMsList += $source_hvVMs.Results
+        } while ($source_hvVMs.remainingCount -gt 0)
         Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
         #figure out the info we need for each VM (VM name, user, desktop pool name)
         Write-Host "$(get-date) [INFO] Figuring out usernames for vms (this can take a while)..." -ForegroundColor Green
-        ForEach ($vm in $source_hvVMs.Results) { #let's process each vm
         #########TODO: add code to filter VMs which belong only to the specified desktop_pool
+        ForEach ($vm in $source_hvVMsList) { #let's process each vm
             #figure out the vm assigned username
             $vmUsername = ($source_hvADUsersList | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName #grab the user name whose id matches the id of the assigned user on the desktop machine
 
             #figure out the desktop pool name
-            $vmDesktopPool = ($source_hvDesktopPools.Results | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
+            $vmDesktopPool = ($source_hvDesktopPoolsList | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
 
             $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
             $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
@@ -784,6 +798,7 @@ add-type @"
                 }
             }
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+            ###TODO
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #find out which pool we are working with (assume all which are disabled if none have been specified)
@@ -866,6 +881,15 @@ add-type @"
         #endregion
         #region check we can connect to source vc
             Write-Host "$(get-date) [INFO] Connecting to the SOURCE vCenter server $source_vc ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             try {
                 if ($vcCreds) {
                     $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
@@ -926,6 +950,15 @@ add-type @"
         #region check we can connect to the target hv
             #connect to the target view server
             Write-Host "$(get-date) [INFO] Connecting to the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             try {
                 if ($hvCreds) {
                     $target_hvObject = Connect-HVServer -Server $target_hv -Credential $hvCreds -ErrorAction Stop
@@ -943,6 +976,15 @@ add-type @"
         #region check we can connect to the target vc
             #connect to the target vCenter
             Write-Host "$(get-date) [INFO] Connecting to the TARGET vCenter server $target_vc ..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             try {
                 if ($vcCreds) {
                     $target_vcObject = Connect-VIServer $target_vc -Credential $vcCreds -ErrorAction Stop
@@ -995,6 +1037,13 @@ add-type @"
                 }
             }
             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+            #####TODO add code here to paginate thru the query results
+            $source_hvDesktopPoolsList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($source_hvDesktopPoolsList.length -ne 0) {$source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)}
+                $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
+            } while ($source_hvDesktopPools.remainingCount -gt 0)
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #extract Virtual Machines summary information
@@ -1009,6 +1058,13 @@ add-type @"
                 }
             }
             $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
+            #####TODO add code here to paginate thru the query results
+            $source_hvVMsList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($source_hvVMsList.length -ne 0) {$source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)}
+                $source_hvVMsList += $source_hvVMs.Results
+            } while ($source_hvVMs.remainingCount -gt 0)
             Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv" -ForegroundColor Cyan
 
             #find out which pool we are working with (assume all which are disabled if none have been specified)
@@ -1018,13 +1074,13 @@ add-type @"
                     ForEach ($protection_domain in $protection_domains) {
                         $desktop_pools += ($poolRef | Where-Object {$_.protection_domain -eq $protection_domain}).desktop_pool
                     }
-                    $disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                    $disabled_desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                     $desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
                 } else { #no pd and no pool were specified, so let's assume we have to process all disabled pools
-                    $desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                    $desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                 }
             } else { #extract the desktop pools information
-                $disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                $disabled_desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                 $desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
             }
 
@@ -1039,7 +1095,7 @@ add-type @"
                 #check that the pool is disabled
                 if ($desktop_pool.DesktopSummaryData.Enabled -eq $true) {Write-Host "$(get-date) [WARNING] Skipping $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv because the desktop pool is enabled" -ForegroundColor Yellow; continue}
                 #figure out which machines are in that desktop pool
-                $vms = $source_hvVMs.Results | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
+                $vms = $source_hvVMsList | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
                 #remove machines from the desktop pool
                 if ($vms -is [array]) {#we use different methods based on the number of vms in the pool
                     Write-Host "$(get-date) [INFO] Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..." -ForegroundColor Green
@@ -1376,8 +1432,27 @@ add-type @"
             #retrieve the view object
             $target_hvVirtualCenter = $target_hvObjectAPI.VirtualCenter.VirtualCenter_List() | Where-Object {$_.Enabled -eq $true}
             if ($target_hvVirtualCenter -is [array]) {Write-Host -ForegroundColor Red "$(get-date) [ERROR] There is more than one enabled vCenter on $target_hv!"; Exit}
+            
             #retrieve the list of available vms in vCenter
+            Write-Host "$(get-date) [INFO] Retrieving virtual machines information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+            if ($confirmSteps) {
+                do {$promptUser = Read-Host -Prompt "Do you want to continue? (y/n)"}
+                while ($promptUser -notmatch '[ynYN]')
+                switch ($promptUser)
+                {
+                    "y" {}
+                    "n" {Exit}
+                }
+            }
             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
+            ##TODO add code here to paginate thru the results
+            $target_hvAvailableVmsList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($target_hvAvailableVmsList.length -ne 0) {$target_hvAvailableVms = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvAvailableVms.Id)}
+                $target_hvAvailableVmsList += $target_hvAvailableVms.Results
+            } while ($target_hvAvailableVms.remainingCount -gt 0)
+
             #extract desktop pools
             Write-Host "$(get-date) [INFO] Retrieving desktop pools information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
             if ($confirmSteps) {
@@ -1390,6 +1465,13 @@ add-type @"
                 }
             }
             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
+            #####TODO add code here to paginate thru the query results
+            $target_hvDesktopPoolsList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($target_hvDesktopPoolsList.length -ne 0) {$target_hvDesktopPools = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvDesktopPools.Id)}
+                $target_hvDesktopPoolsList += $target_hvDesktopPools.Results
+            } while ($target_hvDesktopPools.remainingCount -gt 0)
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
             #extract Active Directory users & groups
             Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
@@ -1414,7 +1496,7 @@ add-type @"
             #process each desktop pool
             ForEach ($desktop_pool in $desktop_pool_names) {
                 #figure out the desktop pool Id
-                $desktop_poolId = ($target_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
+                $desktop_poolId = ($target_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
                 #determine which vms belong to the desktop pool(s) we are processing
                 $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
 
@@ -1425,9 +1507,11 @@ add-type @"
                     $vmIds = @()
                     ForEach ($vm in $vms) {
                         #figure out the virtual machine id
-                        $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
+                        $vmId = ($target_hvAvailableVmsList | Where-Object {$_.Name -eq $vm.vmName}).Id
                         $vmIds += $vmId
                     }
+
+                    if (!$vmIds) {Write-Host "$(get-date) [ERROR] No Virtual Machines summary information was found from the TARGET Horizon View server $target_hv..." -ForegroundColor Red; Exit}
 
                     Write-Host "$(get-date) [INFO] Adding virtual machines to desktop pool $desktop_pool..." -ForegroundColor Green
                     if ($confirmSteps) {
@@ -1442,22 +1526,35 @@ add-type @"
                     try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"; Continue}
                     Write-Host "$(get-date) [SUCCESS] Added virtual machines to desktop pool $desktop_pool." -ForegroundColor Cyan
 
+                    #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
+                    #extract Virtual Machines summary information
+                    Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+                    Sleep 15
+                    $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                    ####TODO add code here to paginate thru the results
+                    $target_hvVMsList = @()
+                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                    do {
+                        if ($target_hvVMsList.length -ne 0) {$target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)}
+                        $target_hvVMsList += $target_hvVMs.Results
+                    } while ($target_hvVMs.remainingCount -gt 0)
+                    Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
+
                     #register users to their vms
                     ForEach ($vm in $vms) {
                         #figure out the object id of the assigned user
                         if ($vm.assignedUser) {#process the assigned user if there was one
-                            #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
-                            #extract Virtual Machines summary information
-                            Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
-                            Sleep 15
-                            $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                            Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
-
                             #figure out the virtual machine id
-                            while (!($vmId = ($target_hvVMs.Results | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) {
+                            while (!($vmId = ($target_hvVMsList | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) {
                                 Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
                                 Sleep 15
                                 $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                                $target_hvVMsList = @()
+                                $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                                do {
+                                    if ($target_hvVMsList.length -ne 0) {$target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)}
+                                    $target_hvVMsList += $target_hvVMs.Results
+                                } while ($target_hvVMs.remainingCount -gt 0)
                                 Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
                             }
 
@@ -1744,6 +1841,13 @@ add-type @"
                 }
             }
             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
+            #####TODO add code here to paginate thru the query results
+            $target_hvDesktopPoolsList = @()
+            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+            do {
+                if ($target_hvDesktopPoolsList.length -ne 0) {$target_hvDesktopPools = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvDesktopPools.Id)}
+                $target_hvDesktopPoolsList += $target_hvDesktopPools.Results
+            } while ($target_hvDesktopPools.remainingCount -gt 0)
             Write-Host "$(get-date) [SUCCESS] Retrieved desktop pools information from the TARGET Horizon View server $target_hv." -ForegroundColor Cyan
             #extract Active Directory users & groups
             Write-Host "$(get-date) [INFO] Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
@@ -1768,7 +1872,7 @@ add-type @"
             #process each desktop pool
             ForEach ($desktop_pool in $desktop_pools) {
                 #figure out the desktop pool Id
-                $desktop_poolId = ($target_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
+                $desktop_poolId = ($target_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
                 #determine which vms belong to the desktop pool(s) we are processing
                 $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
 
@@ -1796,22 +1900,34 @@ add-type @"
                     try {$result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)} catch {Write-Host -ForegroundColor Yellow "$(get-date) [WARNING] Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"; Continue}
                     Write-Host "$(get-date) [SUCCESS] Added virtual machines to desktop pool $desktop_pool." -ForegroundColor Cyan
 
+                    #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
+                    #extract Virtual Machines summary information
+                    Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
+                    Sleep 15
+                    $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                    $target_hvVMsList = @()
+                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                    do {
+                        if ($target_hvVMsList.length -ne 0) {$target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)}
+                        $target_hvVMsList += $target_hvVMs.Results
+                    } while ($target_hvVMs.remainingCount -gt 0)
+                    Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
+
                     #register users to their vms
                     ForEach ($vm in $vms) {
                         #figure out the object id of the assigned user
                         if ($vm.assignedUser) {#process the assigned user if there was one
-                            #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
-                            #extract Virtual Machines summary information
-                            Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
-                            Sleep 15
-                            $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                            Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
-
                             #figure out the virtual machine id
-                            while (!($vmId = ($target_hvVMs.Results | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) {
+                            while (!($vmId = ($target_hvVMsList | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) {
                                 Write-Host "$(get-date) [INFO] Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..." -ForegroundColor Green
                                 Sleep 15
                                 $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                                $target_hvVMsList = @()
+                                $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                                do {
+                                    if ($target_hvVMsList.length -ne 0) {$target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)}
+                                    $target_hvVMsList += $target_hvVMs.Results
+                                } while ($target_hvVMs.remainingCount -gt 0)
                                 Write-Host "$(get-date) [SUCCESS] Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv" -ForegroundColor Cyan
                             }
 
