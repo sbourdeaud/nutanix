@@ -161,7 +161,6 @@ Param
 #endregion
 
 #region functions
-
 function Write-LogOutput
 {
 <#
@@ -1964,18 +1963,6 @@ add-type @"
                             #retrieve the list of available vms in vCenter
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving virtual machines information from the TARGET Horizon View server $target_hv..."
                             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
-                            ##TODO add code here to paginate thru the results
-                            $target_hvAvailableVmsList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {#paginate thru results
-                                if ($target_hvAvailableVmsList.length -ne 0) 
-                                {#first iteration
-                                    $target_hvAvailableVms = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvAvailableVms.Id)
-                                }
-                                $target_hvAvailableVmsList += $target_hvAvailableVms.Results
-                            } 
-                            while ($target_hvAvailableVms.remainingCount -gt 0)
 
                             #extract desktop pools
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the TARGET Horizon View server $target_hv..."
@@ -2038,7 +2025,7 @@ add-type @"
                                         $vmIds = @()
                                         ForEach ($vm in $vms) 
                                         {#figure out the virtual machine id
-                                            $vmId = ($target_hvAvailableVmsList | Where-Object {$_.Name -eq $vm.vmName}).Id
+                                            $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
                                             $vmIds += $vmId
                                         }
 
@@ -2475,7 +2462,7 @@ add-type @"
                         #endregion
 
                         #region get
-                            #retrieve basic information we'll need
+                            
                             #retrieve the vCenter object
                             $target_hvVirtualCenter = $target_hvObjectAPI.VirtualCenter.VirtualCenter_List() | Where-Object {$_.Enabled -eq $true}
                             if ($target_hvVirtualCenter -is [array]) 
@@ -2483,8 +2470,10 @@ add-type @"
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one enabled vCenter on $target_hv!"
                                 Exit
                             }
+                            
                             #retrieve the list of available vms in vCenter
                             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
+
                             #extract desktop pools
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the TARGET Horizon View server $target_hv..."
                             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
@@ -2501,6 +2490,7 @@ add-type @"
                             } 
                             while ($target_hvDesktopPools.remainingCount -gt 0)
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the TARGET Horizon View server $target_hv."
+                            
                             #extract Active Directory users & groups
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..."
                             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
