@@ -152,9 +152,9 @@ Param
     [parameter(mandatory = $false)] [string]$referentialPath,
     [parameter(mandatory = $false)] [string]$protection_domains,
     [parameter(mandatory = $false)] [string]$desktop_pools,
-    [parameter(mandatory = $false)] [string]$prismCreds,
-    [parameter(mandatory = $false)] [string]$vcCreds,
-    [parameter(mandatory = $false)] [string]$hvCreds,
+    [parameter(mandatory = $false)] $prismCreds,
+    [parameter(mandatory = $false)] $vcCreds,
+    [parameter(mandatory = $false)] $hvCreds,
     [parameter(mandatory = $false)] [switch]$noprompt,
     [parameter(mandatory = $false)] [switch]$prompt
 )
@@ -781,173 +781,181 @@ add-type @"
 
     #region -scan
         if ($scan) 
-        {
+        {#we're doing a scan
             #region prepare
                 #load pool2pd reference
                 try 
-                {
+                {#load the file
                     $poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop
                 } 
                 catch 
-                {
+                {#we couldn't load the file
                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not import data from $referentialPath\PoolRef.csv : $($_.Exception.Message)"
                     Exit
                 }
             #endregion
 
             #region extract Horizon View data
-                #connect to Horizon View server
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
-                try 
-                {
-                    if ($hvCreds) 
-                    {
-                        $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
+                #region connect
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
+                    try 
+                    {#connect to Horizon View server
+                        if ($hvCreds) 
+                        {#use specified creds
+                            $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
+                        } 
+                        else 
+                        {#no creds specified so rely on sso
+                            $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
+                        }
+                    }
+                    catch
+                    {#couldn't connect
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"
+                        Exit
+                    }
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to the SOURCE Horizon View server $source_hv"
+                    #create API object
+                    $source_hvObjectAPI = $source_hvObject.ExtensionData
+                #endregion
+                
+                #region get
+                    [System.Collections.ArrayList]$newHvRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
+
+                    #extract desktop pools
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
+                    $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+                    #####TODO add code here to paginate thru the query results
+                    $source_hvDesktopPoolsList = @()
+                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                    do 
+                    {#paginate thru results
+                        if ($source_hvDesktopPoolsList.length -ne 0) 
+                        {#first iteration
+                            $source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)
+                        }
+                        $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
                     } 
-                    else 
-                    {
-                        $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
+                    while ($source_hvDesktopPools.remainingCount -gt 0)
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
+
+                    #map the user id to a username
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..."
+                    $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
+                    $source_hvADUsersList = @()
+                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                    do 
+                    {#paginate thru results
+                        if ($source_hvADUsersList.length -ne 0) 
+                        {#first iteration
+                            $source_hvADUsers = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvADUsers.Id)
+                        }
+                        $source_hvADUsersList += $source_hvADUsers.Results
+                    } 
+                    while ($source_hvADUsers.remainingCount -gt 0)
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv"
+
+                    #extract Virtual Machines summary information
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..."
+                    $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
+                    #####TODO add code here to paginate thru the query results
+                    $source_hvVMsList = @()
+                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
+                    do 
+                    {#paginate thru results
+                        if ($source_hvVMsList.length -ne 0) 
+                        {#first iteration
+                            $source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)
+                        }
+                        $source_hvVMsList += $source_hvVMs.Results
+                    } 
+                    while ($source_hvVMs.remainingCount -gt 0)
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv"
+
+                    #figure out the info we need for each VM (VM name, user, desktop pool name)
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Figuring out usernames for vms (this can take a while)..."
+                    #########TODO: add code to filter VMs which belong only to the specified desktop_pool
+                    ForEach ($vm in $source_hvVMsList) 
+                    { #let's process each vm
+                        #figure out the vm assigned username
+                        $vmUsername = ($source_hvADUsersList | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName #grab the user name whose id matches the id of the assigned user on the desktop machine
+
+                        #figure out the desktop pool name
+                        $vmDesktopPool = ($source_hvDesktopPoolsList | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
+
+                        $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
+                        $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
                     }
-                }
-                catch
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"
-                    Exit
-                }
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to the SOURCE Horizon View server $source_hv"
-                #create API object
-                $source_hvObjectAPI = $source_hvObject.ExtensionData
-
-                [System.Collections.ArrayList]$newHvRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
-
-                #extract desktop pools
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
-                $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
-                #####TODO add code here to paginate thru the query results
-                $source_hvDesktopPoolsList = @()
-                $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                do 
-                {
-                    if ($source_hvDesktopPoolsList.length -ne 0) 
-                    {
-                        $source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)
-                    }
-                    $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
-                } 
-                while ($source_hvDesktopPools.remainingCount -gt 0)
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
-
-                #map the user id to a username
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..."
-                $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
-                $source_hvADUsersList = @()
-                $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                do 
-                {
-                    if ($source_hvADUsersList.length -ne 0) 
-                    {
-                        $source_hvADUsers = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvADUsers.Id)
-                    }
-                    $source_hvADUsersList += $source_hvADUsers.Results
-                } 
-                while ($source_hvADUsers.remainingCount -gt 0)
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv"
-
-                #extract Virtual Machines summary information
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..."
-                $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
-                #####TODO add code here to paginate thru the query results
-                $source_hvVMsList = @()
-                $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                do 
-                {
-                    if ($source_hvVMsList.length -ne 0) 
-                    {
-                        $source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)
-                    }
-                    $source_hvVMsList += $source_hvVMs.Results
-                } 
-                while ($source_hvVMs.remainingCount -gt 0)
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv"
-
-                #figure out the info we need for each VM (VM name, user, desktop pool name)
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Figuring out usernames for vms (this can take a while)..."
-                #########TODO: add code to filter VMs which belong only to the specified desktop_pool
-                ForEach ($vm in $source_hvVMsList) 
-                { #let's process each vm
-                    #figure out the vm assigned username
-                    $vmUsername = ($source_hvADUsersList | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName #grab the user name whose id matches the id of the assigned user on the desktop machine
-
-                    #figure out the desktop pool name
-                    $vmDesktopPool = ($source_hvDesktopPoolsList | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
-
-                    $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
-                    $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
-                }
-
-                Disconnect-HVServer -Confirm:$false
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+                #endregion
+                
+                #region disconnect
+                    Disconnect-HVServer -Confirm:$false
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+                #endregion
             #endregion
 
             #region extract information from vSphere
-                #connect to the vCenter server
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE vCenter server $source_vc ..."
-                try 
-                {
-                    if ($vcCreds) 
-                    {
-                        $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
-                    } 
-                    else 
-                    {
-                        $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
-                    }
-                }
-                catch 
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"
-                    Exit
-                }
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to SOURCE vCenter server $source_vc"
-
-                [System.Collections.ArrayList]$newVcRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
-
-                #process each vm and figure out the folder and portgroup name
-                ForEach ($vm in $newHvRef) 
-                {
-                    #########TODO: add code to filter VMs which belong only to the specified desktop_pool
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving VM $($vm.vmName) ..."
-                    try
-                    {
-                        $vmObject = Get-VM $vm.vmName -ErrorAction Stop
-                    } 
-                    catch
-                    {
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve VM $($vm.vmName) : $($_.Exception.Message)"
-                        Exit
-                    }
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving portgroup name for VM $($vm.vmName) ..."
+                #region connect
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE vCenter server $source_vc ..."
                     try 
-                    {
-                        $vmPortGroup = ($vmObject | Get-NetworkAdapter -ErrorAction Stop).NetworkName
-                    } 
+                    {#connect to the vCenter server
+                        if ($vcCreds) 
+                        {#use specified creds
+                            $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
+                        } 
+                        else 
+                        {#no creds specified so rely on sso
+                            $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
+                        }
+                    }
                     catch 
-                    {
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve portgroup name for VM $($vm.vmName) : $($_.Exception.Message)"
+                    {#couldn't connect
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"
                         Exit
                     }
-                    if ($vmPortGroup -is [array]) 
-                    {
-                        $vmPortGroup = $vmPortGroup | Select-Object -First 1
-                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup for $($vm.vmName). Only keeping the first one ($vmPortGroup)."
-                    }
-                    $vmInfo = @{"vmName" = $vm.vmName;"folder" = $vmObject.Folder.Name;"portgroup" = $vmPortGroup} #we build the information for that specific machine
-                    $result = $newVcRef.Add((New-Object PSObject -Property $vmInfo))
-                }
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to SOURCE vCenter server $source_vc"
+                #endregion
 
-                #disconnect from vCenter
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
-                Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                #region get
+                    [System.Collections.ArrayList]$newVcRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
+
+                    ForEach ($vm in $newHvRef) 
+                    {#process each vm and figure out the folder and portgroup name
+                        #########TODO: add code to filter VMs which belong only to the specified desktop_pool
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving VM $($vm.vmName) ..."
+                        try
+                        {#get-vm
+                            $vmObject = Get-VM $vm.vmName -ErrorAction Stop
+                        } 
+                        catch
+                        {#couldn't get-vm
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve VM $($vm.vmName) : $($_.Exception.Message)"
+                            Exit
+                        }
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving portgroup name for VM $($vm.vmName) ..."
+                        try 
+                        {#get-networkadapter
+                            $vmPortGroup = ($vmObject | Get-NetworkAdapter -ErrorAction Stop).NetworkName
+                        } 
+                        catch 
+                        {#couldn't get-networkadapter
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve portgroup name for VM $($vm.vmName) : $($_.Exception.Message)"
+                            Exit
+                        }
+                        if ($vmPortGroup -is [array]) 
+                        {#portgroup is an array (meaning several vnics are connected)
+                            $vmPortGroup = $vmPortGroup | Select-Object -First 1
+                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup for $($vm.vmName). Only keeping the first one ($vmPortGroup)."
+                        }
+                        $vmInfo = @{"vmName" = $vm.vmName;"folder" = $vmObject.Folder.Name;"portgroup" = $vmPortGroup} #we build the information for that specific machine
+                        $result = $newVcRef.Add((New-Object PSObject -Property $vmInfo))
+                    }
+                #endregion
+
+                #region disconnect
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
+                    Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                #endregion
             #endregion
 
             #region extract Nutanix Prism data
@@ -962,21 +970,20 @@ add-type @"
 
             #region update reference files and figure out which vms need to be added/removed to protection domain(s)
                 #compare reference file with pool & pd content
-                #foreach vm in hv, find out if it is already in the right protection domain, otherwise, add it to the list of vms to add to that pd
                 [System.Collections.ArrayList]$vms2Add = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect which vms need to be added to which protection domain
                 ForEach ($vm in $newHvRef) 
-                {
+                {#foreach vm in hv, find out if it is already in the right protection domain, otherwise, add it to the list of vms to add to that pd
                     #figure out which protection domain this vm should be based on its current desktop pool and the assigned protection domain for that pool
                     $assignedPd = ($poolRef | Where-Object {$_.desktop_pool -eq $vm.desktop_pool}).protection_domain
                     if (!$assignedPd) 
-                    {
+                    {#no pool to pd in reference file
                         Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not process protection domain addition for VM $($vm.vmName) because there is no assigned protection domain defined in $referentialPath\poolRef.csv for $($vm.desktop_pool)!"
                     }
                     else 
-                    {
+                    {#process vm to figure out pd membership status
                         #now find out if that vm is already in that protection domain
                         if (!($newPrismRef | Where-Object {$_.name -eq $assignedPd} | Where-Object {$_.vms.vm_name -eq $vm.vmName})) 
-                        {
+                        {#vm is not in pd
                             $vmInfo = @{"vmName" = $vm.vmName;"protection_domain" = $assignedPd}
                             #add vm to name the list fo vms to add to that pd
                             $result = $vms2Add.Add((New-Object PSObject -Property $vmInfo))
@@ -999,14 +1006,14 @@ add-type @"
             #endregion
 
             #region update protection domains
-                #if required, add vms to pds
+                
                 ForEach ($vm2add in $vms2add) 
-                {
+                {#if required, add vms to pds
                     $reponse = Update-NutanixProtectionDomain -action add -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2add.protection_domain -vm $vm2add.vmName
                 }
-                #if required, remove vms from pds
+                
                 ForEach ($vm2remove in $vms2remove) 
-                {
+                {#if required, remove vms from pds
                     $reponse = Update-NutanixProtectionDomain -action remove -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2remove.protection_domain -vm $vm2remove.vmName
                 }
             #endregion
@@ -1078,82 +1085,79 @@ add-type @"
                 #TODO : Add planned connectivity check for target Prism Element in the region below
                 #region applies to PLANNED only
                     if ($planned) 
-                    {
+                    {#doing checks for planned failover
                         #region SOURCE HORIZON VIEW SERVER 
                             #? Are matching desktop pools with VMs to process and which are disabled on the source hv?
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Starting checks on SOURCE Horizon View server $source_hv..."
 
-                            #start by connecting to the source view server
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
-                            if ($confirmSteps) 
-                            {
-                                $promptUser = ConfirmStep
-                            }
-                            try 
-                            {
-                                if ($hvCreds) 
-                                {
-                                    $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
-                                } 
-                                else 
-                                {
-                                    $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
-                                }
-                            }
-                            catch
-                            {
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"
-                                Exit
-                            }
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to the SOURCE Horizon View server $source_hv"
-                            #create API object
-                            $source_hvObjectAPI = $source_hvObject.ExtensionData
-
-                            #extract desktop pools
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
-                            if ($confirmSteps) 
-                            {
-                                $promptUser = ConfirmStep
-                            }
-                            $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
-
-                            #find out which pool we are working with (assume all which are disabled if none have been specified)
-                            if (!$desktop_pools) 
-                            {
-                                if ($protection_domains) 
-                                { #no pool was specified, but one or more protection domain(s) was/were, so let's match those to desktop pools using the reference file
-                                    $test_desktop_pools = @()
-                                    ForEach ($protection_domain in $protection_domains) 
-                                    {
-                                        $test_desktop_pools += ($poolRef | Where-Object {$_.protection_domain -eq $protection_domain}).desktop_pool
+                            #region connect
+                                #start by connecting to the source view server
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
+                                try 
+                                {#connect
+                                    if ($hvCreds) 
+                                    {#with creds
+                                        $source_hvObject = Connect-HVServer -Server $source_hv -Credential $hvCreds -ErrorAction Stop
+                                    } 
+                                    else 
+                                    {#no creds so use sso
+                                        $source_hvObject = Connect-HVServer -Server $source_hv -ErrorAction Stop
                                     }
-                                    $test_disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
-                                    $test_desktop_pools = $test_disabled_desktop_pools | Where-Object {$test_desktop_pools -contains $_.DesktopSummaryData.Name}
+                                }
+                                catch
+                                {#coudln't connect
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"
+                                    Exit
+                                }
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to the SOURCE Horizon View server $source_hv"
+                                #create API object
+                                $source_hvObjectAPI = $source_hvObject.ExtensionData
+                            #endregion
+
+                            #region get
+                                #extract desktop pools
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
+                                $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
+
+                                #find out which pool we are working with (assume all which are disabled if none have been specified)
+                                if (!$desktop_pools) 
+                                {#no pool was specified
+                                    if ($protection_domains) 
+                                    { #one or more protection domain(s) was/were specified
+                                        $test_desktop_pools = @()
+                                        ForEach ($protection_domain in $protection_domains) 
+                                        {#so let's match those to desktop pools using the reference file
+                                            $test_desktop_pools += ($poolRef | Where-Object {$_.protection_domain -eq $protection_domain}).desktop_pool
+                                        }
+                                        $test_disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                        $test_desktop_pools = $test_disabled_desktop_pools | Where-Object {$test_desktop_pools -contains $_.DesktopSummaryData.Name}
+                                    } 
+                                    else 
+                                    { #no pd and no pool were specified, so let's assume we have to process all disabled pools
+                                        $test_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                    }
                                 } 
                                 else 
-                                { #no pd and no pool were specified, so let's assume we have to process all disabled pools
-                                    $test_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                { #extract the desktop pools information
+                                    $test_disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                    $test_desktop_pools = $test_disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
                                 }
-                            } 
-                            else 
-                            { #extract the desktop pools information
-                                $test_disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
-                                $test_desktop_pools = $test_disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
-                            }
 
-                            if (!$test_desktop_pools) 
-                            {
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no desktop pool(s) to process on SOURCE horizon view server $source_hv! Make sure the desktop pool(s) you want to failover are disabled and contain VMs."
-                                Exit
-                            }
+                                if (!$test_desktop_pools) 
+                                {#couldn't find any pool with the right status
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no desktop pool(s) to process on SOURCE horizon view server $source_hv! Make sure the desktop pool(s) you want to failover are disabled and contain VMs."
+                                    Exit
+                                }
 
-                            Remove-Variable test_desktop_pools -ErrorAction SilentlyContinue
-                            Remove-Variable test_disabled_desktop_pools -ErrorAction SilentlyContinue
+                                Remove-Variable test_desktop_pools -ErrorAction SilentlyContinue
+                                Remove-Variable test_disabled_desktop_pools -ErrorAction SilentlyContinue
+                            #endregion
 
-                            #diconnect from the source view server
-                            Disconnect-HVServer * -Confirm:$false
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+                            #region disconnect
+                                Disconnect-HVServer * -Confirm:$false
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+                            #endregion
                         #endregion
                     
                         #region SOURCE NUTANIX PRISM ELEMENT 
@@ -1167,12 +1171,12 @@ add-type @"
 
                             #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
                             if (!$protection_domains) 
-                            {
+                            {#no pd specified
                                 if ($desktop_pools) 
-                                { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
+                                { #one or more dekstop pool(s) was/were specified
                                     $test_protection_domains = @()
                                     ForEach ($desktop_pool in $desktop_pools) 
-                                    {
+                                    {#so let's match to protection domains using the reference file
                                         $test_protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool}).protection_domain
                                     }
                                     $test_activeProtectionDomains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
@@ -1185,27 +1189,26 @@ add-type @"
                                 }
                             } 
                             else 
-                            {
+                            {#get pd info
                                 $test_protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
                             }
 
                             if (!$test_protection_domains) 
-                            {
+                            {#couldn't find a pd in the correct status
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
                                 Exit
                             }
 
                             ForEach ($test_pd2migrate in $test_protection_domains) 
-                            {
-                                #figure out if there is more than one remote site defined for the protection domain
+                            {#figure out if there is more than one remote site defined for the protection domain                                
                                 $test_remoteSite = $sourceClusterPd.entities | Where-Object {$_.name -eq $test_pd2migrate} | Select-Object -Property remote_site_names
                                 if (!$test_remoteSite.remote_site_names) 
-                                {
+                                {#no remote site
                                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $test_pd2migrate"
                                     Exit
                                 }
                                 if ($test_remoteSite -is [array]) 
-                                {
+                                {#more than one remote site
                                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $test_pd2migrate"
                                     Exit
                                 }
@@ -1217,35 +1220,38 @@ add-type @"
 
                         #region SOURCE VCENTER
                             #? Can we connect to source vc?
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE vCenter server $source_vc ..."
-                            try 
-                            {
-                                if ($vcCreds) 
-                                {
-                                    $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
-                                } 
-                                else 
-                                {
-                                    $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
+                            #region connect
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE vCenter server $source_vc ..."
+                                try 
+                                {#connect
+                                    if ($vcCreds) 
+                                    {#with creds
+                                        $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
+                                    } 
+                                    else 
+                                    {#no creds so use sso
+                                        $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
+                                    }
                                 }
-                            }
-                            catch 
-                            {
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"
-                                Exit
-                            }
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to SOURCE vCenter server $source_vc"
+                                catch 
+                                {#couldn't connect
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"
+                                    Exit
+                                }
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to SOURCE vCenter server $source_vc"
+                            #endregion
 
-                            #diconnect from vCenter
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
-                            Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                            #region disconnect
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
+                                Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                            #endregion
                         #endregion    
                     }  
                 #endregion
 
                 #region applies to UNPLANNED only
                     if ($unplanned) 
-                    {
+                    {#doing checks for unplanned failover
                         #region TARGET NUTANIX PRISM ELEMENT
                             #? Are there matching protection domains in the correct status on the target prism
                             #let's retrieve the list of protection domains from the target
@@ -1258,25 +1264,24 @@ add-type @"
                             $test_matching_protection_domains = @()
                             $test_pds2activate = @()
                             ForEach ($desktop_pool in $desktop_pools) 
-                            {
+                            {#match pool to pd
                                 $test_matching_protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool}).protection_domain
                             }
 
-                            #make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
                             ForEach ($test_matching_protection_domain in $test_matching_protection_domains) 
-                            {
+                            {#make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
                                 if (($targetClusterPd.entities | Where-Object {$_.name -eq $test_matching_protection_domain}).active -eq $true) 
-                                {
+                                {#pd already active
                                     Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Protection domain $test_matching_protection_domain is already active on target Prism $target_cluster. Skipping."
                                 } 
                                 else 
-                                {
+                                {#add pd to process list
                                     $test_pds2activate += $targetClusterPd.entities | Where-Object {$_.name -eq $test_matching_protection_domain}
                                 }
                             }
 
                             if (!$test_pds2activate) 
-                            {
+                            {#no pd to process
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."
                                 Exit
                             }
@@ -1290,54 +1295,61 @@ add-type @"
 
                     #region TARGET HORIZON VIEW
                         #? Can we connect to the target hv?
-                        #connect to the target view server
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET Horizon View server $target_hv..."
-                        try 
-                        {
-                            if ($hvCreds) 
-                            {
-                                $target_hvObject = Connect-HVServer -Server $target_hv -Credential $hvCreds -ErrorAction Stop
-                            } 
-                            else 
-                            {
-                                $target_hvObject = Connect-HVServer -Server $target_hv -ErrorAction Stop
+                        #region connect
+                            #connect to the target view server
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET Horizon View server $target_hv..."
+                            try 
+                            {#connect
+                                if ($hvCreds) 
+                                {#with creds
+                                    $target_hvObject = Connect-HVServer -Server $target_hv -Credential $hvCreds -ErrorAction Stop
+                                } 
+                                else 
+                                {#no creds, so use sso
+                                    $target_hvObject = Connect-HVServer -Server $target_hv -ErrorAction Stop
+                                }
                             }
-                        }
-                        catch
-                        {
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to the TARGET Horizon View server $target_hv : $($_.Exception.Message)"
-                            Exit
-                        }
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to the TARGET Horizon View server $target_hv"
+                            catch
+                            {#couldn't connect
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to the TARGET Horizon View server $target_hv : $($_.Exception.Message)"
+                                Exit
+                            }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to the TARGET Horizon View server $target_hv"
+                        #endregion
 
-                        #disconnect from the target view server
-                        Disconnect-HVServer * -Confirm:$false
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+                        #region disconnect
+                            Disconnect-HVServer * -Confirm:$false
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+                        #endregion
                     #endregion
 
                     #region TARGET VC
                         #? Can we connect to the target vc?
-                        #connect to the target vCenter
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET vCenter server $target_vc ..."
-                        try 
-                        {
-                            if ($vcCreds) 
-                            {
-                                $target_vcObject = Connect-VIServer $target_vc -Credential $vcCreds -ErrorAction Stop
-                            } else {
-                                $target_vcObject = Connect-VIServer $target_vc -ErrorAction Stop
+                        #region connect
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET vCenter server $target_vc ..."
+                            try 
+                            {#connect
+                                if ($vcCreds) 
+                                {#with creds
+                                    $target_vcObject = Connect-VIServer $target_vc -Credential $vcCreds -ErrorAction Stop
+                                } 
+                                else 
+                                {#no creds so use sso
+                                    $target_vcObject = Connect-VIServer $target_vc -ErrorAction Stop
+                                }
                             }
-                        }
-                        catch 
-                        {
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to TARGET vCenter server $target_vc : $($_.Exception.Message)"
-                            Exit
-                        }
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to TARGET vCenter server $target_vc"
+                            catch 
+                            {#couldn't connect
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to TARGET vCenter server $target_vc : $($_.Exception.Message)"
+                                Exit
+                            }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to TARGET vCenter server $target_vc"
+                        #endregion
 
-                        #disconnect from vCenter
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from TARGET vCenter server $source_vc..."
-                        Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                        #region disconnect
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from TARGET vCenter server $source_vc..."
+                            Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                        #endregion
                     #endregion    
                 #endregion
 
