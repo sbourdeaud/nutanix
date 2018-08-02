@@ -150,11 +150,11 @@ Param
 	[parameter(mandatory = $false)] [string]$username,
 	[parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] [string]$referentialPath,
-    [parameter(mandatory = $false)] $protection_domains,
-    [parameter(mandatory = $false)] $desktop_pools,
-    [parameter(mandatory = $false)] $prismCreds,
-    [parameter(mandatory = $false)] $vcCreds,
-    [parameter(mandatory = $false)] $hvCreds,
+    [parameter(mandatory = $false)] $protection_domains, #don't specify type as this is sometimes a string, sometimes an array in the script
+    [parameter(mandatory = $false)] $desktop_pools, #don't specify type as this is sometimes a string, sometimes an array in the script
+    [parameter(mandatory = $false)] $prismCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
+    [parameter(mandatory = $false)] $vcCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
+    [parameter(mandatory = $false)] $hvCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
     [parameter(mandatory = $false)] [switch]$noprompt,
     [parameter(mandatory = $false)] [switch]$prompt
 )
@@ -1548,79 +1548,75 @@ add-type @"
                     #region deal with the source Prism bits
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on SOURCE Nutanix cluster $source_cluster..."
                         if ($confirmSteps) 
-                        {#offer the opportunity to skip
-                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "This is your opportunity to skip the source Prism Element actions!"
-                            $promptUser = ConfirmStep -skip
+                        {#offer the opportunity to interrupt the script
+                            $promptUser = ConfirmStep
                         }
-                        if ($promptUser -ne "s")
-                        {#process
-                            #region get data
-                                #let's retrieve the list of protection domains from the source
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from source Nutanix cluster $source_cluster ..."
-                                if ($confirmSteps) 
-                                {
-                                    $promptUser = ConfirmStep
-                                }
-                                $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                                $method = "GET"
-                                $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from source Nutanix cluster $source_cluster"
+                        
+                        #region get data
+                            #let's retrieve the list of protection domains from the source
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from source Nutanix cluster $source_cluster ..."
+                            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                            $method = "GET"
+                            $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from source Nutanix cluster $source_cluster"
 
-                                #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
-                                if (!$protection_domains) 
-                                {
-                                    if ($desktop_pools) 
-                                    { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
-                                        $protection_domains = @()
-                                        ForEach ($desktop_pool in $desktop_pools) 
-                                        {
-                                            $protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool.DesktopSummaryData.Name}).protection_domain
-                                        }
-                                        $activeProtectionDomains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
-                                        $protection_domains = $activeProtectionDomains | Where-Object {$protection_domains -contains $_}
-                                    } 
-                                    else 
-                                    { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
-                                        $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
-                                        $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
+                            #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+                            if (!$protection_domains) 
+                            {
+                                if ($desktop_pools) 
+                                { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
+                                    $protection_domains = @()
+                                    ForEach ($desktop_pool in $desktop_pools) 
+                                    {
+                                        $protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool.DesktopSummaryData.Name}).protection_domain
                                     }
+                                    $activeProtectionDomains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
+                                    $protection_domains = $activeProtectionDomains | Where-Object {$protection_domains -contains $_}
                                 } 
                                 else 
-                                {
-                                    $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
+                                { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
+                                    $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
+                                    $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
                                 }
+                            } 
+                            else 
+                            {
+                                $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
+                            }
 
-                                if (!$protection_domains) 
+                            if (!$protection_domains) 
+                            {
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
+                                Exit
+                            }
+                        #endregion
+
+                        #! processing here
+                        #region process
+                            #now let's call the migrate workflow
+                            ForEach ($pd2migrate in $protection_domains) 
+                            {
+                                #figure out if there is more than one remote site defined for the protection domain
+                                $remoteSite = $sourceClusterPd.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
+                                if (!$remoteSite.remote_site_names) 
                                 {
-                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $pd2migrate"
                                     Exit
                                 }
-                            #endregion
-
-                            #! processing here
-                            #region process
-                                #now let's call the migrate workflow
-                                ForEach ($pd2migrate in $protection_domains) 
+                                if ($remoteSite -is [array]) 
                                 {
-                                    #figure out if there is more than one remote site defined for the protection domain
-                                    $remoteSite = $sourceClusterPd.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
-                                    if (!$remoteSite.remote_site_names) 
-                                    {
-                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $pd2migrate"
-                                        Exit
-                                    }
-                                    if ($remoteSite -is [array]) 
-                                    {
-                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $pd2migrate"
-                                        Exit
-                                    }
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $pd2migrate"
+                                    Exit
+                                }
 
-                                    #migrate the protection domain
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Migrating $pd2migrate to $($remoteSite.remote_site_names) ..."
-                                    if ($confirmSteps) 
-                                    {
-                                        $promptUser = ConfirmStep
-                                    }
+                                #migrate the protection domain
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Migrating $pd2migrate to $($remoteSite.remote_site_names) ..."
+                                if ($confirmSteps) 
+                                {#give the opportunity to skip
+                                    $promptUser = ConfirmStep -skip
+                                }
+                                if ($promptUser -ne "s")
+                                {#process
                                     $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2migrate/migrate"
                                     $method = "POST"
                                     $content = @{
@@ -1629,113 +1625,111 @@ add-type @"
                                     $body = (ConvertTo-Json $content -Depth 4)
                                     $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
                                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)"
-
                                 }
-
-                                #let's make sure all protection domain migrations have been processed successfully
-                                #retrieve the list of tasks in the cluster
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the SOURCE cluster $source_cluster ..."
-                                if ($confirmSteps) 
-                                {
-                                    $promptUser = ConfirmStep
+                                else
+                                {#we skipped
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping migrating $pd2migrate to $($remoteSite.remote_site_names) ..."
                                 }
-                                $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
-                                $method = "GET"
-                                $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the SOURCE cluster $source_cluster"
-                                #select only the tasks of operation type "deactivate" which were created after this script was started
-                                $pdMigrateTasks = $response.entities | Where-Object {$_.operation -eq "deactivate"} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
-                                #let's loop now until the tasks status are completed and successfull. If a task fails, we'll throw an exception.
-                                ForEach ($pdMigrateTask in $pdMigrateTasks) 
+                            }
+
+                            #let's make sure all protection domain migrations have been processed successfully
+                            #retrieve the list of tasks in the cluster
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the SOURCE cluster $source_cluster ..."
+                            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+                            $method = "GET"
+                            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the SOURCE cluster $source_cluster"
+                            #select only the tasks of operation type "deactivate" which were created after this script was started
+                            $pdMigrateTasks = $response.entities | Where-Object {$_.operation -eq "deactivate"} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+                            #let's loop now until the tasks status are completed and successfull. If a task fails, we'll throw an exception.
+                            ForEach ($pdMigrateTask in $pdMigrateTasks) 
+                            {
+                                if ($pdMigrateTask.percentageCompleted -ne "100") 
                                 {
-                                    if ($pdMigrateTask.percentageCompleted -ne "100") 
+                                    Do 
                                     {
-                                        Do 
+                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Waiting 5 seconds for task $($pdMigrateTask.taskName) to complete : $($pdMigrateTask.percentageCompleted)%"
+                                        Sleep 5
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the SOURCE cluster $source_cluster ..."
+                                        $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+                                        $method = "GET"
+                                        $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the SOURCE cluster $source_cluster"
+                                        $task = $response.entities | Where-Object {$_.taskName -eq $pdMigrateTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+                                        if ($task.status -ne "running") 
                                         {
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Waiting 5 seconds for task $($pdMigrateTask.taskName) to complete : $($pdMigrateTask.percentageCompleted)%"
-                                            Sleep 5
-                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the SOURCE cluster $source_cluster ..."
-                                            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
-                                            $method = "GET"
-                                            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the SOURCE cluster $source_cluster"
-                                            $task = $response.entities | Where-Object {$_.taskName -eq $pdMigrateTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
-                                            if ($task.status -ne "running") 
+                                            if ($task.status -ne "succeeded") 
                                             {
-                                                if ($task.status -ne "succeeded") 
-                                                {
-                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($pdMigrateTask.taskName) failed with the following status and error code : $($task.status) : $($task.errorCode)"
-                                                    Exit
-                                                }
+                                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($pdMigrateTask.taskName) failed with the following status and error code : $($task.status) : $($task.errorCode)"
+                                                Exit
                                             }
                                         }
-                                        While ($task.percentageCompleted -ne "100")
-                                        
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdMigrateTask.taskName) completed on the SOURCE cluster $source_cluster"
-                                    } 
-                                    else 
-                                    {
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdMigrateTask.taskName) completed on the SOURCE cluster $source_cluster"
                                     }
+                                    While ($task.percentageCompleted -ne "100")
+                                    
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdMigrateTask.taskName) completed on the SOURCE cluster $source_cluster"
+                                } 
+                                else 
+                                {
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdMigrateTask.taskName) completed on the SOURCE cluster $source_cluster"
                                 }
+                            }
 
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "All protection domain migration tasks have completed. Moving on to vCenter."
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "All protection domain migration tasks have completed. Moving on to vCenter."
 
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on SOURCE Nutanix server $source_cluster"
-                                Write-Host ""
-                            #endregion
-                        }
-                        else
-                        {#we skipped
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping source Prism Element actions..."
-                        }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on SOURCE Nutanix server $source_cluster"
+                            Write-Host ""
+                        #endregion
                     #endregion
 
                     #region deal with the source vCenter bits
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on SOURCE vCenter server $source_vc..."
                         if ($confirmSteps) 
-                        {#offer the opportunity to skip
-                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "This is your opportunity to skip the source vCenter server actions!"
-                            $promptUser = ConfirmStep -skip
+                        {#offer the opportunity to interrupt the script
+                            $promptUser = ConfirmStep
                         }
-                        if ($promptUser -ne "s")
-                        {#process
-                            #region connect
-                                #connect to the source vCenter
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE vCenter server $source_vc ..."
-                                try 
-                                {
-                                    if ($vcCreds) 
-                                    {
-                                        $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
-                                    } else {
-                                        $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
-                                    }
+                        
+                        #region connect
+                            #connect to the source vCenter
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE vCenter server $source_vc ..."
+                            try 
+                            {#connect
+                                if ($vcCreds) 
+                                {#with creds
+                                    $source_vcObject = Connect-VIServer $source_vc -Credential $vcCreds -ErrorAction Stop
+                                } 
+                                else 
+                                {#no creds, so use sso
+                                    $source_vcObject = Connect-VIServer $source_vc -ErrorAction Stop
                                 }
-                                catch 
-                                {
-                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"
-                                    Exit
-                                }
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to SOURCE vCenter server $source_vc"
-                            #endregion
+                            }
+                            catch 
+                            {#couldn't connect
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to SOURCE vCenter server $source_vc : $($_.Exception.Message)"
+                                Exit
+                            }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to SOURCE vCenter server $source_vc"
+                        #endregion
 
-                            #! processing here
-                            #region process
-                                #remove orphaned entries from SOURCE vCenter
-                                #our reference point is the desktop pool, so let's process vms in each desktop pool
-                                ForEach ($desktop_pool in $desktop_pool_names) 
+                        #! processing here
+                        #region process
+                            
+                            #our reference point is the desktop pool, so let's process vms in each desktop pool
+                            ForEach ($desktop_pool in $desktop_pool_names) 
+                            {#remove orphaned entries from SOURCE vCenter
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing vms in desktop pool $desktop_pool on $source_vc ..."
+                                if ($confirmSteps)
                                 {
+                                    $promptUser = ConfirmStep -skip
+                                }
+                                if ($promptUser -ne "s")
+                                {#process
                                     #determine which vms belong to the desktop pool(s) we are processing
                                     $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
                                     #process all vms for that desktop pool
                                     ForEach ($vm in $vms) 
                                     {
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Removing $($vm.vmName) from inventory in $source_vc ..."
-                                        if ($confirmSteps) 
-                                        {
-                                            $promptUser = ConfirmStep
-                                        }
                                         try 
                                         {
                                             $result = Get-VM -Name $vm.vmName | Where-Object {$_.ExtensionData.Summary.OverallStatus -eq 'gray'} | remove-vm -Confirm:$false
@@ -1747,57 +1741,62 @@ add-type @"
                                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Removed $($vm.vmName) from inventory in $source_vc."
                                     }
                                 }
-                            #endregion
+                                else
+                                {#we skipped
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping processing vms in desktop pool $desktop_pool on $source_vc ..."
+                                }
+                            }
+                        #endregion
 
-                            #region disconnect
-                                #disconnect from vCenter
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
-                                Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                        #region disconnect
+                            #disconnect from vCenter
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
+                            Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
 
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on SOURCE vCenter server $source_vc"
-                                Write-Host ""
-                            #endregion
-                        }
-                        else
-                        {#we skipped
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping source vCenter server actions..."
-                        }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on SOURCE vCenter server $source_vc"
+                            Write-Host ""
+                        #endregion
                     #endregion
 
                     #region deal with the target vCenter bits
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on TARGET vCenter server $target_vc..."
                         if ($confirmSteps) 
-                        {#offer the opportunity to skip
-                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "This is your opportunity to skip the target vCenter server actions!"
-                            $promptUser = ConfirmStep -skip
+                        {#offer the opportunity to interrupt the script
+                            $promptUser = ConfirmStep
                         }
-                        if ($promptUser -ne "s")
-                        {#process
-                            #region connect
-                                #connect to the target vCenter
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET vCenter server $target_vc ..."
-                                try 
-                                {
-                                    if ($vcCreds) 
-                                    {
-                                        $target_vcObject = Connect-VIServer $target_vc -Credential $vcCreds -ErrorAction Stop
-                                    } else {
-                                        $target_vcObject = Connect-VIServer $target_vc -ErrorAction Stop
-                                    }
-                                }
-                                catch 
-                                {
-                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to TARGET vCenter server $target_vc : $($_.Exception.Message)"
-                                    Exit
-                                }
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to TARGET vCenter server $target_vc"
-                            #endregion
 
-                            #! processing here
-                            #region process
-                                #our reference point is the desktop pool, so let's process vms in each desktop pool
-                                ForEach ($desktop_pool in $desktop_pool_names) 
+                        #region connect
+                            #connect to the target vCenter
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET vCenter server $target_vc ..."
+                            try 
+                            {
+                                if ($vcCreds) 
                                 {
+                                    $target_vcObject = Connect-VIServer $target_vc -Credential $vcCreds -ErrorAction Stop
+                                } else {
+                                    $target_vcObject = Connect-VIServer $target_vc -ErrorAction Stop
+                                }
+                            }
+                            catch 
+                            {
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to TARGET vCenter server $target_vc : $($_.Exception.Message)"
+                                Exit
+                            }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected to TARGET vCenter server $target_vc"
+                        #endregion
+
+                        #! processing here
+                        #region process
+                            #our reference point is the desktop pool, so let's process vms in each desktop pool
+                            ForEach ($desktop_pool in $desktop_pool_names) 
+                            {
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing vms in desktop pool $desktop_pool on $target_vc..."
+                                if ($confirmSteps) 
+                                {#offer the opportunity to skip
+                                    $promptUser = ConfirmStep -skip
+                                }
+                                if ($promptUser -ne "s")
+                                {#process
                                     #determine which vms belong to the desktop pool(s) we are processing
                                     $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
                                     
@@ -1809,138 +1808,117 @@ add-type @"
                                         #! ACTION 1/2: move vms to their correct folder
                                         $folder = Get-Folder -Name (($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Trying to move $($vm.vmName) to folder $($folder.Name)..."
-                                        if ($confirmSteps) 
-                                        {#offer the opportunity to skip
-                                            $promptUser = ConfirmStep -skip
-                                        }
-                                        if ($promptUser -ne "s")
-                                            {#process
-                                            try 
-                                            {#trying to move the vm
-                                                $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
-                                                if ($vmObject.Folder.Name -ne $folder.Name) 
-                                                {#we moved the vm successfully
-                                                    $result = $vmObject | Move-VM -InventoryLocation $folder -ErrorAction Stop
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Moved $($vm.vmName) to folder $($folder.Name)"
-                                                } 
-                                                else 
-                                                {#vm is already in the correct folder
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "VM $($vm.vmName) is already in folder $($folder.Name)"
-                                                }
-                                            }
-                                            catch 
-                                            {#we failed to move the vm to its folder
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"
-                                            }
-                                        }
-                                        else 
-                                        {#we skipped
-                                            Write-LogOuput -category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping moving vms to their folder..."
-                                        }
-                                        #! ACTION 2/2: connect vms to the portgroup
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Re-connecting the virtual machine $($vm.vmName) virtual NIC..."
-                                        if ($confirmSteps) 
-                                        {#offer the opportunity to skip
-                                            $promptUser = ConfirmStep -skip
-                                        }
-                                        if ($promptUser -ne "s")
-                                            {#process
-                                            try 
-                                            {#figure out the portgroup name and connect the vnic
-                                                if (!$target_pg) 
-                                                {#no target portgroup has been specified, so we need to figure out where to connect our vnics
-                                                    $standard_portgroup = $false
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
-                                                    #first we'll see if there is a portgroup with the same name in the target infrastructure
-                                                    $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
-                                                    $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
-                                                    $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
-                                                    if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                                                    {
-                                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
-                                                    } 
-                                                    elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                                                    {
-                                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
-                                                        $standard_portgroup = $true
-                                                    } 
-                                                    elseIf (!($dvPortGroups -is [array])) 
-                                                    {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
-                                                        $target_pgObject = $dvPortgroups
-                                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
-                                                    } 
-                                                    elseIf (!($vSwitch0_portGroups -is [array])) 
-                                                    {#if not, we'll see if there is a single portgroup on vSwitch0
-                                                        $target_pgObject = $vSwitch0_portGroups
-                                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
-                                                        $standard_portgroup = $true
-                                                    } 
-                                                    else 
-                                                    {#if not, we'll warn the user we could not process that VM
-                                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
-                                                        continue
-                                                    }
-                                                } 
-                                                else 
-                                                { #fetching the specified portgroup
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving the specified target portgroup $target_pg..."
-                                                    try 
-                                                    {#retrieving the specfied portgroup
-                                                        $target_pgObject = Get-VirtualPortGroup -Name $target_pg
-                                                    } 
-                                                    catch 
-                                                    {#we couldn't get the portgroup object
-                                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not retrieve the specified target portgroup : $($_.Exception.Message)"
-                                                        Continue
-                                                    }
-                                                    if ($target_pgObject -is [array]) 
-                                                    {#more than one portgroup with that name was found
-                                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup with the specified name!"
-                                                        Continue
-                                                    }
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved the specified target portgroup $target_pg"
-                                                }
-                                                #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
-                                                if (!$standard_portgroup) 
-                                                {
-                                                    $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
-                                                }
-                                            }
-                                            catch 
-                                            {#we failed to connect the vnic
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"
-                                                Continue
-                                            }
-                                            if (!$standard_portgroup) 
-                                            {#we connected to a dvPortGroup
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)"
+                                        try 
+                                        {#trying to move the vm
+                                            $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
+                                            if ($vmObject.Folder.Name -ne $folder.Name) 
+                                            {#we moved the vm successfully
+                                                $result = $vmObject | Move-VM -InventoryLocation $folder -ErrorAction Stop
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Moved $($vm.vmName) to folder $($folder.Name)"
                                             } 
                                             else 
-                                            {#vm is already connected to the correct portgroup
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..."
+                                            {#vm is already in the correct folder
+                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "VM $($vm.vmName) is already in folder $($folder.Name)"
                                             }
                                         }
+                                        catch 
+                                        {#we failed to move the vm to its folder
+                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"
+                                        }
+
+                                        #! ACTION 2/2: connect vms to the portgroup
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Re-connecting the virtual machine $($vm.vmName) virtual NIC..."
+                                        try 
+                                        {#figure out the portgroup name and connect the vnic
+                                            if (!$target_pg) 
+                                            {#no target portgroup has been specified, so we need to figure out where to connect our vnics
+                                                $standard_portgroup = $false
+                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
+                                                #first we'll see if there is a portgroup with the same name in the target infrastructure
+                                                $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
+                                                $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
+                                                $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
+                                                if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
+                                                {
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
+                                                } 
+                                                elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
+                                                {
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
+                                                    $standard_portgroup = $true
+                                                } 
+                                                elseIf (!($dvPortGroups -is [array])) 
+                                                {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
+                                                    $target_pgObject = $dvPortgroups
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
+                                                } 
+                                                elseIf (!($vSwitch0_portGroups -is [array])) 
+                                                {#if not, we'll see if there is a single portgroup on vSwitch0
+                                                    $target_pgObject = $vSwitch0_portGroups
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
+                                                    $standard_portgroup = $true
+                                                } 
+                                                else 
+                                                {#if not, we'll warn the user we could not process that VM
+                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
+                                                    continue
+                                                }
+                                            } 
+                                            else 
+                                            { #fetching the specified portgroup
+                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving the specified target portgroup $target_pg..."
+                                                try 
+                                                {#retrieving the specfied portgroup
+                                                    $target_pgObject = Get-VirtualPortGroup -Name $target_pg
+                                                } 
+                                                catch 
+                                                {#we couldn't get the portgroup object
+                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not retrieve the specified target portgroup : $($_.Exception.Message)"
+                                                    Continue
+                                                }
+                                                if ($target_pgObject -is [array]) 
+                                                {#more than one portgroup with that name was found
+                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup with the specified name!"
+                                                    Continue
+                                                }
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved the specified target portgroup $target_pg"
+                                            }
+                                            #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
+                                            if (!$standard_portgroup) 
+                                            {
+                                                $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
+                                            }
+                                        }
+                                        catch 
+                                        {#we failed to connect the vnic
+                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"
+                                            Continue
+                                        }
+                                        if (!$standard_portgroup) 
+                                        {#we connected to a dvPortGroup
+                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)"
+                                        } 
                                         else 
-                                        {#we skipped
-                                            Write-LogOuput -category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping connecting vnics to a portgroup..."
+                                        {#vm is already connected to the correct portgroup
+                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..."
                                         }
                                     }
                                 }
-                            #endregion
+                                else
+                                {#we skipped
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping processing vms in desktop pool $desktop_pool on $target_vc..."
+                                }
+                            }
+                        #endregion
 
-                            #region disconnect
-                                #disconnect from vCenter
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from TARGET vCenter server $target_vc..."
-                                Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                        #region disconnect
+                            #disconnect from vCenter
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from TARGET vCenter server $target_vc..."
+                            Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
 
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on TARGET vCenter server $target_vc"
-                                Write-Host ""
-                            #endregion
-                        }
-                        else
-                        {#we skipped
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping target vCenter server actions..."
-                        }
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on TARGET vCenter server $target_vc"
+                            Write-Host ""
+                        #endregion
                     #endregion
 
                     #region deal with the target view bits
