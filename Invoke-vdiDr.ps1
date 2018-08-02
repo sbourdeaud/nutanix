@@ -1394,18 +1394,15 @@ add-type @"
                         #region get data
                             #extract desktop pools
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
-                            if ($confirmSteps) 
-                            {
-                                $promptUser = ConfirmStep
-                            }
+                            
                             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
                             #####TODO add code here to paginate thru the query results
                             $source_hvDesktopPoolsList = @()
                             $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
                             do 
-                            {
+                            {#paginate thru results
                                 if ($source_hvDesktopPoolsList.length -ne 0) 
-                                {
+                                {#first iteration
                                     $source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)
                                 }
                                 $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
@@ -1415,18 +1412,15 @@ add-type @"
 
                             #extract Virtual Machines summary information
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..."
-                            if ($confirmSteps) 
-                            {
-                                $promptUser = ConfirmStep
-                            }
+                            
                             $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
                             #####TODO add code here to paginate thru the query results
                             $source_hvVMsList = @()
                             $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
                             do 
-                            {
+                            {#paginate thru results
                                 if ($source_hvVMsList.length -ne 0) 
-                                {
+                                {#first iteration
                                     $source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)
                                 }
                                 $source_hvVMsList += $source_hvVMs.Results
@@ -1436,12 +1430,12 @@ add-type @"
 
                             #find out which pool we are working with (assume all which are disabled if none have been specified)
                             if (!$desktop_pools) 
-                            {
+                            {#no pd specified
                                 if ($protection_domains) 
-                                { #no pool was specified, but one or more protection domain(s) was/were, so let's match those to desktop pools using the reference file
+                                { #one or more protection domain(s) was/were specified
                                     $desktop_pools = @()
                                     ForEach ($protection_domain in $protection_domains) 
-                                    {
+                                    {#so let's match those to desktop pools using the reference file
                                         $desktop_pools += ($poolRef | Where-Object {$_.protection_domain -eq $protection_domain}).desktop_pool
                                     }
                                     $disabled_desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
@@ -1459,7 +1453,7 @@ add-type @"
                             }
 
                             if (!$desktop_pools) 
-                            {
+                            {#no valid pool
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no desktop pool(s) to process on SOURCE horizon view server $source_hv!"
                                 Exit
                             }
@@ -1467,10 +1461,9 @@ add-type @"
 
                         #! processing here
                         #region process
-                            #process each desktop pool
-                            $poolProcessed = $false
+                            $poolProcessed = $false #we'll use this to make sure we've touched at least one pool
                             ForEach ($desktop_pool in $desktop_pools) 
-                            {
+                            {#process each desktop pool
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing the desktop pool $($desktop_pool.DesktopSummaryData.Name) on the source Horizon View Connection server $source_hv..."
                                 if ($confirmSteps) 
                                 {#giving the opportunity to skip this pool
