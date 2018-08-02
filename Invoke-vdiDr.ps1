@@ -1760,6 +1760,7 @@ add-type @"
                     #endregion
 
                     #region deal with the target vCenter bits
+                        Sleep 30 #adding sleep here because sometimes the vSphere API does not return the objects immediately for some reason
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on TARGET vCenter server $target_vc..."
                         if ($confirmSteps) 
                         {#offer the opportunity to interrupt the script
@@ -2269,6 +2270,7 @@ add-type @"
                     #endregion
 
                     #region deal with the target vCenter bits
+                        Sleep 30 #adding sleep here because sometimes the vSphere API does not return the objects immediately for some reason
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on TARGET vCenter server $target_vc..."
                         if ($confirmSteps) 
                         {#give the opportunity to interrupt the script
