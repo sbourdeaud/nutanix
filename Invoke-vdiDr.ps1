@@ -559,6 +559,7 @@ add-type @"
 	$StartEpochSeconds = Get-Date (Get-Date).ToUniversalTime() -UFormat %s
     $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
     $myvarOutputLogFile += "Invoke-VdiDr_OutputLog.log"
+    $promptUser = ""
     
     ########## uncomment those if you want to use constants instead of variables for some of the parameters
     #######################################################################################################
@@ -2125,7 +2126,7 @@ add-type @"
                                 }
                                 else
                                 {#we skipped
-                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Skipping processing desktop pool $desktop_pool on the TARGET Horizon View server $target_hv..."
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping processing desktop pool $desktop_pool on the TARGET Horizon View server $target_hv..."
                                 }
                             }
                         #endregion
