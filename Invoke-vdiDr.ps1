@@ -150,8 +150,8 @@ Param
 	[parameter(mandatory = $false)] [string]$username,
 	[parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] [string]$referentialPath,
-    [parameter(mandatory = $false)] [string]$protection_domains,
-    [parameter(mandatory = $false)] [string]$desktop_pools,
+    [parameter(mandatory = $false)] $protection_domains,
+    [parameter(mandatory = $false)] $desktop_pools,
     [parameter(mandatory = $false)] $prismCreds,
     [parameter(mandatory = $false)] $vcCreds,
     [parameter(mandatory = $false)] $hvCreds,
@@ -1027,7 +1027,7 @@ add-type @"
 
     #region -failover
         if ($failover) 
-        {    
+        {#we're doing a failover    
             if ((!$prompt) -and (!$noprompt))
             {#prompt for step by step confirmation
                 do {$promptUser = Read-Host -Prompt "Do you want to confirm every step? (y/n)"}
