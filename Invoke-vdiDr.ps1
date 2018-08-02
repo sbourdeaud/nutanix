@@ -1196,7 +1196,7 @@ add-type @"
                             if (!$test_protection_domains) 
                             {#couldn't find a pd in the correct status
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
-                                Exit
+                                ConfirmStep
                             }
 
                             ForEach ($test_pd2migrate in $test_protection_domains) 
