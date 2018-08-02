@@ -1563,12 +1563,12 @@ add-type @"
 
                             #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
                             if (!$protection_domains) 
-                            {
+                            {#no pd specified
                                 if ($desktop_pools) 
-                                { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
+                                { #one or more dekstop pool(s) was/were specified
                                     $protection_domains = @()
                                     ForEach ($desktop_pool in $desktop_pools) 
-                                    {
+                                    {#so let's match to protection domains using the reference file
                                         $protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool.DesktopSummaryData.Name}).protection_domain
                                     }
                                     $activeProtectionDomains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
@@ -1581,14 +1581,14 @@ add-type @"
                                 }
                             } 
                             else 
-                            {
+                            {#fetch specified pd
                                 $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
                             }
 
                             if (!$protection_domains) 
                             {
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
-                                Exit
+                                ConfirmStep
                             }
                         #endregion
 
