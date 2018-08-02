@@ -1521,6 +1521,7 @@ add-type @"
                                 else
                                 {#we skipped
                                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..."
+                                    $poolProcessed = $true
                                 }
                             }
 
