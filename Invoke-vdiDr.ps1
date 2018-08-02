@@ -2018,7 +2018,7 @@ add-type @"
                         #region process
                             ForEach ($desktop_pool in $desktop_pool_names) 
                             {#process each desktop pool
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Processing desktop pool $desktop_pool on the TARGET Horizon View server $target_hv..."
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing desktop pool $desktop_pool on the TARGET Horizon View server $target_hv..."
                                 if ($confirmSteps) 
                                 {#give the opportunity to skip
                                     $promptUser = ConfirmStep -skip
