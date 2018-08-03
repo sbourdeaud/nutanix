@@ -74,7 +74,7 @@
 .PARAMETER referentialPath
   Specifies the path where reference files are stored. Reference files are required for the failover and cleanup workflows. If no reference path is specified, the script working directory is used instead.
 .PARAMETER target_pg
-  Specifies the name of the portgroup you want to reconnect VMs to. If none is specified, the script figures out if there is a single distributed portgroup available, in which case it will use it.  If not, it looks for a matching portgroup name.  If there are none, it sees if there is a single portgroup on vSwitch0. If not, the script will fail.
+  Specifies the name of the portgroup you want to reconnect VMs to. If none is specified, the script figures out if there is a single distributed portgroup available, in which case it will use it.  If not, it looks for a matching portgroup name.  If there are none, it sees if there is a single portgroup on vSwitch0. If not, the script will fail. Alternatively, you can create a pgRef.csv file in the referential directory which contains "sourcePg","targetPg" headers and values. The script will then remap the vNIC interface to the target portgroup.
 .PARAMETER protection_domains
   Lets you specify which protection domain(s) you want to failover. Only works with planned.
 .PARAMETER desktop_pools
@@ -372,38 +372,102 @@ Function ConnectVmToPortGroup
         {#figure out the portgroup name and connect the vnic
             if (!$target_pg) 
             {#no target portgroup has been specified, so we need to figure out where to connect our vnics
-                $standard_portgroup = $false #we use this to track if the vm is laready connected to the correct standard vSwitch portgroup, in which case we won't try to reconnect
-                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
+
+                #region see if we have a portgroup mapping reference file
+                    If (Test-Path -Path ("$referentialPath\pgRef.csv")) 
+                    {#we found a pgRef file
+                        try 
+                        {#load the pgRef.csv file
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing data from $referentialPath\pgRef.csv..."
+                            $pgRef = Import-Csv -Path ("$referentialPath\pgRef.csv") -ErrorAction Stop
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported data from $referentialPath\pgRef.csv"
+
+                            #see if we have a matching portgroup mapping in the reference file
+                            $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
+                            if ($vmTargetPortGroup = ($pgRef | Where-Object {$_.sourcePg -eq $vmPortGroup}).targetPg)
+                            {#we found a matching target portgroup using our pgRef file
+                                try 
+                                {#getting available portgroups on vmhost
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Fetching available portgroups on the vmhost for $($vmObject.Name)..."
+                                    $HostAvailablePortgroups = $vmObject | Get-VMHost -ErrorAction Stop | Get-VirtualPortGroup -ErrorAction Stop
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Fetched available portgroups on the vmhost for $($vmObject.Name)."
+                                    if ($target_pgObject = $HostAvailablePortGroups | Where-Object {$_.Name -eq $vmTargetPortGroup})
+                                    {#found the target portgroup on our vmhost
+                                        try 
+                                        {#connect the vm to that portgroup
+                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting vm $($vmObject.Name) to $vmTargetPortGroup..."
+                                            $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
+                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Connected vm $($vmObject.Name) to $vmTargetPortGroup."
+                                            return
+                                        }
+                                        catch 
+                                        {#couldn't connect vm to that portgroup
+                                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect vm $($vmObject.Name) to $vmTargetPortGroup : $($_.Exception.Message)"
+                                            return
+                                        }
+                                    }
+                                    else 
+                                    {
+                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find the target portgroup $vmTargetPortGroup. This vm will be skipped."                                            
+                                    }
+                                }
+                                catch 
+                                {#couldn't get available portgroups on vmhost
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not get available portgroups on vmhost : $($_.Exception.Message)"
+                                    return
+                                }
+                            }
+                            else
+                            {#we didn't find a matching portgroup in our pgRef file
+                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a target portgroup for source portgroup $vmPortGroup in pgRef.csv. Skipping this vm."
+                                return
+                            }    
+                        } 
+                        catch 
+                        {#we couldn't load the file
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not import data from $referentialPath\pgRef.csv : $($_.Exception.Message)"
+                            Exit
+                        }
+                    }    
+                #endregion
+                    else 
+                    {
+                       #region automatically identify the best portgroup
+                        $standard_portgroup = $false #we use this to track if the vm is laready connected to the correct standard vSwitch portgroup, in which case we won't try to reconnect
+                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
+                        
+                        #first we'll see if there is a portgroup with the same name in the target infrastructure
+                        $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
+                        $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
+                        $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
+                        if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
+                        {#we have a matching portgroup on a dvSwitch
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
+                        } 
+                        elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
+                        {#we have a matching portgroup on a standard vSwitch
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
+                            $standard_portgroup = $true
+                        } 
+                        elseIf (!($dvPortGroups -is [array])) 
+                        {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
+                            $target_pgObject = $dvPortgroups
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
+                        } 
+                        elseIf (!($vSwitch0_portGroups -is [array])) 
+                        {#if not, we'll see if there is a single portgroup on vSwitch0
+                            $target_pgObject = $vSwitch0_portGroups
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
+                            $standard_portgroup = $true
+                        } 
+                        else 
+                        {#if not, we'll warn the user we could not process that VM
+                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
+                            continue
+                        }
+                    #endregion 
+                    }
                 
-                #first we'll see if there is a portgroup with the same name in the target infrastructure
-                $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
-                $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
-                $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
-                if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                {#we have a matching portgroup on a dvSwitch
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
-                } 
-                elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                {#we have a matching portgroup on a standard vSwitch
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
-                    $standard_portgroup = $true
-                } 
-                elseIf (!($dvPortGroups -is [array])) 
-                {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
-                    $target_pgObject = $dvPortgroups
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
-                } 
-                elseIf (!($vSwitch0_portGroups -is [array])) 
-                {#if not, we'll see if there is a single portgroup on vSwitch0
-                    $target_pgObject = $vSwitch0_portGroups
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
-                    $standard_portgroup = $true
-                } 
-                else 
-                {#if not, we'll warn the user we could not process that VM
-                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
-                    continue
-                }
             } 
             else 
             { #fetching the specified portgroup
@@ -628,6 +692,8 @@ $HistoryText = @'
                  Added support for -desktop_pools with the -scan workflow.
                  Moved Invoke-HvQuery to sbourdeaud module.
                  Added ConnectVmToPortGroup, MoveVmToFolder and AddVmsToPool functions to rationalize the code.
+                 Added support for a pgRef.csv reference file in order to map portgroups between site manually in the referential.
+                 Tested all scan and failover planned workflows in the lab.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -946,12 +1012,12 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 #endregion
 
 #TODO List
-#TODO : 1. Update script to be able to grab target_pg from a reference file
-#TODO : 2. Add disable of the pool when cleaning unplanned
-#TODO : 3. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
-#TODO : 4. add code to control .Net SSL protocols here so that we can connect to View consistently
-#TODO : 5. Add planned connectivity check for target Prism Element in the region prechecks planned failover
-#TODO : 6. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
+#TODO : 1. Add disable of the pool when cleaning unplanned
+#TODO : 2. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
+#TODO : 3. add code to control .Net SSL protocols here so that we can connect to View consistently
+#TODO : 4. Add planned connectivity check for target Prism Element in the region prechecks planned failover
+#TODO : 5. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
+#TODO : 6. Add logic to not go ahead if there is nothing in the reference files
 
 #region processing
 	################################
@@ -1168,7 +1234,6 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 
                 #foreach protection domain, figure out if there are vms which are no longer in horizon view and which need to be removed from the protection domain
                 [System.Collections.ArrayList]$vms2Remove = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect which vms need to be removed from which protection domain
-                #$vmNames2remove = $newHvRef.vmname | Where-Object {($newPrismRef | Where-Object {$poolRef.protection_domain -Contains $_.name}).vms.vm_name -notcontains $_} #figuring out which vms are in a protection domain in Prism which has a mapping but are no longer in view
                 $protectedVMs = ($newPrismRef | Where-Object {$poolRef.protection_domain -Contains $_.name}).vms.vm_name
                 $vmNames2remove = $protectedVMs | Where-Object {$newHvRef.vmname -notcontains $_}
                 ForEach ($vm in $vmNames2remove) 
@@ -2267,7 +2332,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                             Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve vm object for $($vm.vmName) from $target_vc : $($_.Exception.Message)"
                                             Continue
                                         }
-                                        
+
                                         #! ACTION 1/2: move vms to their correct folder
                                         $folder = Get-Folder -Name (($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Trying to move $($vm.vmName) to folder $($folder.Name)..."
