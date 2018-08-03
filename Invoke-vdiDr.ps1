@@ -316,7 +316,6 @@ Update-NutanixProtectionDomain -method add -cluster ntnx1.local -username api-us
     }
 }#end function Invoke-HvQuery
 
-#TODO : Add logic to process query result pagination correctly in the function below
 #this function is used to run an hv query
 Function Invoke-HvQuery
 {
@@ -383,7 +382,7 @@ Function Invoke-HvQuery
                 }
                 Finally
                 {#delete the paginated query on the server to save resources and avoid the 5 query limit
-                    if ($object.id -eq $null)
+                    if ($object.id -ne $null)
                     {#make sure this was the last page
                         $serviceQuery.QueryService_Delete($ViewAPIObject,$object.id)
                     }
@@ -484,6 +483,8 @@ $HistoryText = @'
                  Indented code properly for easier readout.
                  Marked specific sections doing actual processing in the code with #! for easier readout.
                  Replaced code in the prepwork region with functions from sbourdeaud module v2.1
+                 Changed Invoke-HvQuery function to process paginated results correctly and delete the query when done.
+                 Added support for -desktop_pools parameter with the -scan workflow.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
