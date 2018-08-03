@@ -358,43 +358,69 @@ Function Invoke-HvQuery
         $query.queryEntityType = $QueryType
         $query.MaxPageSize = 1000
         if ($query.QueryEntityType -eq 'PersistentDiskInfo') 
-        {
+        {#add filter for PersistentDiskInfo query
             $query.Filter = New-Object VMware.Hv.QueryFilterNotEquals -property @{'memberName'='storage.virtualCenter'; 'value' =$null}
         }
         if ($query.QueryEntityType -eq 'ADUserOrGroupSummaryView') 
-        {
+        {#get AD information in multiple pages
+            $paginatedResults = @() #we use this variable to save all pages of results
             try 
-            {
+            {#run the query and process the results using pagination
                 $object = $serviceQuery.QueryService_Create($ViewAPIObject,$query)
+                try 
+                {#paginate
+                    while ($object.results -ne $null)
+                    {#we still have data in there
+                        ForEach ($result in $object.results)
+                        {#process each page of data
+                            $paginatedResults += $result
+                        }
+                    }
+                }
+                Finally
+                {#delete the paginated query on the server to save resources and avoid the 5 query limit
+                    if ($object.id -eq $null)
+                    {#make sure this was the last page
+                        $serviceQuery.QueryService_Delete($ViewAPIObject,$object.id)
+                    }
+                }
             }
             catch 
-            {
+            {#query failed
                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "$($_.Exception.Message)"
                 exit
             }
         } 
         else 
-        {
+        {#get all other type of information using a single list limited to $query.MaxPageSize (or related server setting)
             try 
-            {
+            {#run the query
                 $object = $serviceQuery.QueryService_Query($ViewAPIObject,$query)
             }
             catch 
-            {
+            {#query failed
                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "$($_.Exception.Message)"
                 exit
             }
         }
-    }
 
-    end
-    {
         if (!$object) 
         {
             Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "The View API query did not return any data... Exiting!"
             Exit
         }
-        return $object
+    }
+
+    end
+    {
+        if ($query.QueryEntityType -eq 'ADUserOrGroupSummaryView') 
+        {#we ran an AD query so we probably have paginated results to return
+            return $paginatedResults
+        }
+        else
+        {#we ran a single page query so let's return that
+            return $object.results
+        }
     }
 }#end function Invoke-HvQuery
 
@@ -767,12 +793,14 @@ add-type @"
 #endregion
 
 #TODO List
-#TODO : Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
-#TODO : Work thru the pagination issues when assigning users
-#TODO : Add disable of the pool when cleaning unplanned
-#TODO : Add ability to narrow down scan to only specified pools
-#TODO : Update script to be able to grab target_pg from a reference file
-#TODO : add code to control .Net SSL protocols here so that we can connect to View consistently
+#TODO : 0. Modify Invoke-HvQuery to paginate thru results
+#TODO : 1. Identify sections of code elligible for functions and apply
+#TODO : 2. Add ability to narrow down scan to only specified pools
+#TODO : 3. Work thru the pagination issues when assigning users
+#TODO : 4. Update script to be able to grab target_pg from a reference file
+#TODO : 5. Add disable of the pool when cleaning unplanned
+#TODO : 6. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
+#TODO : 7. add code to control .Net SSL protocols here so that we can connect to View consistently
 
 #region processing
 	################################
@@ -785,7 +813,7 @@ add-type @"
             #region prepare
                 #load pool2pd reference
                 try 
-                {#load the file
+                {#load the file in $poolRef
                     $poolRef = Import-Csv -Path ("$referentialPath\poolRef.csv") -ErrorAction Stop
                 } 
                 catch 
@@ -822,72 +850,65 @@ add-type @"
                 #region get
                     [System.Collections.ArrayList]$newHvRef = New-Object System.Collections.ArrayList($null) #we'll use this variable to collect new information from the system (vm name, assigned ad username, desktop pool name, vm folder, portgroup)
 
-                    #extract desktop pools
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
-                    $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
-                    #####TODO add code here to paginate thru the query results
-                    $source_hvDesktopPoolsList = @()
-                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                    do 
-                    {#paginate thru results
-                        if ($source_hvDesktopPoolsList.length -ne 0) 
-                        {#first iteration
-                            $source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)
+                    #region extract desktop pools
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
+                        $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
+                    #endregion
+
+                    #region get AD information
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..."
+                        $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv"
+                    #endregion
+
+                    #region get machines information
+                        #extract Virtual Machines summary information
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..."
+                        $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv"
+                    #endregion
+
+                    #region figure out the list of VMs to process
+                        $vmObjectsToProcess = @() #we use this variable to build the list of vms to process
+                        if ($desktop_pools)
+                        {#specific pools were specified, let's keep only vms which are in those pools
+                            #turn our flat list of desktop_pools into Hv objects
+                            $desktop_pools = $source_hvDesktopPools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
+                            ForEach ($desktop_pool in $desktop_pools)
+                            {#process each pool
+                                #figure out which vms are in that pool
+                                $vms = $source_hvVMs | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
+                                #aggregate results in list of vms to process
+                                $vmObjectsToProcess += $vms
+                            }
                         }
-                        $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
-                    } 
-                    while ($source_hvDesktopPools.remainingCount -gt 0)
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
-
-                    #map the user id to a username
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the SOURCE Horizon View server $source_hv..."
-                    $source_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $source_hvObjectAPI
-                    $source_hvADUsersList = @()
-                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                    do 
-                    {#paginate thru results
-                        if ($source_hvADUsersList.length -ne 0) 
-                        {#first iteration
-                            $source_hvADUsers = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvADUsers.Id)
+                        else
+                        {#we are processing all desktop pools
+                            $vmObjectsToProcess = $source_hvVMs
                         }
-                        $source_hvADUsersList += $source_hvADUsers.Results
-                    } 
-                    while ($source_hvADUsers.remainingCount -gt 0)
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Active Directory user information from the SOURCE Horizon View server $source_hv"
 
-                    #extract Virtual Machines summary information
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..."
-                    $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
-                    #####TODO add code here to paginate thru the query results
-                    $source_hvVMsList = @()
-                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                    do 
-                    {#paginate thru results
-                        if ($source_hvVMsList.length -ne 0) 
-                        {#first iteration
-                            $source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)
+                        #save the list of VMs to process for later (used when getting info from vCenter)
+                        $vmsToProcess = $vmObjectsToProcess.Base.Name
+                    #endregion
+
+                    #region figure out the info we need for each VM (VM name, user, desktop pool name)
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Figuring out usernames for vms (this can take a while)..."
+
+                        ForEach ($vm in $vmObjectsToProcess) 
+                        { #let's process each vm
+                            #figure out the vm assigned username
+                            $vmUsername = ($source_hvADUsers | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName #grab the user name whose id matches the id of the assigned user on the desktop machine
+
+                            #figure out the desktop pool name
+                            $vmDesktopPool = ($source_hvDesktopPools | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
+
+                            $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
+                            $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
                         }
-                        $source_hvVMsList += $source_hvVMs.Results
-                    } 
-                    while ($source_hvVMs.remainingCount -gt 0)
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv"
-
-                    #figure out the info we need for each VM (VM name, user, desktop pool name)
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Figuring out usernames for vms (this can take a while)..."
-                    #########TODO: add code to filter VMs which belong only to the specified desktop_pool
-                    ForEach ($vm in $source_hvVMsList) 
-                    { #let's process each vm
-                        #figure out the vm assigned username
-                        $vmUsername = ($source_hvADUsersList | Where-Object {$_.Id.Id -eq $vm.Base.User.Id}).Base.DisplayName #grab the user name whose id matches the id of the assigned user on the desktop machine
-
-                        #figure out the desktop pool name
-                        $vmDesktopPool = ($source_hvDesktopPoolsList | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
-
-                        $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
-                        $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
-                    }
+                    #endregion
                 #endregion
-                
+
                 #region disconnect
                     Disconnect-HVServer -Confirm:$false
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
@@ -1760,8 +1781,8 @@ add-type @"
                     #endregion
 
                     #region deal with the target vCenter bits
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 30 seconds before processing items on TARGET vCenter server $target_vc..."
                         Sleep 30 #adding sleep here because sometimes the vSphere API does not return the objects immediately for some reason
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on TARGET vCenter server $target_vc..."
                         if ($confirmSteps) 
                         {#offer the opportunity to interrupt the script
                             $promptUser = ConfirmStep
@@ -2270,8 +2291,8 @@ add-type @"
                     #endregion
 
                     #region deal with the target vCenter bits
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 30 seconds before processing items on TARGET vCenter server $target_vc..."
                         Sleep 30 #adding sleep here because sometimes the vSphere API does not return the objects immediately for some reason
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing items on TARGET vCenter server $target_vc..."
                         if ($confirmSteps) 
                         {#give the opportunity to interrupt the script
                             $promptUser = ConfirmStep
@@ -2673,64 +2694,68 @@ add-type @"
                     #endregion
 
                     #region deal with source Prism
-                        #let's retrieve the list of protection domains from the source
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from source Nutanix cluster $source_cluster ..."
-                        $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                        $method = "GET"
-                        $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from source Nutanix cluster $source_cluster"
+                        #region get
+                            #let's retrieve the list of protection domains from the source
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from source Nutanix cluster $source_cluster ..."
+                            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                            $method = "GET"
+                            $sourceClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from source Nutanix cluster $source_cluster"
 
-                        #first, we need to figure out which protection domains need to be updated. If none have been specified, we'll assume all those which are referenced in the PoolRef.csv file.
-                        if (!$protection_domains) 
-                        {#no pd was specified
-                            if ($desktop_pools) 
-                            { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
-                                $protection_domains = @()
-                                ForEach ($desktop_pool in $desktop_pools) 
-                                {#match each pool to a pd
-                                    $protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool}).protection_domain
+                            #first, we need to figure out which protection domains need to be updated. If none have been specified, we'll assume all those which are referenced in the PoolRef.csv file.
+                            if (!$protection_domains) 
+                            {#no pd was specified
+                                if ($desktop_pools) 
+                                { #no protection domain was specified, but one or more dekstop pool(s) was/were, so let's match to protection domains using the reference file
+                                    $protection_domains = @()
+                                    ForEach ($desktop_pool in $desktop_pools) 
+                                    {#match each pool to a pd
+                                        $protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool}).protection_domain
+                                    }
+                                    $standbyProtectionDomains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name
+                                    $protection_domains = $standbyProtectionDomains | Where-Object {$protection_domains -contains $_}
+                                } 
+                                else 
+                                { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains referenced in PoolRef.csv
+                                    $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
+                                    $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
                                 }
-                                $standbyProtectionDomains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name
-                                $protection_domains = $standbyProtectionDomains | Where-Object {$protection_domains -contains $_}
                             } 
                             else 
-                            { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains referenced in PoolRef.csv
-                                $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
+                            {#a pd was specified
                                 $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
                             }
-                        } 
-                        else 
-                        {#a pd was specified
-                            $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
-                        }
 
-                        if (!$protection_domains) 
-                        {#no pd in correct status
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
-                            Exit
-                        }
+                            if (!$protection_domains) 
+                            {#no pd in correct status
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $source_cluster!"
+                                Exit
+                            }
+                        #endregion
 
                         #! processing here
-                        ForEach ($pd2update in $protection_domains) 
-                        {#now let's remove the schedules
-                            #remove all schedules from the protection domain
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Removing all schedules from protection domain $pd2update on $source_cluster ..."
-                            if ($confirmSteps) 
-                            {#give the opportunity to skip
-                                $promptUser = ConfirmStep -skip
+                        #region process
+                            ForEach ($pd2update in $protection_domains) 
+                            {#now let's remove the schedules
+                                #remove all schedules from the protection domain
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Removing all schedules from protection domain $pd2update on $source_cluster ..."
+                                if ($confirmSteps) 
+                                {#give the opportunity to skip
+                                    $promptUser = ConfirmStep -skip
+                                }
+                                if ($promptUser -ne "s")
+                                {#process
+                                    $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2update/schedules"
+                                    $method = "DELETE"
+                                    $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully removed all schedules from protection domain $pd2update on $source_cluster"
+                                }
+                                else
+                                {#we skipped
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping removing all schedules from protection domain $pd2update on $source_cluster ..."
+                                }
                             }
-                            if ($promptUser -ne "s")
-                            {#process
-                                $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2update/schedules"
-                                $method = "DELETE"
-                                $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully removed all schedules from protection domain $pd2update on $source_cluster"
-                            }
-                            else
-                            {#we skipped
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping removing all schedules from protection domain $pd2update on $source_cluster ..."
-                            }
-                        }
+                        #endregion
                     #endregion
                 }   
             #endregion
