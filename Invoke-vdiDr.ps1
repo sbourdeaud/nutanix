@@ -316,117 +316,6 @@ Update-NutanixProtectionDomain -method add -cluster ntnx1.local -username api-us
     }
 }#end function Invoke-HvQuery
 
-#this function is used to run an hv query
-Function Invoke-HvQuery
-{
-	#input: QueryType (see https://vdc-repo.vmware.com/vmwb-repository/dcr-public/f004a27f-6843-4efb-9177-fa2e04fda984/5db23088-04c6-41be-9f6d-c293201ceaa9/doc/index-queries.html), ViewAPI service object
-	#output: query result object
-<#
-.SYNOPSIS
-  Runs a Horizon View query.
-.DESCRIPTION
-  Runs a Horizon View query.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER QueryType
-  Type of query (see https://vdc-repo.vmware.com/vmwb-repository/dcr-public/f004a27f-6843-4efb-9177-fa2e04fda984/5db23088-04c6-41be-9f6d-c293201ceaa9/doc/index-queries.html)
-.PARAMETER ViewAPIObject
-  View API service object.
-.EXAMPLE
-  PS> Invoke-HvQuery -QueryType PersistentDiskInfo -ViewAPIObject $ViewAPI
-#>
-	[CmdletBinding()]
-	param
-	(
-        [string]
-        [ValidateSet('ADUserOrGroupSummaryView','ApplicationIconInfo','ApplicationInfo','DesktopSummaryView','EntitledUserOrGroupGlobalSummaryView','EntitledUserOrGroupLocalSummaryView','FarmHealthInfo','FarmSummaryView','GlobalEntitlementSummaryView','MachineNamesView','MachineSummaryView','PersistentDiskInfo','PodAssignmentInfo','RDSServerInfo','RDSServerSummaryView','RegisteredPhysicalMachineInfo','SessionGlobalSummaryView','SessionLocalSummaryView','TaskInfo','UserHomeSiteInfo')]
-        $QueryType,
-        [VMware.Hv.Services]
-        $ViewAPIObject
-	)
-
-    begin
-    {
-
-    }
-
-    process
-    {
-	    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-        $query = New-Object "Vmware.Hv.QueryDefinition"
-        $query.queryEntityType = $QueryType
-        $query.MaxPageSize = 1000
-        if ($query.QueryEntityType -eq 'PersistentDiskInfo') 
-        {#add filter for PersistentDiskInfo query
-            $query.Filter = New-Object VMware.Hv.QueryFilterNotEquals -property @{'memberName'='storage.virtualCenter'; 'value' =$null}
-        }
-        if ($query.QueryEntityType -eq 'ADUserOrGroupSummaryView') 
-        {#get AD information in multiple pages
-            $paginatedResults = @() #we use this variable to save all pages of results
-            try 
-            {#run the query and process the results using pagination
-                $object = $serviceQuery.QueryService_Create($ViewAPIObject,$query)
-                try 
-                {#paginate
-                    while ($object.results -ne $null)
-                    {#we still have data in there
-                        $paginatedResults += $object.results
-
-                        if ($object.id -eq $null)
-                        {#no more pages of results
-                            break
-                        }
-                        #fetching the next page of results
-                        $object = $serviceQuery.QueryService_GetNext($ViewAPIObject,$object.id)
-                    }
-                }
-                Finally
-                {#delete the paginated query on the server to save resources and avoid the 5 query limit
-                    if ($object.id -ne $null)
-                    {#make sure this was the last page
-                        $serviceQuery.QueryService_Delete($ViewAPIObject,$object.id)
-                    }
-                }
-            }
-            catch 
-            {#query failed
-                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "$($_.Exception.Message)"
-                exit
-            }
-        } 
-        else 
-        {#get all other type of information using a single list limited to $query.MaxPageSize (or related server setting)
-            try 
-            {#run the query
-                $object = $serviceQuery.QueryService_Query($ViewAPIObject,$query)
-            }
-            catch 
-            {#query failed
-                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "$($_.Exception.Message)"
-                exit
-            }
-        }
-
-        if (!$object) 
-        {
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "The View API query did not return any data... Exiting!"
-            Exit
-        }
-    }
-
-    end
-    {
-        if ($query.QueryEntityType -eq 'ADUserOrGroupSummaryView') 
-        {#we ran an AD query so we probably have paginated results to return
-            return $paginatedResults
-        }
-        else
-        {#we ran a single page query so let's return that
-            return $object.results
-        }
-    }
-}#end function Invoke-HvQuery
-
 #this function is used to control the workflow of the script by prompting the user
 Function ConfirmStep
 {
@@ -462,6 +351,258 @@ Function ConfirmStep
         return $promptUser
     }
 }
+
+#this function is used to reconnect a vm vnic to a portgroup
+Function ConnectVmToPortGroup
+{
+    [CmdletBinding()]
+    param
+    (
+
+    )
+
+    begin
+    {
+
+    }
+
+    process
+    {
+        try 
+        {#figure out the portgroup name and connect the vnic
+            if (!$target_pg) 
+            {#no target portgroup has been specified, so we need to figure out where to connect our vnics
+                $standard_portgroup = $false #we use this to track if the vm is laready connected to the correct standard vSwitch portgroup, in which case we won't try to reconnect
+                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
+                
+                #first we'll see if there is a portgroup with the same name in the target infrastructure
+                $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
+                $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
+                $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
+                if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
+                {#we have a matching portgroup on a dvSwitch
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
+                } 
+                elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
+                {#we have a matching portgroup on a standard vSwitch
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
+                    $standard_portgroup = $true
+                } 
+                elseIf (!($dvPortGroups -is [array])) 
+                {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
+                    $target_pgObject = $dvPortgroups
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
+                } 
+                elseIf (!($vSwitch0_portGroups -is [array])) 
+                {#if not, we'll see if there is a single portgroup on vSwitch0
+                    $target_pgObject = $vSwitch0_portGroups
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
+                    $standard_portgroup = $true
+                } 
+                else 
+                {#if not, we'll warn the user we could not process that VM
+                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
+                    continue
+                }
+            } 
+            else 
+            { #fetching the specified portgroup
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving the specified target portgroup $target_pg..."
+                try 
+                {#retrieving the specified portgroup
+                    $target_pgObject = Get-VirtualPortGroup -Name $target_pg
+                } 
+                catch 
+                {#we couldn't get the portgroup object
+                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not retrieve the specified target portgroup : $($_.Exception.Message)"
+                    Continue
+                }
+                if ($target_pgObject -is [array]) 
+                {#more than one portgroup with that name was found
+                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup with the specified name!"
+                    Continue
+                }
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved the specified target portgroup $target_pg"
+            }
+            #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
+            if (!$standard_portgroup) 
+            {
+                $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
+            }
+        }
+        catch 
+        {#we failed to connect the vnic
+            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"
+            Continue
+        }
+        if (!$standard_portgroup) 
+        {#we connected to a dvPortGroup
+            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)"
+        } 
+        else 
+        {#vm is already connected to the correct portgroup
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..."
+        }
+    }
+
+    end
+    {
+
+    }
+}
+
+#this function is used to move a vm to a folder
+Function MoveVmToFolder
+{
+    [CmdletBinding()]
+    param
+    (
+
+    )
+
+    begin
+    {
+
+    }
+
+    process
+    {
+        try 
+        {#trying to move the vm
+            if ($vmObject.Folder.Name -ne $folder.Name) 
+            {#we moved the vm successfully
+                $result = $vmObject | Move-VM -InventoryLocation $folder -ErrorAction Stop
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Moved $($vm.vmName) to folder $($folder.Name)"
+            } 
+            else 
+            {#vm is already in the correct folder
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "VM $($vm.vmName) is already in folder $($folder.Name)"
+            }
+        }
+        catch 
+        {#we failed to move the vm to its folder
+            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"
+        }
+    }
+
+    end
+    {
+
+    }
+}
+
+#this function is used to add vms to a desktop pool
+Function AddVmsToPool
+{
+    [CmdletBinding()]
+    param
+    (
+
+    )
+
+    begin
+    {
+
+    }
+
+    process
+    {
+        #figure out the desktop pool Id
+        $desktop_poolId = ($target_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
+        #determine which vms belong to the desktop pool(s) we are processing
+        $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
+
+        #add vms to the desktop pools
+        if ($vms) 
+        {#there are vms to process
+            #process all vms for that desktop pool
+            #we start by building the list of vms to add to the pool (this will be more efficient than adding them one by one)
+            $vmIds = @()
+            ForEach ($vm in $vms) 
+            {#figure out the virtual machine id
+                $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
+                $vmIds += $vmId
+            }
+
+            if (!$vmIds) 
+            {#couldn't find vms ids
+                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "No Virtual Machines summary information was found from the TARGET Horizon View server $target_hv..."
+                Exit
+            }
+
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Adding virtual machines to desktop pool $desktop_pool..."
+            
+            #! ACTION 1/2: Add vms to the desktop pool
+            try 
+            {#add vms
+                $result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)
+            } 
+            catch 
+            {#couldn't add vms
+                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"
+                Continue
+            }
+            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Added virtual machines to desktop pool $desktop_pool."
+
+            #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
+            #extract Virtual Machines summary information
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
+            Sleep 15
+            $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
+
+            ForEach ($vm in $vms) 
+            {#register users to their vms
+                #figure out the object id of the assigned user
+                if ($vm.assignedUser) 
+                {#process the assigned user if there was one  
+                    while (!($vmId = ($target_hvVMs | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
+                    {#loop to figure out the virtual machine id for the recently added vms
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
+                        Sleep 15
+                        $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
+                    }
+
+                    $vmUserId = ($target_hvADUsers | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
+                    if (!$vmUserId) 
+                    {#couldn't find the user in AD
+                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!"
+                        continue
+                    }
+
+                    #create the MapEntry object required for updating the machine
+                    $MapEntry = New-Object "Vmware.Hv.MapEntry"
+                    $MapEntry.key = "base.user"
+                    $MapEntry.value = $vmUserId
+                    
+                    #update the machine
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating assigned user for $($vm.vmName)..."
+                    #! ACTION 2/2: Assign user to the vm
+                    try 
+                    {#update vm
+                        $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
+                    } 
+                    catch 
+                    {#couldn't update vm
+                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"
+                        Continue
+                    }
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Updated assigned user for $($vm.vmName) to $($vm.assignedUser)."
+                }
+            }
+        } 
+        else 
+        {#no vm in pool
+            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There were no virtual machines to add to desktop pool $desktop_pool..."
+        }
+    }
+
+    end
+    {
+
+    }
+}
 #endregion
 
 #region prepwork
@@ -483,6 +624,10 @@ $HistoryText = @'
                  Indented code properly for easier readout.
                  Marked specific sections doing actual processing in the code with #! for easier readout.
                  Replaced code in the prepwork region with functions from sbourdeaud module v2.1
+ 08/02/2018 sb   Fixed pagination in Invoke-HvQuery.
+                 Added support for -desktop_pools with the -scan workflow.
+                 Moved Invoke-HvQuery to sbourdeaud module.
+                 Added ConnectVmToPortGroup, MoveVmToFolder and AddVmsToPool functions to rationalize the code.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -503,53 +648,53 @@ if ($History)
 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
 
 #region module sbourdeaud is used for facilitating Prism REST calls
-if (!(Get-Module -Name sbourdeaud)) 
-{#module is not loaded
-    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing module 'sbourdeaud'..."
-    try
-    {#try loading the module
-        Import-Module -Name sbourdeaud -ErrorAction Stop
-        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-    }
-    catch 
-    {#we couldn't import the module, so let's install it
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Installing module 'sbourdeaud' from the Powershell Gallery..."
-        try 
-        {#install
-            Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-        }
-        catch 
-        {#couldn't install
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not install module 'sbourdeaud': $($_.Exception.Message)"
-            Exit
-        }
-
+    if (!(Get-Module -Name sbourdeaud)) 
+    {#module is not loaded
+        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing module 'sbourdeaud'..."
         try
-        {#import
+        {#try loading the module
             Import-Module -Name sbourdeaud -ErrorAction Stop
             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
         }
         catch 
-        {#we couldn't import the module
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)"
-            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1"
+        {#we couldn't import the module, so let's install it
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Installing module 'sbourdeaud' from the Powershell Gallery..."
+            try 
+            {#install
+                Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+            }
+            catch 
+            {#couldn't install
+                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not install module 'sbourdeaud': $($_.Exception.Message)"
+                Exit
+            }
+
+            try
+            {#import
+                Import-Module -Name sbourdeaud -ErrorAction Stop
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
+            }
+            catch 
+            {#we couldn't import the module
+                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)"
+                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1"
+                Exit
+            }
+        }
+    }#endif module sbourdeaud
+    if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 0)) 
+    {
+        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating module 'sbourdeaud'..."
+        try 
+        {#update the module
+            Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+        }
+        catch 
+        {#couldn't update
+            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
             Exit
         }
     }
-}#endif module sbourdeaud
-if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 0)) 
-{
-    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating module 'sbourdeaud'..."
-    try 
-    {#update the module
-        Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-    }
-    catch 
-    {#couldn't update
-        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
-        Exit
-    }
-}
 #endregion
 
 #region module BetterTls
@@ -562,7 +707,7 @@ if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name 
 
 #region get ready to use the Nutanix REST API
     #Accept self signed certs
-add-type @"
+    $code = @"
     using System.Net;
     using System.Security.Cryptography.X509Certificates;
     public class TrustAllCertsPolicy : ICertificatePolicy {
@@ -573,6 +718,11 @@ add-type @"
         }
     }
 "@
+    if (!(([System.Management.Automation.PSTypeName]'TrustAllCertsPolicy').Type))
+    {#make sure the type isn't already there in order to avoid annoying error messages
+        $result = add-type $code -ErrorAction SilentlyContinue
+    }
+    
     #we also need to use the proper encryption protocols
     [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
     [Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls12"
@@ -801,6 +951,7 @@ add-type @"
 #TODO : 3. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
 #TODO : 4. add code to control .Net SSL protocols here so that we can connect to View consistently
 #TODO : 5. Add planned connectivity check for target Prism Element in the region prechecks planned failover
+#TODO : 6. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
 
 #region processing
 	################################
@@ -1047,8 +1198,8 @@ add-type @"
             #endregion
 
             #region export
-                $newHvRefExport = $newHvRef | Export-Csv -NoTypeInformation -Path "$referentialPath\hvRef.csv"
-                $newVcRefExport = $newVcRef | Export-Csv -NoTypeInformation -Path "$referentialPath\vcRef.csv"
+                $newHvRefExport = $newHvRef | Sort-Object -Property vmName | Export-Csv -NoTypeInformation -Path "$referentialPath\hvRef.csv"
+                $newVcRefExport = $newVcRef | Sort-Object -Property vmName | Export-Csv -NoTypeInformation -Path "$referentialPath\vcRef.csv"
             #endregion
         } 
     #endregion
@@ -1115,7 +1266,7 @@ add-type @"
                     if ($planned) 
                     {#doing checks for planned failover
                         #region SOURCE HORIZON VIEW SERVER 
-                            #? Are matching desktop pools with VMs to process and which are disabled on the source hv?
+                            #? Are there matching desktop pools with VMs to process and which are disabled on the source hv?
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Starting checks on SOURCE Horizon View server $source_hv..."
 
                             #region connect
@@ -1158,17 +1309,17 @@ add-type @"
                                         {#so let's match those to desktop pools using the reference file
                                             $test_desktop_pools += ($poolRef | Where-Object {$_.protection_domain -eq $protection_domain}).desktop_pool
                                         }
-                                        $test_disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                        $test_disabled_desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                                         $test_desktop_pools = $test_disabled_desktop_pools | Where-Object {$test_desktop_pools -contains $_.DesktopSummaryData.Name}
                                     } 
                                     else 
                                     { #no pd and no pool were specified, so let's assume we have to process all disabled pools
-                                        $test_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                        $test_desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                                     }
                                 } 
                                 else 
                                 { #extract the desktop pools information
-                                    $test_disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                    $test_disabled_desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                                     $test_desktop_pools = $test_disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
                                 }
 
@@ -1809,103 +1960,25 @@ add-type @"
                                     $dvPortgroups = Get-VDPortGroup | Where-Object {$_.IsUplink -eq $false} #retrieve distributed portgroup names in the target infrastructure which are not uplinks
                                     ForEach ($vm in $vms) 
                                     {
+                                        try 
+                                        {#getting vm object
+                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving vm object for $($vm.vmName) from $target_vc"
+                                            $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop    
+                                        }
+                                        catch 
+                                        {#couldn't get vm object so skipping to next vm
+                                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve vm object for $($vm.vmName) from $target_vc : $($_.Exception.Message)"
+                                            Continue
+                                        }
+
                                         #! ACTION 1/2: move vms to their correct folder
                                         $folder = Get-Folder -Name (($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Trying to move $($vm.vmName) to folder $($folder.Name)..."
-                                        try 
-                                        {#trying to move the vm
-                                            $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
-                                            if ($vmObject.Folder.Name -ne $folder.Name) 
-                                            {#we moved the vm successfully
-                                                $result = $vmObject | Move-VM -InventoryLocation $folder -ErrorAction Stop
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Moved $($vm.vmName) to folder $($folder.Name)"
-                                            } 
-                                            else 
-                                            {#vm is already in the correct folder
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "VM $($vm.vmName) is already in folder $($folder.Name)"
-                                            }
-                                        }
-                                        catch 
-                                        {#we failed to move the vm to its folder
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"
-                                        }
+                                        MoveVmToFolder
 
                                         #! ACTION 2/2: connect vms to the portgroup
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Re-connecting the virtual machine $($vm.vmName) virtual NIC..."
-                                        try 
-                                        {#figure out the portgroup name and connect the vnic
-                                            if (!$target_pg) 
-                                            {#no target portgroup has been specified, so we need to figure out where to connect our vnics
-                                                $standard_portgroup = $false
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
-                                                #first we'll see if there is a portgroup with the same name in the target infrastructure
-                                                $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
-                                                $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
-                                                $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
-                                                if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                                                {
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
-                                                } 
-                                                elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                                                {
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
-                                                    $standard_portgroup = $true
-                                                } 
-                                                elseIf (!($dvPortGroups -is [array])) 
-                                                {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
-                                                    $target_pgObject = $dvPortgroups
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
-                                                } 
-                                                elseIf (!($vSwitch0_portGroups -is [array])) 
-                                                {#if not, we'll see if there is a single portgroup on vSwitch0
-                                                    $target_pgObject = $vSwitch0_portGroups
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
-                                                    $standard_portgroup = $true
-                                                } 
-                                                else 
-                                                {#if not, we'll warn the user we could not process that VM
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
-                                                    continue
-                                                }
-                                            } 
-                                            else 
-                                            { #fetching the specified portgroup
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving the specified target portgroup $target_pg..."
-                                                try 
-                                                {#retrieving the specfied portgroup
-                                                    $target_pgObject = Get-VirtualPortGroup -Name $target_pg
-                                                } 
-                                                catch 
-                                                {#we couldn't get the portgroup object
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not retrieve the specified target portgroup : $($_.Exception.Message)"
-                                                    Continue
-                                                }
-                                                if ($target_pgObject -is [array]) 
-                                                {#more than one portgroup with that name was found
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup with the specified name!"
-                                                    Continue
-                                                }
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved the specified target portgroup $target_pg"
-                                            }
-                                            #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
-                                            if (!$standard_portgroup) 
-                                            {
-                                                $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 |Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
-                                            }
-                                        }
-                                        catch 
-                                        {#we failed to connect the vnic
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"
-                                            Continue
-                                        }
-                                        if (!$standard_portgroup) 
-                                        {#we connected to a dvPortGroup
-                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)"
-                                        } 
-                                        else 
-                                        {#vm is already connected to the correct portgroup
-                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..."
-                                        }
+                                        ConnectVmToPortGroup
                                     }
                                 }
                                 else
@@ -1991,92 +2064,7 @@ add-type @"
                                 }
                                 if ($promptUser -ne "s")
                                 {#process
-                                    #figure out the desktop pool Id
-                                    $desktop_poolId = ($target_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
-                                    #determine which vms belong to the desktop pool(s) we are processing
-                                    $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
-
-                                    #add vms to the desktop pools
-                                    if ($vms) 
-                                    {#there are vms to process
-                                        #process all vms for that desktop pool
-                                        #we start by building the list of vms to add to the pool (this will be more efficient than adding them one by one)
-                                        $vmIds = @()
-                                        ForEach ($vm in $vms) 
-                                        {#figure out the virtual machine id
-                                            $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
-                                            $vmIds += $vmId
-                                        }
-
-                                        if (!$vmIds) 
-                                        {#couldn't find vms ids
-                                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "No Virtual Machines summary information was found from the TARGET Horizon View server $target_hv..."
-                                            Exit
-                                        }
-
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Adding virtual machines to desktop pool $desktop_pool..."
-                                        
-                                        try 
-                                        {#add vms
-                                            $result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)
-                                        } 
-                                        catch 
-                                        {#couldn't add vms
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"
-                                            Continue
-                                        }
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Added virtual machines to desktop pool $desktop_pool."
-
-                                        #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
-                                        #extract Virtual Machines summary information
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
-                                        Sleep 15
-                                        $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
-
-                                        ForEach ($vm in $vms) 
-                                        {#register users to their vms
-                                            #figure out the object id of the assigned user
-                                            if ($vm.assignedUser) 
-                                            {#process the assigned user if there was one  
-                                                while (!($vmId = ($target_hvVMs | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
-                                                {#loop to figure out the virtual machine id for the recently added vms
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
-                                                    Sleep 15
-                                                    $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
-                                                }
-
-                                                $vmUserId = ($target_hvADUsers | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
-                                                if (!$vmUserId) 
-                                                {#couldn't find the user in AD
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!"
-                                                    continue
-                                                }
-
-                                                #create the MapEntry object required for updating the machine
-                                                $MapEntry = New-Object "Vmware.Hv.MapEntry"
-                                                $MapEntry.key = "base.user"
-                                                $MapEntry.value = $vmUserId
-                                                #update the machine
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating assigned user for $($vm.vmName)..."
-                                                try 
-                                                {#update vm
-                                                    $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
-                                                } 
-                                                catch 
-                                                {#couldn't update vm
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"
-                                                    Continue
-                                                }
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Updated assigned user for $($vm.vmName) to $($vm.assignedUser)."
-                                            }
-                                        }
-                                    } 
-                                    else 
-                                    {#no vm in pool
-                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There were no virtual machines to add to desktop pool $desktop_pool..."
-                                    }
+                                    AddVmsToPool
                                 }
                                 else
                                 {#we skipped
@@ -2094,7 +2082,7 @@ add-type @"
                         #endregion
                     #endregion
 
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done!"
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done! Make sure you enable your desktop pools on $target_hv now so that users can connect!"
                     Write-Host ""
                 }  
             #endregion
@@ -2269,108 +2257,25 @@ add-type @"
                                     $dvPortgroups = Get-VDPortGroup | Where-Object {$_.IsUplink -eq $false} #retrieve distributed portgroup names in the target infrastructure which are not uplinks
                                     ForEach ($vm in $vms) 
                                     {
+                                        try 
+                                        {#getting vm object
+                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving vm object for $($vm.vmName) from $target_vc"
+                                            $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop    
+                                        }
+                                        catch 
+                                        {#couldn't get vm object so skipping to next vm
+                                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not retrieve vm object for $($vm.vmName) from $target_vc : $($_.Exception.Message)"
+                                            Continue
+                                        }
+                                        
                                         #! ACTION 1/2: move vms to their correct folder
                                         $folder = Get-Folder -Name (($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).folder) #figure out which folder this vm was in and move it
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Trying to move $($vm.vmName) to folder $($folder.Name)..."
-                                        try 
-                                        {
-                                            $vmObject = Get-VM -Name $vm.vmName -ErrorAction Stop
-                                            if ($vmObject.Folder.Name -ne $folder.Name) 
-                                            {
-                                                $result = $vmObject | Move-VM -InventoryLocation $folder -ErrorAction Stop
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Moved $($vm.vmName) to folder $($folder.Name)"
-                                            } 
-                                            else 
-                                            {
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "VM $($vm.vmName) is already in folder $($folder.Name)"
-                                            }
-                                        }
-                                        catch 
-                                        {
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not move $($vm.vmName) to folder $($folder.Name) : $($_.Exception.Message)"
-                                            Continue
-                                        }
+                                        MoveVmToFolder
 
                                         #! ACTION 2/2: connect vms to the portgroup
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Re-connecting the virtual machine $($vm.vmName) virtual NIC..."
-                                        if ($confirmSteps) 
-                                        {
-                                            $promptUser = ConfirmStep
-                                        }
-                                        try 
-                                        {
-                                            if (!$target_pg) 
-                                            {#no target portgroup has been specified, so we need to figure out where to connect our vnics
-                                                $standard_portgroup = $false
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "No target portgroup was specified, figuring out which one to use..."
-                                                #first we'll see if there is a portgroup with the same name in the target infrastructure
-                                                $vmPortgroup = ($oldVcRef | Where-Object {$_.vmName -eq $vm.vmName}).portgroup #retrieve the portgroup name at the source for this vm
-                                                $portgroups = $vmObject | Get-VMHost | Get-VirtualPortGroup -Standard #retrieve portgroup names in the target infrastructure on the VMhost running that VM
-                                                $vSwitch0_portGroups = ($vmObject | Get-VMHost | Get-VirtualSwitch -Name "vSwitch0" | Get-VirtualPortGroup -Standard) # get portgroups only on vSwitch0
-                                                if ($target_pgObject = $dvPortgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                                                {
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching distributed portgroup $($target_pgObject.Name) which will be used."
-                                                } 
-                                                elseIf ($target_pgObject = $portgroups | Where-Object {$_.Name -eq $vmPortGroup}) 
-                                                {
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a matching standard portgroup $($target_pgObject.Name) which will be used."
-                                                    $standard_portgroup = $true
-                                                } 
-                                                elseIf (!($dvPortGroups -is [array])) 
-                                                {#if not, we'll see if there is a dvswitch, and see if there is only one portgroup on that dvswitch
-                                                    $target_pgObject = $dvPortgroups
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single distributed portgroup $($target_pgObject.Name) which will be used."
-                                                } 
-                                                elseIf (!($vSwitch0_portGroups -is [array])) 
-                                                {#if not, we'll see if there is a single portgroup on vSwitch0
-                                                    $target_pgObject = $vSwitch0_portGroups
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "There is a single standard portgroup on vSwitch0 $($target_pgObject.Name) which will be used."
-                                                    $standard_portgroup = $true
-                                                } 
-                                                else 
-                                                {#if not, we'll warn the user we could not process that VM
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not figure out which portgroup to use, so skipping connecting this VM's vNIC!"
-                                                    continue
-                                                }
-                                            } 
-                                            else 
-                                            { #fetching the specified portgroup
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving the specified target portgroup $target_pg..."
-                                                try 
-                                                {
-                                                    $target_pgObject = Get-VirtualPortGroup -Name $target_pg
-                                                } 
-                                                catch 
-                                                {
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not retrieve the specified target portgroup : $($_.Exception.Message)"
-                                                    Continue
-                                                }
-                                                if ($target_pgObject -is [array]) 
-                                                {
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one portgroup with the specified name!"
-                                                    Continue
-                                                }
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved the specified target portgroup $target_pg"
-                                            }
-                                            #now that we know which portgroup to connect the vm to, let's connect its vnic to that portgroup
-                                            if (!$standard_portgroup) 
-                                            {
-                                                $result = $vmObject | Get-NetworkAdapter -ErrorAction Stop | Select-Object -First 1 | Set-NetworkAdapter -NetworkName $target_pgObject.Name -Confirm:$false -ErrorAction Stop
-                                            }
-                                        }
-                                        catch 
-                                        {
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($vm.vmName) to the network : $($_.Exception.Message)"
-                                            Continue
-                                        }
-                                        if (!$standard_portgroup) 
-                                        {
-                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Re-connected the virtual machine $($vm.vmName) to the network $($target_pgObject.Name)"
-                                        } 
-                                        else 
-                                        {
-                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Virtual machine $($vm.vmName) is already connected to an existing standard portgroup, so skipping reconnection..."
-                                        }
+                                        ConnectVmToPortGroup
                                     }
                                 }
                                 else
@@ -2454,86 +2359,7 @@ add-type @"
                                 }
                                 if ($promptUser -ne "s")
                                 {#process
-
-                                    #figure out the desktop pool Id
-                                    $desktop_poolId = ($target_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
-                                    #determine which vms belong to the desktop pool(s) we are processing
-                                    $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
-
-                                    #! ACTION 1/2: add vms to the desktop pools
-                                    if ($vms) 
-                                    {#we found vms to add
-                                        #process all vms for that desktop pool
-                                        #we start by building the list of vms to add to the pool (this will be more efficient than adding them one by one)
-                                        $vmIds = @()
-                                        ForEach ($vm in $vms) 
-                                        {#figure out the virtual machine id for each vm to process
-                                            $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
-                                            $vmIds += $vmId
-                                        }
-
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Adding virtual machines to desktop pool $desktop_pool..."
-                                        try 
-                                        {#add vms to the pool
-                                            $result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)
-                                        } 
-                                        catch 
-                                        {#couldn't add vms to the pool
-                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"
-                                            Continue
-                                        }
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Added virtual machines to desktop pool $desktop_pool."
-
-                                        #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
-                                        #extract Virtual Machines summary information
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
-                                        Sleep 15
-                                        $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
-
-                                        ForEach ($vm in $vms) 
-                                        {#! ACTION 2/2: register users to their vms
-                                            #figure out the object id of the assigned user
-                                            if ($vm.assignedUser) 
-                                            {#process the assigned user if there was one
-                                                #figure out the virtual machine id
-                                                while (!($vmId = ($target_hvVMs | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
-                                                {#figure out the vm id
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
-                                                    Sleep 15
-                                                    $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
-                                                }
-
-                                                $vmUserId = ($target_hvADUsers | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
-                                                if (!$vmUserId) 
-                                                {#couldn't find a vm user id
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!"
-                                                    continue
-                                                }
-                                                #create the MapEntry object required for updating the machine
-                                                $MapEntry = New-Object "Vmware.Hv.MapEntry"
-                                                $MapEntry.key = "base.user"
-                                                $MapEntry.value = $vmUserId
-                                                #update the machine
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating assigned user for $($vm.vmName)..."
-                                                try 
-                                                {#update vm
-                                                    $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
-                                                } 
-                                                catch 
-                                                {#couldn't update vm
-                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"
-                                                    Continue
-                                                }
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Updated assigned user for $($vm.vmName) to $($vm.assignedUser)."
-                                            }
-                                        }
-                                    } 
-                                    else 
-                                    {#no vms found to process
-                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There were no virtual machines to add to desktop pool $desktop_pool..."
-                                    }
+                                    AddVmsToPool
                                 }
                                 else 
                                 {#we skipped
@@ -2547,6 +2373,9 @@ add-type @"
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
                         #endregion
                     #endregion
+
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done! Make sure you enable your desktop pools on $target_hv now so that users can connect!"
+                    Write-Host ""
                 }   
             #endregion
         }   
