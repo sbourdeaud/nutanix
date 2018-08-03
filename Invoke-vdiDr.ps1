@@ -371,10 +371,14 @@ Function Invoke-HvQuery
                 {#paginate
                     while ($object.results -ne $null)
                     {#we still have data in there
-                        ForEach ($result in $object.results)
-                        {#process each page of data
-                            $paginatedResults += $result
+                        $paginatedResults += $object.results
+
+                        if ($object.id -eq $null)
+                        {#no more pages of results
+                            break
                         }
+                        #fetching the next page of results
+                        $object = $serviceQuery.QueryService_GetNext($ViewAPIObject,$object.id)
                     }
                 }
                 Finally
