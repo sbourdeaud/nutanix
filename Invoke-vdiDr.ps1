@@ -483,8 +483,6 @@ $HistoryText = @'
                  Indented code properly for easier readout.
                  Marked specific sections doing actual processing in the code with #! for easier readout.
                  Replaced code in the prepwork region with functions from sbourdeaud module v2.1
-                 Changed Invoke-HvQuery function to process paginated results correctly and delete the query when done.
-                 Added support for -desktop_pools parameter with the -scan workflow.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -798,14 +796,11 @@ add-type @"
 #endregion
 
 #TODO List
-#TODO : 0. Modify Invoke-HvQuery to paginate thru results
-#TODO : 1. Identify sections of code elligible for functions and apply
-#TODO : 2. Add ability to narrow down scan to only specified pools
-#TODO : 3. Work thru the pagination issues when assigning users
-#TODO : 4. Update script to be able to grab target_pg from a reference file
-#TODO : 5. Add disable of the pool when cleaning unplanned
-#TODO : 6. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
-#TODO : 7. add code to control .Net SSL protocols here so that we can connect to View consistently
+#TODO : 1. Update script to be able to grab target_pg from a reference file
+#TODO : 2. Add disable of the pool when cleaning unplanned
+#TODO : 3. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
+#TODO : 4. add code to control .Net SSL protocols here so that we can connect to View consistently
+#TODO : 5. Add planned connectivity check for target Prism Element in the region prechecks planned failover
 
 #region processing
 	################################
@@ -878,6 +873,8 @@ add-type @"
                         $vmObjectsToProcess = @() #we use this variable to build the list of vms to process
                         if ($desktop_pools)
                         {#specific pools were specified, let's keep only vms which are in those pools
+                            #preserve the list of dekstop pool names for when we process protection domains in Prism
+                            $desktopPoolNames = $desktop_pools
                             #turn our flat list of desktop_pools into Hv objects
                             $desktop_pools = $source_hvDesktopPools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
                             ForEach ($desktop_pool in $desktop_pools)
@@ -891,6 +888,8 @@ add-type @"
                         else
                         {#we are processing all desktop pools
                             $vmObjectsToProcess = $source_hvVMs
+                            #preserve the list of dekstop pool names for when we process protection domains in Prism
+                            $desktopPoolNames = $source_hvDesktopPools.DesktopSummaryData.Name
                         }
 
                         #save the list of VMs to process for later (used when getting info from vCenter)
@@ -947,7 +946,6 @@ add-type @"
 
                     ForEach ($vm in $newHvRef) 
                     {#process each vm and figure out the folder and portgroup name
-                        #########TODO: add code to filter VMs which belong only to the specified desktop_pool
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving VM $($vm.vmName) ..."
                         try
                         {#get-vm
@@ -1025,9 +1023,13 @@ add-type @"
                 ForEach ($vm in $vmNames2remove) 
                 { #process each vm identified above
                     $pd = (($newPrismRef | Where-Object {$poolRef.protection_domain -Contains $_.name}) | Where-Object {$_.vms.vm_name -eq $vm}).name
-                    $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
-                    #add vm to name the list fo vms to add to that pd
-                    $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
+                    #compare the list of desktop pools we are processing with their matching protection domain names in the reference file. This is to ensure we are not touching a pd we're not supposed to.
+                    if (($poolRef | Where-Object {$_.desktop_pool -eq $desktopPoolNames}).protection_domain -contains $pd)
+                    {#that pd matches a desktop pool we are processing
+                        $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
+                        #add vm to name the list fo vms to add to that pd
+                        $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
+                    }
                 }
             #endregion
 
@@ -1420,38 +1422,12 @@ add-type @"
                         #region get data
                             #extract desktop pools
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the SOURCE Horizon View server $source_hv..."
-                            
                             $source_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $source_hvObjectAPI
-                            #####TODO add code here to paginate thru the query results
-                            $source_hvDesktopPoolsList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {#paginate thru results
-                                if ($source_hvDesktopPoolsList.length -ne 0) 
-                                {#first iteration
-                                    $source_hvDesktopPools = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvDesktopPools.Id)
-                                }
-                                $source_hvDesktopPoolsList += $source_hvDesktopPools.Results
-                            } 
-                            while ($source_hvDesktopPools.remainingCount -gt 0)
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the SOURCE Horizon View server $source_hv"
 
                             #extract Virtual Machines summary information
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Virtual Machines summary information from the SOURCE Horizon View server $source_hv..."
-                            
                             $source_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $source_hvObjectAPI
-                            #####TODO add code here to paginate thru the query results
-                            $source_hvVMsList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {#paginate thru results
-                                if ($source_hvVMsList.length -ne 0) 
-                                {#first iteration
-                                    $source_hvVMs = $serviceQuery.QueryService_GetNext($source_hvObjectAPI,$source_hvVMs.Id)
-                                }
-                                $source_hvVMsList += $source_hvVMs.Results
-                            } 
-                            while ($source_hvVMs.remainingCount -gt 0)
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the SOURCE Horizon View server $source_hv"
 
                             #find out which pool we are working with (assume all which are disabled if none have been specified)
@@ -1464,17 +1440,17 @@ add-type @"
                                     {#so let's match those to desktop pools using the reference file
                                         $desktop_pools += ($poolRef | Where-Object {$_.protection_domain -eq $protection_domain}).desktop_pool
                                     }
-                                    $disabled_desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                    $disabled_desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                                     $desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
                                 } 
                                 else 
                                 { #no pd and no pool were specified, so let's assume we have to process all disabled pools
-                                    $desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                    $desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                                 }
                             } 
                             else 
                             { #extract the desktop pools information
-                                $disabled_desktop_pools = $source_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                $disabled_desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                                 $desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
                             }
 
@@ -1503,7 +1479,7 @@ add-type @"
                                         continue
                                     }
                                     #figure out which machines are in that desktop pool
-                                    $vms = $source_hvVMsList | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
+                                    $vms = $source_hvVMs | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
                                     
                                     #remove machines from the desktop pool
                                     if ($vms -is [array]) 
@@ -1991,41 +1967,16 @@ add-type @"
                             #retrieve the list of available vms in vCenter
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving virtual machines information from the TARGET Horizon View server $target_hv..."
                             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved virtual machines information from the TARGET Horizon View server $target_hv."
 
                             #extract desktop pools
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the TARGET Horizon View server $target_hv..."
                             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
-                            #####TODO add code here to paginate thru the query results
-                            $target_hvDesktopPoolsList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {#paginate thru results
-                                if ($target_hvDesktopPoolsList.length -ne 0) 
-                                {#first iteration
-                                    $target_hvDesktopPools = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvDesktopPools.Id)
-                                }
-                                $target_hvDesktopPoolsList += $target_hvDesktopPools.Results
-                            } 
-                            while ($target_hvDesktopPools.remainingCount -gt 0)
-                            
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the TARGET Horizon View server $target_hv."
                             
                             #extract Active Directory users & groups
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..."
-                            
                             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
-                            $target_hvADUsersList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {#paginate thru results
-                                if ($target_hvADUsersList.length -ne 0) 
-                                {#first iteration
-                                    $target_hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvADUsers.Id)
-                                }
-                                $target_hvADUsersList += $target_hvADUsers.Results
-                            } 
-                            while ($target_hvADUsers.remainingCount -gt 0)
-                            
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Active Directory user information from the TARGET Horizon View server $target_hv."
                         #endregion
 
@@ -2041,7 +1992,7 @@ add-type @"
                                 if ($promptUser -ne "s")
                                 {#process
                                     #figure out the desktop pool Id
-                                    $desktop_poolId = ($target_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
+                                    $desktop_poolId = ($target_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
                                     #determine which vms belong to the desktop pool(s) we are processing
                                     $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
 
@@ -2081,19 +2032,6 @@ add-type @"
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
                                         Sleep 15
                                         $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                        ####TODO add code here to paginate thru the results
-                                        $target_hvVMsList = @()
-                                        $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                                        do 
-                                        {#paginate thru results
-                                            if ($target_hvVMsList.length -ne 0) 
-                                            {#first iteration
-                                                $target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)
-                                            }
-                                            $target_hvVMsList += $target_hvVMs.Results
-                                        } 
-                                        while ($target_hvVMs.remainingCount -gt 0)
-                                        
                                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
 
                                         ForEach ($vm in $vms) 
@@ -2101,26 +2039,15 @@ add-type @"
                                             #figure out the object id of the assigned user
                                             if ($vm.assignedUser) 
                                             {#process the assigned user if there was one  
-                                                while (!($vmId = ($target_hvVMsList | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
+                                                while (!($vmId = ($target_hvVMs | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
                                                 {#loop to figure out the virtual machine id for the recently added vms
                                                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
                                                     Sleep 15
                                                     $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                                    $target_hvVMsList = @()
-                                                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                                                    do 
-                                                    {#paginate thru the results
-                                                        if ($target_hvVMsList.length -ne 0) 
-                                                        {#first iteration
-                                                            $target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)
-                                                        }
-                                                        $target_hvVMsList += $target_hvVMs.Results
-                                                    } 
-                                                    while ($target_hvVMs.remainingCount -gt 0)
                                                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
                                                 }
 
-                                                $vmUserId = ($target_hvADUsersList | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
+                                                $vmUserId = ($target_hvADUsers | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
                                                 if (!$vmUserId) 
                                                 {#couldn't find the user in AD
                                                     Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!"
@@ -2501,165 +2428,124 @@ add-type @"
                             }
                             
                             #retrieve the list of available vms in vCenter
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving virtual machines information from the TARGET Horizon View server $target_hv..."
                             $target_hvAvailableVms = $target_hvObjectAPI.VirtualMachine.VirtualMachine_List($target_hvVirtualCenter.Id)
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved virtual machines information from the TARGET Horizon View server $target_hv."
 
                             #extract desktop pools
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving desktop pools information from the TARGET Horizon View server $target_hv..."
                             $target_hvDesktopPools = Invoke-HvQuery -QueryType DesktopSummaryView -ViewAPIObject $target_hvObjectAPI
-                            #####TODO add code here to paginate thru the query results
-                            $target_hvDesktopPoolsList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {
-                                if ($target_hvDesktopPoolsList.length -ne 0) 
-                                {
-                                    $target_hvDesktopPools = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvDesktopPools.Id)
-                                }
-                                $target_hvDesktopPoolsList += $target_hvDesktopPools.Results
-                            } 
-                            while ($target_hvDesktopPools.remainingCount -gt 0)
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved desktop pools information from the TARGET Horizon View server $target_hv."
                             
                             #extract Active Directory users & groups
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Active Directory user information from the TARGET Horizon View server $target_hv..."
                             $target_hvADUsers = Invoke-HvQuery -QueryType ADUserOrGroupSummaryView -ViewAPIObject $target_hvObjectAPI
-                            $target_hvADUsersList = @()
-                            $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                            do 
-                            {
-                                if ($target_hvADUsersList.length -ne 0) 
-                                {
-                                    $target_hvADUsers = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvADUsers.Id)
-                                }
-                                $target_hvADUsersList += $target_hvADUsers.Results
-                            } 
-                            while ($target_hvADUsers.remainingCount -gt 0)
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Active Directory user information from the TARGET Horizon View server $target_hv."
                         #endregion
 
                         #! processing here
-                        #process each desktop pool
-                        ForEach ($desktop_pool in $desktop_pools) 
-                        {
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing desktop pool $desktop_pool..."
-                            if ($confirmSteps) 
-                            {#give the opportunity to skip
-                                $promptUser = ConfirmStep -skip
-                            }
-                            if ($promptUser -ne "s")
-                            {#process
+                        #region process
+                            ForEach ($desktop_pool in $desktop_pools) 
+                            {process each desktop pool
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing desktop pool $desktop_pool..."
+                                if ($confirmSteps) 
+                                {#give the opportunity to skip
+                                    $promptUser = ConfirmStep -skip
+                                }
+                                if ($promptUser -ne "s")
+                                {#process
 
-                                #figure out the desktop pool Id
-                                $desktop_poolId = ($target_hvDesktopPoolsList | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
-                                #determine which vms belong to the desktop pool(s) we are processing
-                                $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
+                                    #figure out the desktop pool Id
+                                    $desktop_poolId = ($target_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Name -eq $desktop_pool}).Id
+                                    #determine which vms belong to the desktop pool(s) we are processing
+                                    $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
 
-                                #! ACTION 1/2: add vms to the desktop pools
-                                if ($vms) 
-                                {#we found vms to add
-                                    #process all vms for that desktop pool
-                                    #we start by building the list of vms to add to the pool (this will be more efficient than adding them one by one)
-                                    $vmIds = @()
-                                    ForEach ($vm in $vms) 
-                                    {#figure out the virtual machine id for each vm to process
-                                        $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
-                                        $vmIds += $vmId
-                                    }
-
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Adding virtual machines to desktop pool $desktop_pool..."
-                                    try 
-                                    {#add vms to the pool
-                                        $result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)
-                                    } 
-                                    catch 
-                                    {#couldn't add vms to the pool
-                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"
-                                        Continue
-                                    }
-                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Added virtual machines to desktop pool $desktop_pool."
-
-                                    #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
-                                    #extract Virtual Machines summary information
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
-                                    Sleep 15
-                                    $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                    $target_hvVMsList = @()
-                                    $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                                    do 
-                                    {#loop until we find our newly added vms
-                                        if ($target_hvVMsList.length -ne 0) 
-                                        {#we haven't identified vms yet
-                                            $target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)
+                                    #! ACTION 1/2: add vms to the desktop pools
+                                    if ($vms) 
+                                    {#we found vms to add
+                                        #process all vms for that desktop pool
+                                        #we start by building the list of vms to add to the pool (this will be more efficient than adding them one by one)
+                                        $vmIds = @()
+                                        ForEach ($vm in $vms) 
+                                        {#figure out the virtual machine id for each vm to process
+                                            $vmId = ($target_hvAvailableVms | Where-Object {$_.Name -eq $vm.vmName}).Id
+                                            $vmIds += $vmId
                                         }
-                                        $target_hvVMsList += $target_hvVMs.Results
-                                    } 
-                                    while ($target_hvVMs.remainingCount -gt 0)
-                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
 
-                                    ForEach ($vm in $vms) 
-                                    {#! ACTION 2/2: register users to their vms
-                                        #figure out the object id of the assigned user
-                                        if ($vm.assignedUser) 
-                                        {#process the assigned user if there was one
-                                            #figure out the virtual machine id
-                                            while (!($vmId = ($target_hvVMsList | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
-                                            {#figure out the vm id
-                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
-                                                Sleep 15
-                                                $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
-                                                $target_hvVMsList = @()
-                                                $serviceQuery = New-Object "Vmware.Hv.QueryServiceService"
-                                                do 
-                                                {#paginate thru results
-                                                    if ($target_hvVMsList.length -ne 0) 
-                                                    {#first iteration
-                                                        $target_hvVMs = $serviceQuery.QueryService_GetNext($target_hvObjectAPI,$target_hvVMs.Id)
-                                                    }
-                                                    $target_hvVMsList += $target_hvVMs.Results
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Adding virtual machines to desktop pool $desktop_pool..."
+                                        try 
+                                        {#add vms to the pool
+                                            $result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)
+                                        } 
+                                        catch 
+                                        {#couldn't add vms to the pool
+                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not add virtual machines to desktop pool $desktop_pool : $($_.Exception.Message)"
+                                            Continue
+                                        }
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Added virtual machines to desktop pool $desktop_pool."
+
+                                        #retrieve the list of machines now registered in the TARGET Horizon View server (we need their ids)
+                                        #extract Virtual Machines summary information
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
+                                        Sleep 15
+                                        $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
+
+                                        ForEach ($vm in $vms) 
+                                        {#! ACTION 2/2: register users to their vms
+                                            #figure out the object id of the assigned user
+                                            if ($vm.assignedUser) 
+                                            {#process the assigned user if there was one
+                                                #figure out the virtual machine id
+                                                while (!($vmId = ($target_hvVMs | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
+                                                {#figure out the vm id
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
+                                                    Sleep 15
+                                                    $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
+                                                }
+
+                                                $vmUserId = ($target_hvADUsers | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
+                                                if (!$vmUserId) 
+                                                {#couldn't find a vm user id
+                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!"
+                                                    continue
+                                                }
+                                                #create the MapEntry object required for updating the machine
+                                                $MapEntry = New-Object "Vmware.Hv.MapEntry"
+                                                $MapEntry.key = "base.user"
+                                                $MapEntry.value = $vmUserId
+                                                #update the machine
+                                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating assigned user for $($vm.vmName)..."
+                                                try 
+                                                {#update vm
+                                                    $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
                                                 } 
-                                                while ($target_hvVMs.remainingCount -gt 0)
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
+                                                catch 
+                                                {#couldn't update vm
+                                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"
+                                                    Continue
+                                                }
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Updated assigned user for $($vm.vmName) to $($vm.assignedUser)."
                                             }
-
-                                            $vmUserId = ($target_hvADUsersList | Where-Object {$_.Base.DisplayName -eq $vm.assignedUser}).Id #grab the user name whose id matches the id of the assigned user on the desktop machine
-                                            if (!$vmUserId) 
-                                            {#couldn't find a vm user id
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find a matching Active Directory object for user $($vm.AssignedUser) for VM $($vm.vmName)!"
-                                                continue
-                                            }
-                                            #create the MapEntry object required for updating the machine
-                                            $MapEntry = New-Object "Vmware.Hv.MapEntry"
-                                            $MapEntry.key = "base.user"
-                                            $MapEntry.value = $vmUserId
-                                            #update the machine
-                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating assigned user for $($vm.vmName)..."
-                                            try 
-                                            {#update vm
-                                                $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
-                                            } 
-                                            catch 
-                                            {#couldn't update vm
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not update assigned user to $($vm.vmName) : $($_.Exception.Message)"
-                                                Continue
-                                            }
-                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Updated assigned user for $($vm.vmName) to $($vm.assignedUser)."
                                         }
+                                    } 
+                                    else 
+                                    {#no vms found to process
+                                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There were no virtual machines to add to desktop pool $desktop_pool..."
                                     }
-                                } 
+                                }
                                 else 
-                                {#no vms found to process
-                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There were no virtual machines to add to desktop pool $desktop_pool..."
+                                {#we skipped
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping processing of desktop pool $desktop_pool..."
                                 }
                             }
-                            else 
-                            {#we skipped
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Skipping processing of desktop pool $desktop_pool..."
-                            }
-                        }
+                        #endregion
 
-                        #disconnect from the target view server
-                        Disconnect-HVServer * -Confirm:$false
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+                        #region disconnect
+                            Disconnect-HVServer * -Confirm:$false
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+                        #endregion
                     #endregion
                 }   
             #endregion
