@@ -694,6 +694,7 @@ $HistoryText = @'
                  Added ConnectVmToPortGroup, MoveVmToFolder and AddVmsToPool functions to rationalize the code.
                  Added support for a pgRef.csv reference file in order to map portgroups between site manually in the referential.
                  Tested all scan and failover planned workflows in the lab.
+ 08/14/2018 sb   Added disable of desktop pools in -cleanup -unplanned workflow
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -1013,11 +1014,11 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 
 #TODO List
 #TODO : 1. Add disable of the pool when cleaning unplanned
-#TODO : 2. Add logic to track the status of the VM and re-apply the status on target (maintenance mode only)
-#TODO : 3. add code to control .Net SSL protocols here so that we can connect to View consistently
+#TODO : 2. Add logic to track the status of the VM and re-apply the status on target (if in maintenance mode only)
+#TODO : 3. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
 #TODO : 4. Add planned connectivity check for target Prism Element in the region prechecks planned failover
 #TODO : 5. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
-#TODO : 6. Add logic to not go ahead if there is nothing in the reference files
+#TODO : 6. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
 
 #region processing
 	################################
@@ -2663,8 +2664,9 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             } 
                             else 
                             { #extract the desktop pools information
-                                $disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
-                                $desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
+                                $desktop_pools = $source_hvDesktopPools.Results | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
+                                #$disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false} #used to be we filtered for pools that were disabled
+                                #$desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name} #used to be we filtered for pools that were disabled
                             }
 
                             if (!$desktop_pools) 
@@ -2676,12 +2678,26 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 
                         #! processing here
                         #region process
+                            #creating a map_entry variable that will be used to disable desktop pools if they are enabled
+                            $update = New-Object VMware.Hv.MapEntry
+                            $update.key = "desktopSettings.enabled"
+                            $update.value = $false
+
                             ForEach ($desktop_pool in $desktop_pools) 
                             {#process each desktop pool
                                 if ($desktop_pool.DesktopSummaryData.Enabled -eq $true) 
                                 {#pool is enabled
-                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Skipping $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv because the desktop pool is enabled"
-                                    continue
+                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "$($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv is enabled, disabling..."
+                                    try 
+                                    {#trying to disable the desktop pool
+                                        $result = $source_hvObjectAPI.Desktop.Desktop_Update($desktop_pool.Id,$update)
+                                    }
+                                    catch 
+                                    {#we couldn't disable the desktop pool
+                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable the desktop pool $($desktop_pool.DesktopSummaryData.Name) on the SOURCE Horizon View server $source_hv : $($_.Exception.Message)"
+                                        Continue
+                                    }
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled the desktop pool $($desktop_pool.DesktopSummaryData.Name) on the SOURCE Horizon View server $source_hv"
                                 }
                                 #figure out which machines are in that desktop pool
                                 $vms = $source_hvVMs.Results | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
