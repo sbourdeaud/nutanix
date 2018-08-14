@@ -1850,12 +1850,12 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 #figure out if there is more than one remote site defined for the protection domain
                                 $remoteSite = $sourceClusterPd.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
                                 if (!$remoteSite.remote_site_names) 
-                                {
+                                {#no remote site defined or no schedule on the pd with a remote site
                                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $pd2migrate"
                                     Exit
                                 }
                                 if ($remoteSite -is [array]) 
-                                {
+                                {#more than 1 remote site target defined on the pd schedule
                                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $pd2migrate"
                                     Exit
                                 }
@@ -2817,9 +2817,55 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 $body = (ConvertTo-Json $content -Depth 4)
                                 $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
                                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully de-activated protection domain $pd2deactivate on $source_cluster"
+                                
                                 #TODO: enhance this with a proper task status check
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 1 minute for tasks to complete..."
-                                Sleep 60
+                                #Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 1 minute for tasks to complete..."
+                                #Sleep 60
+
+                                #let's make sure all protection domain migrations have been processed successfully
+                                #retrieve the list of tasks in the cluster
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the SOURCE cluster $source_cluster ..."
+                                $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+                                $method = "GET"
+                                $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the SOURCE cluster $source_cluster"
+                                #select only the tasks of operation type "deactivate" which were created after this script was started
+                                $pdMigrateTasks = $response.entities | Where-Object {$_.operation -eq "deactivate"} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+                                #let's loop now until the tasks status are completed and successfull. If a task fails, we'll throw an exception.
+                                ForEach ($pdMigrateTask in $pdMigrateTasks) 
+                                {
+                                    if ($pdMigrateTask.percentageCompleted -ne "100") 
+                                    {
+                                        Do 
+                                        {
+                                            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Waiting 5 seconds for task $($pdMigrateTask.taskName) to complete : $($pdMigrateTask.percentageCompleted)%"
+                                            Sleep 5
+                                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the SOURCE cluster $source_cluster ..."
+                                            $url = "https://$($source_cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+                                            $method = "GET"
+                                            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the SOURCE cluster $source_cluster"
+                                            $task = $response.entities | Where-Object {$_.taskName -eq $pdMigrateTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+                                            if ($task.status -ne "running") 
+                                            {
+                                                if ($task.status -ne "succeeded") 
+                                                {
+                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($pdMigrateTask.taskName) failed with the following status and error code : $($task.status) : $($task.errorCode)"
+                                                    Exit
+                                                }
+                                            }
+                                        }
+                                        While ($task.percentageCompleted -ne "100")
+                                        
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdMigrateTask.taskName) completed on the SOURCE cluster $source_cluster"
+                                    } 
+                                    else 
+                                    {
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdMigrateTask.taskName) completed on the SOURCE cluster $source_cluster"
+                                    }
+                                }
+
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "All protection domain migration tasks have completed."
                             }
                             else
                             {#we skipped
