@@ -2448,7 +2448,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         #! processing here
                         #region process
                             ForEach ($desktop_pool in $desktop_pools) 
-                            {process each desktop pool
+                            {#process each desktop pool
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing desktop pool $desktop_pool..."
                                 if ($confirmSteps) 
                                 {#give the opportunity to skip
