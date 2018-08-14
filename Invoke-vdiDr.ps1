@@ -657,15 +657,16 @@ Function AddVmsToPool
 
                 if ($vm.status -eq "MAINTENANCE")
                 {#check if the vm was in maintenance mode before
-                    $MapEntry.key = "managedMachineData.inMaintenanceMode"
-                    $MapEntry.value = $true
+                    $update = New-Object "Vmware.Hv.MapEntry"
+                    $update.key = "managedMachineData.inMaintenanceMode"
+                    $update.value = $true
 
                     #update the machine
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Putting $($vm.vmName) in maintenance mode..."
                     #! ACTION 3/3: putting vm in maintenance mode
                     try 
                     {#update vm
-                        $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
+                        $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$update)
                     } 
                     catch 
                     {#couldn't update vm
