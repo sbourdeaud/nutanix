@@ -596,7 +596,7 @@ Function AddVmsToPool
 
             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Adding virtual machines to desktop pool $desktop_pool..."
             
-            #! ACTION 1/2: Add vms to the desktop pool
+            #! ACTION 1/3: Add vms to the desktop pool
             try 
             {#add vms
                 $result = $target_hvObjectAPI.Desktop.Desktop_AddMachinesToManualDesktop($desktop_poolId,$vmIds)
@@ -639,10 +639,10 @@ Function AddVmsToPool
                     $MapEntry = New-Object "Vmware.Hv.MapEntry"
                     $MapEntry.key = "base.user"
                     $MapEntry.value = $vmUserId
-                    
+
                     #update the machine
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating assigned user for $($vm.vmName)..."
-                    #! ACTION 2/2: Assign user to the vm
+                    #! ACTION 2/3: Assign user to the vm
                     try 
                     {#update vm
                         $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
@@ -653,6 +653,26 @@ Function AddVmsToPool
                         Continue
                     }
                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Updated assigned user for $($vm.vmName) to $($vm.assignedUser)."
+                }
+
+                if ($vm.status -eq "MAINTENANCE")
+                {#check if the vm was in maintenance mode before
+                    $MapEntry.key = "managedMachineData.inMaintenanceMode"
+                    $MapEntry.value = $true
+
+                    #update the machine
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Putting $($vm.vmName) in maintenance mode..."
+                    #! ACTION 3/3: putting vm in maintenance mode
+                    try 
+                    {#update vm
+                        $result = $target_hvObjectAPI.Machine.Machine_Update($vmId,$MapEntry)
+                    } 
+                    catch 
+                    {#couldn't update vm
+                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not put vm $($vm.vmName) in maintenance mode : $($_.Exception.Message)"
+                        Continue
+                    }
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Put vm $($vm.vmName) in maintenance mode."
                 }
             }
         } 
@@ -694,8 +714,9 @@ $HistoryText = @'
                  Added ConnectVmToPortGroup, MoveVmToFolder and AddVmsToPool functions to rationalize the code.
                  Added support for a pgRef.csv reference file in order to map portgroups between site manually in the referential.
                  Tested all scan and failover planned workflows in the lab.
- 08/14/2018 sb   Added disable of desktop pools in -cleanup -unplanned workflow
-                 Added BasicState property to -scan exported results
+ 08/14/2018 sb   Added disable of desktop pools in -cleanup -unplanned workflow.
+                 Added BasicState property to -scan exported results.
+                 Added code for failover workflows (in AddVmsToPool function) to move vms in maintenance mode after failover if that was their previously tracked status.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -1014,11 +1035,10 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 #endregion
 
 #TODO List
-#TODO : 1. Add logic to track the status of the VM and re-apply the status on target (if in maintenance mode only)
-#TODO : 2. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
-#TODO : 3. Add planned connectivity check for target Prism Element in the region prechecks planned failover
-#TODO : 4. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
-#TODO : 5. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
+#TODO : 1. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
+#TODO : 2. Add planned connectivity check for target Prism Element in the region prechecks planned failover
+#TODO : 3. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
+#TODO : 4. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
 
 #region processing
 	################################
