@@ -726,6 +726,7 @@ $HistoryText = @'
  08/14/2018 sb   Added disable of desktop pools in -cleanup -unplanned workflow.
                  Added BasicState property to -scan exported results.
                  Added code for failover workflows (in AddVmsToPool function) to move vms in maintenance mode after failover if that was their previously tracked status.
+                 Moved TARGET PRISM pre-check to common for both planned and unplanned.  Unplanned precheck region is empty for now.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -1045,9 +1046,8 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 
 #TODO List
 #TODO : 1. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
-#TODO : 2. Add planned connectivity check for target Prism Element in the region prechecks planned failover
-#TODO : 3. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
-#TODO : 4. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
+#TODO : 2. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
+#TODO : 3. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
 
 #region processing
 	################################
@@ -1356,7 +1356,6 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                     }
                 #endregion
 
-                #TODO : Add planned connectivity check for target Prism Element in the region below
                 #region applies to PLANNED only
                     if ($planned) 
                     {#doing checks for planned failover
@@ -1519,53 +1518,56 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from SOURCE vCenter server $source_vc..."
                                 Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
                             #endregion
-                        #endregion    
+                        #endregion
+                        
                     }  
                 #endregion
 
                 #region applies to UNPLANNED only
                     if ($unplanned) 
                     {#doing checks for unplanned failover
-                        #region TARGET NUTANIX PRISM ELEMENT
-                            #? Are there matching protection domains in the correct status on the target prism
-                            #let's retrieve the list of protection domains from the target
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from target Nutanix cluster $target_cluster ..."
-                            $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                            $method = "GET"
-                            $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from target Nutanix cluster $target_cluster"
-
-                            $test_matching_protection_domains = @()
-                            $test_pds2activate = @()
-                            ForEach ($desktop_pool in $desktop_pools) 
-                            {#match pool to pd
-                                $test_matching_protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool}).protection_domain
-                            }
-
-                            ForEach ($test_matching_protection_domain in $test_matching_protection_domains) 
-                            {#make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
-                                if (($targetClusterPd.entities | Where-Object {$_.name -eq $test_matching_protection_domain}).active -eq $true) 
-                                {#pd already active
-                                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Protection domain $test_matching_protection_domain is already active on target Prism $target_cluster. Skipping."
-                                } 
-                                else 
-                                {#add pd to process list
-                                    $test_pds2activate += $targetClusterPd.entities | Where-Object {$_.name -eq $test_matching_protection_domain}
-                                }
-                            }
-
-                            if (!$test_pds2activate) 
-                            {#no pd to process
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."
-                                Exit
-                            }
-
-                            Remove-Variable pds2activate -ErrorAction SilentlyContinue
-                        #endregion
+                        
                     }   
                 #endregion
 
                 #region applies to BOTH (planned and unplanned)
+
+                    #region TARGET NUTANIX PRISM ELEMENT
+                        #? Are there matching protection domains in the correct status on the target prism
+                        #let's retrieve the list of protection domains from the target
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from target Nutanix cluster $target_cluster ..."
+                        $url = "https://$($target_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                        $method = "GET"
+                        $targetClusterPd = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from target Nutanix cluster $target_cluster"
+
+                        $test_matching_protection_domains = @()
+                        $test_pds2activate = @()
+                        ForEach ($desktop_pool in $desktop_pools) 
+                        {#match pool to pd
+                            $test_matching_protection_domains += ($poolRef | Where-Object {$_.desktop_pool -eq $desktop_pool}).protection_domain
+                        }
+
+                        ForEach ($test_matching_protection_domain in $test_matching_protection_domains) 
+                        {#make sure the matching protection domains are not active already on the target Prism, then build the list of protection domains to process
+                            if (($targetClusterPd.entities | Where-Object {$_.name -eq $test_matching_protection_domain}).active -eq $true) 
+                            {#pd already active
+                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Protection domain $test_matching_protection_domain is already active on target Prism $target_cluster. Skipping."
+                            } 
+                            else 
+                            {#add pd to process list
+                                $test_pds2activate += $targetClusterPd.entities | Where-Object {$_.name -eq $test_matching_protection_domain}
+                            }
+                        }
+
+                        if (!$test_pds2activate) 
+                        {#no pd to process
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There were no matching protection domain(s) to process. Make sure the selected desktop pools have a matching protection domain in the reference file and that those protection domains exist on the target Prism cluster and are in standby status."
+                            Exit
+                        }
+
+                        Remove-Variable pds2activate -ErrorAction SilentlyContinue
+                    #endregion    
 
                     #region TARGET HORIZON VIEW
                         #? Can we connect to the target hv?
