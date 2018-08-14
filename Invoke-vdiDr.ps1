@@ -695,6 +695,7 @@ $HistoryText = @'
                  Added support for a pgRef.csv reference file in order to map portgroups between site manually in the referential.
                  Tested all scan and failover planned workflows in the lab.
  08/14/2018 sb   Added disable of desktop pools in -cleanup -unplanned workflow
+                 Added BasicState property to -scan exported results
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -1013,12 +1014,11 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 #endregion
 
 #TODO List
-#TODO : 1. Add disable of the pool when cleaning unplanned
-#TODO : 2. Add logic to track the status of the VM and re-apply the status on target (if in maintenance mode only)
-#TODO : 3. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
-#TODO : 4. Add planned connectivity check for target Prism Element in the region prechecks planned failover
-#TODO : 5. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
-#TODO : 6. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
+#TODO : 1. Add logic to track the status of the VM and re-apply the status on target (if in maintenance mode only)
+#TODO : 2. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
+#TODO : 3. Add planned connectivity check for target Prism Element in the region prechecks planned failover
+#TODO : 4. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
+#TODO : 5. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
 
 #region processing
 	################################
@@ -1114,7 +1114,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         $vmsToProcess = $vmObjectsToProcess.Base.Name
                     #endregion
 
-                    #region figure out the info we need for each VM (VM name, user, desktop pool name)
+                    #region figure out the info we need for each VM (VM name, user, desktop pool name, status)
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Figuring out usernames for vms (this can take a while)..."
 
                         ForEach ($vm in $vmObjectsToProcess) 
@@ -1125,7 +1125,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             #figure out the desktop pool name
                             $vmDesktopPool = ($source_hvDesktopPools | Where-Object {$_.Id.Id -eq $vm.Base.Desktop.Id}).DesktopSummaryData.Name
 
-                            $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool"} #we build the information for that specific machine
+                            $vmInfo = @{"vmName" = $vm.Base.Name;"assignedUser" = $vmUsername;"desktop_pool" = "$vmDesktopPool";"status" = $vm.Base.BasicState} #we build the information for that specific machine
                             $result = $newHvRef.Add((New-Object PSObject -Property $vmInfo))
                         }
                     #endregion
