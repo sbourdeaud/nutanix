@@ -660,6 +660,14 @@ Function AddVmsToPool
                     $update = New-Object "Vmware.Hv.MapEntry"
                     $update.key = "managedMachineData.inMaintenanceMode"
                     $update.value = $true
+                    
+                    while (!($vmId = ($target_hvVMs | Where-Object {$_.Base.Name -eq $vm.vmName}).Id)) 
+                    {#loop to figure out the virtual machine id for the recently added vms
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 15 seconds and retrieving Virtual Machines summary information from the TARGET Horizon View server $target_hv..."
+                        Sleep 15
+                        $target_hvVMs = Invoke-HvQuery -QueryType MachineSummaryView -ViewAPIObject $target_hvObjectAPI
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved Virtual Machines summary information from the TARGET Horizon View server $target_hv"
+                    }
 
                     #update the machine
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Putting $($vm.vmName) in maintenance mode..."
