@@ -2691,12 +2691,12 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             #find out which pool we are working with (assume all which are disabled if none have been specified)
                             if (!$desktop_pools) 
                             {#find disabled pools
-                                $desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
+                                $desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false}
                             } 
                             else 
                             { #extract the desktop pools information
-                                $desktop_pools = $source_hvDesktopPools.Results | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
-                                #$disabled_desktop_pools = $source_hvDesktopPools.Results | Where-Object {$_.DesktopSummaryData.Enabled -eq $false} #used to be we filtered for pools that were disabled
+                                $desktop_pools = $source_hvDesktopPools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name}
+                                #$disabled_desktop_pools = $source_hvDesktopPools | Where-Object {$_.DesktopSummaryData.Enabled -eq $false} #used to be we filtered for pools that were disabled
                                 #$desktop_pools = $disabled_desktop_pools | Where-Object {$desktop_pools -contains $_.DesktopSummaryData.Name} #used to be we filtered for pools that were disabled
                             }
 
@@ -2731,7 +2731,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled the desktop pool $($desktop_pool.DesktopSummaryData.Name) on the SOURCE Horizon View server $source_hv"
                                 }
                                 #figure out which machines are in that desktop pool
-                                $vms = $source_hvVMs.Results | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
+                                $vms = $source_hvVMs | Where-Object {$_.Base.Desktop.id -eq $desktop_pool.Id.Id}
                                 
                                 #remove machines from the desktop pool
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Removing machines from the pool $($desktop_pool.DesktopSummaryData.Name) on SOURCE VMware View server $source_hv..."
