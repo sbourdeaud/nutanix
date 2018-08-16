@@ -1075,6 +1075,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                     try 
                     {#enable tls 1.1 protocol
                         Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                     } 
                     catch 
                     {#couldn't disable old tls protocol
@@ -1175,6 +1176,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                     try 
                     {#disable tls 1.1 protocol
                         Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                     } 
                     catch 
                     {#couldn't disable old tls protocol
@@ -1384,6 +1386,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 try 
                                 {#enable tls 1.1 protocol
                                     Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                                 } 
                                 catch 
                                 {#couldn't disable old tls protocol
@@ -1460,6 +1463,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 try 
                                 {#disable tls 1.1 protocol
                                     Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                                 } 
                                 catch 
                                 {#couldn't disable old tls protocol
@@ -1610,6 +1614,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#enable tls 1.1 protocol
                                 Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -1644,6 +1649,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#disable tls 1.1 protocol
                                 Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -1700,6 +1706,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#enable tls 1.1 protocol
                                 Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -1855,6 +1862,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#disable tls 1.1 protocol
                                 Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -2177,6 +2185,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#enable tls 1.1 protocol
                                 Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -2257,6 +2266,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#disable tls 1.1 protocol
                                 Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -2488,6 +2498,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#enable tls 1.1 protocol
                                 Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -2570,6 +2581,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#disable tls 1.1 protocol
                                 Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -2765,6 +2777,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#enable tls 1.1 protocol
                                 Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Enabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
@@ -2908,6 +2921,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             try 
                             {#disable tls 1.1 protocol
                                 Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Disabled Tls 1.1"
                             } 
                             catch 
                             {#couldn't disable old tls protocol
