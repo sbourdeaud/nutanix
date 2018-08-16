@@ -1072,6 +1072,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 
             #region extract Horizon View data
                 #region connect
+                    try 
+                    {#enable tls 1.1 protocol
+                        Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                    } 
+                    catch 
+                    {#couldn't disable old tls protocol
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                    }
+
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
                     try 
                     {#connect to Horizon View server
@@ -1163,6 +1172,14 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                 #region disconnect
                     Disconnect-HVServer -Confirm:$false
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+                    try 
+                    {#disable tls 1.1 protocol
+                        Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                    } 
+                    catch 
+                    {#couldn't disable old tls protocol
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                    }
                 #endregion
             #endregion
 
@@ -1364,6 +1381,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Starting checks on SOURCE Horizon View server $source_hv..."
 
                             #region connect
+                                try 
+                                {#enable tls 1.1 protocol
+                                    Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                } 
+                                catch 
+                                {#couldn't disable old tls protocol
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                                }
+        
                                 #start by connecting to the source view server
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
                                 try 
@@ -1430,6 +1456,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             #region disconnect
                                 Disconnect-HVServer * -Confirm:$false
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+
+                                try 
+                                {#disable tls 1.1 protocol
+                                    Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                                } 
+                                catch 
+                                {#couldn't disable old tls protocol
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                                }
                             #endregion
                         #endregion
                     
@@ -1572,6 +1607,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                     #region TARGET HORIZON VIEW
                         #? Can we connect to the target hv?
                         #region connect
+                            try 
+                            {#enable tls 1.1 protocol
+                                Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                            }
+    
                             #connect to the target view server
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET Horizon View server $target_hv..."
                             try 
@@ -1596,6 +1640,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         #region disconnect
                             Disconnect-HVServer * -Confirm:$false
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+
+                            try 
+                            {#disable tls 1.1 protocol
+                                Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                            }
                         #endregion
                     #endregion
 
@@ -1644,6 +1697,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         }
                         
                         #region connect
+                            try 
+                            {#enable tls 1.1 protocol
+                                Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                            }
+    
                             #start by connecting to the source view server
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
                             try 
@@ -1789,6 +1851,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                             #disconnect from the source view server
                             Disconnect-HVServer * -Confirm:$false
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+
+                            try 
+                            {#disable tls 1.1 protocol
+                                Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                            }
 
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on SOURCE Horizon View server $source_hv"
                             Write-Host ""
@@ -2103,6 +2174,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         }
                         
                         #region connect
+                            try 
+                            {#enable tls 1.1 protocol
+                                Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                            }
+    
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET Horizon View server $target_hv..."
                             try 
                             {#connect
@@ -2173,6 +2253,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         #region disconnect
                             Disconnect-HVServer * -Confirm:$false
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+                            
+                            try 
+                            {#disable tls 1.1 protocol
+                                Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                            }
 
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Done processing items on TARGET Horizon View server $target_hv"
                             Write-Host ""
@@ -2396,6 +2485,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         }
 
                         #region connect
+                            try 
+                            {#enable tls 1.1 protocol
+                                Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                            }
+    
                             #connect to the target view server
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the TARGET Horizon View server $target_hv..."
                             try 
@@ -2468,6 +2566,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         #region disconnect
                             Disconnect-HVServer * -Confirm:$false
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the TARGET Horizon View server $target_hv..."
+
+                            try 
+                            {#disable tls 1.1 protocol
+                                Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                            }
                         #endregion
                     #endregion
 
@@ -2655,6 +2762,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         }
                         
                         #region connect
+                            try 
+                            {#enable tls 1.1 protocol
+                                Enable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not enable Tls 1.1 : $($_.Exception.Message)"
+                            }
+    
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to the SOURCE Horizon View server $source_hv..."
                             try 
                             {#connect
@@ -2788,6 +2904,15 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         #region disconnect
                             Disconnect-HVServer * -Confirm:$false
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnected from the SOURCE Horizon View server $source_hv..."
+
+                            try 
+                            {#disable tls 1.1 protocol
+                                Disable-Tls -Tls11 -Confirm:$false -ErrorAction Stop
+                            } 
+                            catch 
+                            {#couldn't disable old tls protocol
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not disable Tls 1.1 : $($_.Exception.Message)"
+                            }
                         #endregion
                     #endregion
 
@@ -2817,10 +2942,6 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 $body = (ConvertTo-Json $content -Depth 4)
                                 $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
                                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully de-activated protection domain $pd2deactivate on $source_cluster"
-                                
-                                #TODO: enhance this with a proper task status check
-                                #Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Waiting 1 minute for tasks to complete..."
-                                #Sleep 60
 
                                 #let's make sure all protection domain migrations have been processed successfully
                                 #retrieve the list of tasks in the cluster
