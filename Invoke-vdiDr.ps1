@@ -1295,6 +1295,32 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
                     }
                 }
+
+                #foreach protection domain, figure out if there are vms which are no longer in the correct protection domain
+                $protectedVMs = $protectedVMs | Where-Object {$newHvRef.vmname -contains $_}
+                ForEach ($vm in $protectedVMs) 
+                { #process each vm
+                    #what protection domain should they be into?
+                    $currentPool = ($newhvRef | where-object {$_.vmName -eq $vm}).desktop_pool
+                    $assignedPd = ($poolRef | Where-Object {$_.desktop_pool -eq $currentPool}).protection_domain
+                    if (!$assignedPd) 
+                    {#no pool to pd in reference file
+                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not process protection domain addition for VM $($vm.vmName) because there is no assigned protection domain defined in $referentialPath\poolRef.csv for $($vm.desktop_pool)!"
+                    }
+                    else 
+                    {#process vm to figure out pd membership status
+                        #what protection domain are they in currently?
+                        $currentPd = ($newPrismRef | Where-Object {$_.vms.vm_name -eq $vm}).name
+                        #compare both, if they do not match, then make sure they'll be removed from where they are now
+                        if ($assignedPd -ne $currentPd) 
+                        {#vm is not in the correct pd
+                            $vmInfo = @{"vmName" = $vm;"protection_domain" = $currentPd}
+                            #add vm name to the list of vms to remove from their current pd
+                            $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
+                        }
+                    }                    
+                }
+
             #endregion
 
             #region update protection domains
