@@ -727,6 +727,9 @@ $HistoryText = @'
                  Added BasicState property to -scan exported results.
                  Added code for failover workflows (in AddVmsToPool function) to move vms in maintenance mode after failover if that was their previously tracked status.
                  Moved TARGET PRISM pre-check to common for both planned and unplanned.  Unplanned precheck region is empty for now.
+ 08/19/2018 sb   Fixed an issue when there were more than 1000 VDI machiens in View.
+                 Fixed an issue with moving one vm from one pool to another and updating protection domains in the scan workflow.
+                 Fixed an issue with processing vm removal from protection domain when more than one pool was specified manually.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-vdiDr.ps1"
@@ -1288,11 +1291,14 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                 { #process each vm identified above
                     $pd = (($newPrismRef | Where-Object {$poolRef.protection_domain -Contains $_.name}) | Where-Object {$_.vms.vm_name -eq $vm}).name
                     #compare the list of desktop pools we are processing with their matching protection domain names in the reference file. This is to ensure we are not touching a pd we're not supposed to.
-                    if (($poolRef | Where-Object {$_.desktop_pool -eq $desktopPoolNames}).protection_domain -contains $pd)
-                    {#that pd matches a desktop pool we are processing
-                        $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
-                        #add vm name to the list of vms to remove from that pd
-                        $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
+                    ForEach ($desktopPoolName in $desktopPoolNames)
+                    {
+                        if (($poolRef | Where-Object {$_.desktop_pool -eq $desktopPoolName}).protection_domain -contains $pd)
+                        {#that pd matches a desktop pool we are processing
+                            $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
+                            #add vm name to the list of vms to remove from that pd
+                            $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
+                        }
                     }
                 }
 
