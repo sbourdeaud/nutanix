@@ -1045,9 +1045,8 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 #endregion
 
 #TODO List
-#TODO : 1. add code to control .Net SSL protocols here so that we can connect to View consistently (sometimes the SSL handshake fails for some reason)
-#TODO : 2. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
-#TODO : 3. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
+#TODO : 1. Add WARNING when one of the specified pool is enabled (otherwise it's hard to catch that it is skipping that pool)
+#TODO : 2. Add logic to not go ahead if there is nothing in the reference files (such as when using a pgRef.csv file and having forgotten to do a scan on target before failing back)
 
 #region processing
 	################################
@@ -1275,7 +1274,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                         if (!($newPrismRef | Where-Object {$_.name -eq $assignedPd} | Where-Object {$_.vms.vm_name -eq $vm.vmName})) 
                         {#vm is not in pd
                             $vmInfo = @{"vmName" = $vm.vmName;"protection_domain" = $assignedPd}
-                            #add vm to name the list fo vms to add to that pd
+                            #add vm name to the list of vms to add to that pd
                             $result = $vms2Add.Add((New-Object PSObject -Property $vmInfo))
                         }
                     }
@@ -1292,7 +1291,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                     if (($poolRef | Where-Object {$_.desktop_pool -eq $desktopPoolNames}).protection_domain -contains $pd)
                     {#that pd matches a desktop pool we are processing
                         $vmInfo = @{"vmName" = $vm;"protection_domain" = $pd}
-                        #add vm to name the list fo vms to add to that pd
+                        #add vm name to the list of vms to remove from that pd
                         $result = $vms2Remove.Add((New-Object PSObject -Property $vmInfo))
                     }
                 }
@@ -1300,15 +1299,17 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
 
             #region update protection domains
                 
+                ForEach ($vm2remove in $vms2remove) 
+                {#if required, remove vms from pds
+                    $reponse = Update-NutanixProtectionDomain -action remove -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2remove.protection_domain -vm $vm2remove.vmName
+                }
+            
                 ForEach ($vm2add in $vms2add) 
                 {#if required, add vms to pds
                     $reponse = Update-NutanixProtectionDomain -action add -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2add.protection_domain -vm $vm2add.vmName
                 }
                 
-                ForEach ($vm2remove in $vms2remove) 
-                {#if required, remove vms from pds
-                    $reponse = Update-NutanixProtectionDomain -action remove -cluster $source_cluster -username $username -password $PrismSecurePassword -protection_domain $vm2remove.protection_domain -vm $vm2remove.vmName
-                }
+                
             #endregion
 
             #region export
@@ -2445,7 +2446,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 {#give the opportunity to skip
                                     $promptUser = ConfirmStep -skip
                                 }
-                                if ($confirmSteps -ne "s")
+                                if ($promptUser -ne "s")
                                 {
                                     #determine which vms belong to the desktop pool(s) we are processing
                                     $vms = $oldHvRef | Where-Object {$_.desktop_pool -eq $desktop_pool}
