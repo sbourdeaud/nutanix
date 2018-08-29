@@ -727,7 +727,7 @@ $HistoryText = @'
                  Added BasicState property to -scan exported results.
                  Added code for failover workflows (in AddVmsToPool function) to move vms in maintenance mode after failover if that was their previously tracked status.
                  Moved TARGET PRISM pre-check to common for both planned and unplanned.  Unplanned precheck region is empty for now.
- 08/19/2018 sb   Fixed an issue when there were more than 1000 VDI machiens in View.
+ 08/19/2018 sb   Fixed an issue when there were more than 1000 VDI machines in View.
                  Fixed an issue with moving one vm from one pool to another and updating protection domains in the scan workflow.
                  Fixed an issue with processing vm removal from protection domain when more than one pool was specified manually.
 ################################################################################
