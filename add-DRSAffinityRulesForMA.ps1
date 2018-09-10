@@ -597,7 +597,7 @@ if (!(Get-Module VMware.PowerCLI)) {
 
 #check PowerCLI version
 if ((Get-Module -Name VMware.VimAutomation.Core).Version.Major -lt 10) {
-    try {Update-Module -Name VMware.PowerCLI -Scope CurrentUser -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not update the VMware.PowerCLI module : $($_.Exception.Message)"}
+    try {Update-Module -Name VMware.PowerCLI -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not update the VMware.PowerCLI module : $($_.Exception.Message)"}
     throw "$(get-date) [ERROR] Please upgrade PowerCLI to version 10 or above by running the command 'Update-Module VMware.PowerCLI' as an admin user"
 }
 #endregion
