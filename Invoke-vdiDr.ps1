@@ -1951,7 +1951,7 @@ Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking
                                 else 
                                 { #no protection domains were specified, and no desktop pools either, so let's assume we have to do all the active protection domains
                                     $protection_domains = ($poolRef | Select-Object -Property protection_domain -Unique).protection_domain
-                                    $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
+                                    $protection_domains = ($sourceClusterPd.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$protection_domains -contains $_}
                                 }
                             } 
                             else 
