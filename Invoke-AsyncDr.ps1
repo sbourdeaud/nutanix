@@ -1201,8 +1201,6 @@ $HistoryText = @'
 
 #endregion
 
-#endregion
-
 #region cleanup
     #let's figure out how much time this all took
     Write-Host ""
