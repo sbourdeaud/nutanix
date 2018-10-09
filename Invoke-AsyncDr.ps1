@@ -110,7 +110,7 @@ Param
         param
         (
             [Parameter(Mandatory)]
-            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP')]
+            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG')]
             [string]
             $Category,
 
@@ -133,6 +133,7 @@ Param
                 "SUM" {$FgColor = "Magenta"}
                 "SUCCESS" {$FgColor = "Cyan"}
                 "STEP" {$FgColor = "Magenta"}
+                "DEBUG" {$FgColor = "White"}
             }
 
             Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
@@ -512,8 +513,13 @@ Param
             $method = "GET"
             $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the cluster $cluster"
-            #select only the tasks of operation type "deactivate" which were created after this script was started
-            $pdTasks = $response.entities | Where-Object {$_.operation -eq $operation} | Where-Object {($_.createTimeUsecs / 1000000) -ge $time}
+            
+            Do
+            {
+                $pdTasks = $response.entities | Where-Object {$_.operation -eq $operation} | Where-Object {($_.createTimeUsecs / 1000000) -ge $time}
+            }
+            While (!$pdTasks)
+
             #let's loop now until the task status is completed and successfull. If a task fails, we'll throw an exception.
             ForEach ($pdTask in $pdTasks) 
             {
@@ -652,6 +658,12 @@ Param
                                     }
                         $body = (ConvertTo-Json $content -Depth 4)
                         $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                        if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
+                        if ($response.metadata.count -ne 0)
+                        {#something went wrong with our migration request
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work."
+                            Exit
+                        }
                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)"
                     #endregion
 
@@ -1104,6 +1116,7 @@ $HistoryText = @'
             Write-Host ""
             Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain migration workflow--"
             $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
+            if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
             Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "deactivate"            
         }
     #endregion
@@ -1114,6 +1127,7 @@ $HistoryText = @'
             Write-Host ""
             Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain activation workflow--"
             $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
+            if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
             Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "activate"
         }
     #endregion
@@ -1162,27 +1176,35 @@ $HistoryText = @'
                                 Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than 1 IP configured for the remote site $remoteSite"
                                 Exit
                             }
-
-                            $remote_site_ip = $remote_site.remote_ip_ports.psobject.properties.name
                         #endregion
+
+                        if ($migrate)
+                        {#we are migrating, so the cluster where we power on vms is the remote site
+                            $powerOn_cluster = $remote_site.remote_ip_ports.psobject.properties.name
+                        }
+                        if ($activate)
+                        {#we are activating, so the cluster where we power on is the same cluster where we activated
+                            $powerOn_cluster = $cluster
+                        }
+
                         
                         #region check the protection domain is active
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about protection domain $($protection_domain) on cluster $remote_site_ip ..."
-                            $url = "https://$($remote_site_ip):9440/PrismGateway/services/rest/v2.0/protection_domains/?names=$($protection_domain)"
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about protection domain $($protection_domain) on cluster $powerOn_cluster ..."
+                            $url = "https://$($powerOn_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/?names=$($protection_domain)"
                             $method = "GET"
                             $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about protection domain $($protection_domain) on cluster $remote_site_ip"
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about protection domain $($protection_domain) on cluster $powerOn_cluster"
 
                             if ($response.entities.active -ne "true")
                             {#pd is not active
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Protection domain $protection_domain is not active on cluster $($remote_site_ip)"
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Protection domain $protection_domain is not active on cluster $($powerOn_cluster)"
                                 Exit
                             }
                         #endregion
 
                         Write-Host ""
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VMs in protection domain $($protection_domain) on cluster $remote_site_ip ..."
-                        Set-NtnxPdVmPowerOn -pd $protection_domain -cluster $remote_site_ip -username $username -password $PrismSecurePassword
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VMs in protection domain $($protection_domain) on cluster $powerOn_cluster ..."
+                        Set-NtnxPdVmPowerOn -pd $protection_domain -cluster $powerOn_cluster -username $username -password $PrismSecurePassword
                     }
                 #endregion
             }
