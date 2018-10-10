@@ -76,6 +76,8 @@ Param
 )
 #endregion
 
+#TODO: add check n hypervisor at target: if vSphere, check if portgroup is on a dvswitch, if so, then reconnect vnics.
+
 #region functions
     function Write-LogOutput
     {
@@ -997,6 +999,7 @@ $HistoryText = @'
         $StartEpochSeconds = Get-Date (Get-Date).ToUniversalTime() -UFormat %s #used to get tasks generated in Prism after the script was invoked
         $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
         $myvarOutputLogFile += "Invoke-VdiDr_OutputLog.log"
+        $remote_site_ips = @() #initialize array here to collect remote site ips
     #endregion
 
     #region parameter validation
@@ -1117,7 +1120,58 @@ $HistoryText = @'
             Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain migration workflow--"
             $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
             if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "deactivate"            
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "deactivate"
+            
+            #region check remote
+                #let's retrieve the list of protection domains
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                $method = "GET"
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+
+                ForEach ($protection_domain in $processed_pds)
+                {#figure out the remote site ips
+                    #region figure out the remote site
+                        #figure out if there is more than one remote site defined for the protection domain
+                        $remoteSite = $PdList.entities | Where-Object {$_.name -eq $protection_domain} | Select-Object -Property remote_site_names
+                        if (!$remoteSite.remote_site_names) 
+                        {#no remote site defined or no schedule on the pd with a remote site
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $protection_domain"
+                            Exit
+                        }
+                        if ($remoteSite -is [array]) 
+                        {#more than 1 remote site target defined on the pd schedule
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $protection_domain"
+                            Exit
+                        }
+
+                        #get the remote site IP address
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about remote site $($remoteSite.remote_site_names) ..."
+                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
+                        $method = "GET"
+                        $remote_site = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about remote site $($remoteSite.remote_site_names)"
+
+                        if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
+                        {#there are multiple IPs defined for the remote site
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than 1 IP configured for the remote site $remoteSite"
+                            Exit
+                        }
+                    #endregion
+                    
+                    if ($remote_site_ips -notcontains $remote_site.remote_ip_ports.psobject.properties.name)
+                    {#we haven't had that remote site yet
+                        $remote_site_ips += $remote_site.remote_ip_ports.psobject.properties.name #add remote site ip to an array here
+                    }
+                    
+                }
+
+                ForEach ($remote_site_ip in $remote_site_ips)
+                {#check the protection domains have been successfully activated on each remote site
+                    Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $remote_site_ip -username $username -password $PrismSecurePassword -operation "activate"
+                }
+            #endregion
         }
     #endregion
 
@@ -1129,6 +1183,52 @@ $HistoryText = @'
             $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
             if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
             Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "activate"
+        }
+    #endregion
+
+    #region reconnect vnics to dvportgroups (vSphere only): applies only to migrate & activate. If migrate, figure out remote site ips, otherwise, use cluster
+        if ($migrate -or $activate)
+        {#we are either in the activate or migrate workflow
+            $clusters = @()
+            if ($activate)
+            {#we are in the activating workflow
+                $clusters += $cluster
+            }
+            else 
+            {#we are in the migrate workflow
+                $clusters = $remote_site_ips
+            }
+
+            ForEach ($prism in $clusters)
+            {#check the protection domains have been successfully activated on each remote site
+                #get cluster information
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
+                $method = "GET"
+                $prism_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $cluster"
+
+                if ($prism.hypervisor_types -contains "kVMware")
+                {#we have a vsphere cluster
+                    #TODO: figure out the IP of the registered vCenter server
+                    if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "$prism.management_servers.count is $($prism.management_servers.count)"}
+                    if ($prism.management_servers.count -eq 1)
+                    {#let's grab our vCenter IP
+                        $vCenter_ip = $prism.management_servers.ip_address
+                        #TODO: load powercli
+                        #TODO: for each protection domain, for each VM, for each vNIC, determine if it is connected to a dvportgroup
+                        #TODO: if vnic is connected to a dvportgroup, remap it via vCenter (figure out if reconnecting is enough or if back and forth is necessary)
+                    }
+                    else 
+                    {#we have either no or multiple management servers...
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no or more than one management server(s) defined on $prism"
+                        Exit
+                    }
+                    #TODO: for each protection domain, for each VM, for each vNIC, determine if it is connected to a dvportgroup
+                    #TODO: if vnic is connected to a dvportgroup, remap it via vCenter (figure out if reconnecting is enough or if back and forth is necessary)
+                }
+            }
+            
         }
     #endregion
 
@@ -1209,7 +1309,7 @@ $HistoryText = @'
                 #endregion
             }
         }
-    #endregion
+    #endregion 
 
     #region deactivate
         if ($deactivate)
