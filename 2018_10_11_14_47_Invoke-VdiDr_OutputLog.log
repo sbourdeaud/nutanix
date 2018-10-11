@@ -1,0 +1,82 @@
+10/11/2018 14:47:46 [INFO] Checking for required Powershell modules...
+10/11/2018 14:47:46 [STEP] --Triggering protection domain migration workflow--
+10/11/2018 14:47:46 [INFO] Retrieving protection domains from Nutanix cluster 10.1.174.149 ...
+10/11/2018 14:47:49 [SUCCESS] Successfully retrieved protection domains from Nutanix cluster 10.1.174.149
+10/11/2018 14:47:49 [INFO] Migrating steph-esma-test3 to c01-lolita-infra ...
+10/11/2018 14:47:50 [SUCCESS] Successfully started migration of steph-esma-test3 to c01-lolita-infra
+10/11/2018 14:47:50 [INFO] Retrieving list of tasks on the cluster 10.1.174.149 ...
+10/11/2018 14:48:06 [SUCCESS] Retrieved list of tasks on the cluster 10.1.174.149
+10/11/2018 14:48:06 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:48:19 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:48:37 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:48:55 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:49:11 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:49:23 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:49:35 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:49:53 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:50:07 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:50:18 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:50:32 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:50:43 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:50:55 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:51:11 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:51:23 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:51:32 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:51:42 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:51:51 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:51:59 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:52:08 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:52:16 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:52:25 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:52:33 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:52:41 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:52:54 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:53:06 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:53:25 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:53:42 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:53:56 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:54:13 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:54:24 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:54:35 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:54:47 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:55:00 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:55:11 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:55:21 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:55:32 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:55:45 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:55:55 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:56:06 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:56:16 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:56:27 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:56:46 [WARNING] Waiting 5 seconds for task Deactivate Protection Domain task for protection domain steph-esma-test3 to complete : 0%
+10/11/2018 14:56:56 [SUCCESS] Protection domain migration task Deactivate Protection Domain task for protection domain steph-esma-test3 completed on the cluster 10.1.174.149
+10/11/2018 14:56:56 [INFO] Retrieving protection domains from Nutanix cluster 10.1.174.149 ...
+10/11/2018 14:56:58 [SUCCESS] Successfully retrieved protection domains from Nutanix cluster 10.1.174.149
+10/11/2018 14:56:58 [INFO] Retrieving details about remote site c01-lolita-infra ...
+10/11/2018 14:56:58 [SUCCESS] Successfully retrieved details about remote site c01-lolita-infra
+10/11/2018 14:56:58 [INFO] Retrieving list of tasks on the cluster 10.4.91.29 ...
+10/11/2018 14:57:11 [SUCCESS] Retrieved list of tasks on the cluster 10.4.91.29
+10/11/2018 14:57:11 [SUCCESS] Protection domain migration task Activate Protection Domain task for protection domain steph-esma-test3 completed on the cluster 10.4.91.29
+10/11/2018 14:57:11 [INFO] Retrieving details of Nutanix cluster 10.1.174.149 ...
+10/11/2018 14:57:12 [SUCCESS] Successfully retrieved details of Nutanix cluster 10.1.174.149
+10/11/2018 14:57:12 [STEP] --Triggering VM power on workflow--
+10/11/2018 14:57:12 [INFO] Retrieving protection domains from Nutanix cluster 10.1.174.149 ...
+10/11/2018 14:57:13 [SUCCESS] Successfully retrieved protection domains from Nutanix cluster 10.1.174.149
+10/11/2018 14:57:13 [INFO] Retrieving details about remote site c01-lolita-infra ...
+10/11/2018 14:57:14 [SUCCESS] Successfully retrieved details about remote site c01-lolita-infra
+10/11/2018 14:57:14 [INFO] Retrieving details about protection domain steph-esma-test3 on cluster 10.4.91.29 ...
+10/11/2018 14:57:14 [SUCCESS] Successfully retrieved details about protection domain steph-esma-test3 on cluster 10.4.91.29
+10/11/2018 14:57:14 [INFO] Powering on VMs in protection domain steph-esma-test3 on cluster 10.4.91.29 ...
+10/11/2018 14:57:14 [INFO] Retrieving protection domains from Nutanix cluster 10.4.91.29 ...
+10/11/2018 14:57:18 [SUCCESS] Successfully retrieved protection domains from Nutanix cluster 10.4.91.29
+10/11/2018 14:57:18 [INFO] Powering on VM steph-winvm2 on 10.4.91.29 ...
+10/11/2018 14:57:19 [SUCCESS] Successfully created task to power on VM steph-winvm2 on 10.4.91.29
+10/11/2018 14:57:19 [INFO] Retrieving details of task 3c1a21e5-7ab1-42eb-8828-c5291894a2b4...
+10/11/2018 14:57:19 [SUCCESS] Retrieved details of task 3c1a21e5-7ab1-42eb-8828-c5291894a2b4
+10/11/2018 14:57:19 [SUCCESS] Task VmChangePowerState completed successfully!
+10/11/2018 14:57:19 [INFO] Powering on VM steph-winvm1 on 10.4.91.29 ...
+10/11/2018 14:57:19 [SUCCESS] Successfully created task to power on VM steph-winvm1 on 10.4.91.29
+10/11/2018 14:57:19 [INFO] Retrieving details of task 07f7357f-885b-40ec-a989-5e962a7d86e7...
+10/11/2018 14:57:20 [SUCCESS] Retrieved details of task 07f7357f-885b-40ec-a989-5e962a7d86e7
+10/11/2018 14:57:20 [SUCCESS] Task VmChangePowerState completed successfully!
+10/11/2018 14:57:20 [SUM] total processing time: 00:09:34.0182850
