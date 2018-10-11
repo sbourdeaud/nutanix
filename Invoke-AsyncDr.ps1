@@ -970,6 +970,14 @@ Param
 
 #region prepare
 
+    #region set variables
+        $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+        $StartEpochSeconds = Get-Date (Get-Date).ToUniversalTime() -UFormat %s #used to get tasks generated in Prism after the script was invoked
+        $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
+        $myvarOutputLogFile += "Invoke-AsyncDr_OutputLog.log"
+        $remote_site_ips = @() #initialize array here to collect remote site ips
+    #endregion
+
     Write-Host ""
     Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Preparing--"
 
@@ -993,14 +1001,6 @@ $HistoryText = @'
         $HistoryText
         exit
     }
-
-    #region set variables
-        $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-        $StartEpochSeconds = Get-Date (Get-Date).ToUniversalTime() -UFormat %s #used to get tasks generated in Prism after the script was invoked
-        $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-        $myvarOutputLogFile += "Invoke-VdiDr_OutputLog.log"
-        $remote_site_ips = @() #initialize array here to collect remote site ips
-    #endregion
 
     #region parameter validation
         if (($activate -and $migrate) -or ($activate -and $deactivate) -or ($migrate -and $deactivate))
