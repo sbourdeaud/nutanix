@@ -1187,6 +1187,7 @@ $HistoryText = @'
     #endregion
 
     #region reconnect vnics to dvportgroups (vSphere only): applies only to migrate & activate. If migrate, figure out remote site ips, otherwise, use cluster
+    #! code assumes only 1 vnic. vms connecting to dvportgroups will end up w/out vnics on vsphere, so we had 1 vnic per vm here and we assume vmxnet3.
         if ($migrate -or $activate)
         {#we are either in the activate or migrate workflow
             $clusters = @()
@@ -1202,22 +1203,70 @@ $HistoryText = @'
             ForEach ($prism in $clusters)
             {#check the protection domains have been successfully activated on each remote site
                 #get cluster information
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $prism ..."
+                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/cluster/"
                 $method = "GET"
                 $prism_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $cluster"
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $prism"
 
                 if ($prism.hypervisor_types -contains "kVMware")
                 {#we have a vsphere cluster
-                    #TODO: figure out the IP of the registered vCenter server
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is running VMware vSphere..."
+                    
                     if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "$prism.management_servers.count is $($prism.management_servers.count)"}
+                    
                     if ($prism.management_servers.count -eq 1)
                     {#let's grab our vCenter IP
                         $vCenter_ip = $prism.management_servers.ip_address
-                        #TODO: load powercli
-                        #TODO: for each protection domain, for each VM, for each vNIC, determine if it is connected to a dvportgroup
-                        #TODO: if vnic is connected to a dvportgroup, remap it via vCenter (figure out if reconnecting is enough or if back and forth is necessary)
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is managed by vCenter server $vCenter_ip ..."
+                        
+                        #region load powercli
+                            if (!(Get-Module VMware.PowerCLI)) 
+                            {#module isn't loaded
+                                try 
+                                {#load
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Loading VMware.PowerCLI module..."
+                                    Import-Module VMware.PowerCLI -ErrorAction Stop
+                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Loaded VMware.PowerCLI module"
+                                }
+                                catch 
+                                {#couldn't load
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not load VMware.PowerCLI module! We can't check for dvPortGroups!"
+                                    Exit
+                                }
+                            }
+
+                            try 
+                            {#configure ssl
+                                $result = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false -ErrorAction Stop
+                            }
+                            catch 
+                            {#couldn't configure ssl
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not change the VMware.PowerCLI module configuration to accept self-signed certificates: $($_.Exception.Message)"
+                                exit
+                            }
+                        #endregion
+
+                        #region connect to vCenter
+                            try 
+                            {
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to vCenter server $vcenter_ip ..."
+                                Connect-VIServer -Server $vcenter_ip
+                            }
+                            catch 
+                            {
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to to vCenter server $vcenter_ip : $($_.Exception.Message)"
+                                Exit
+                            }
+                        #endregion
+
+                        #! Resume coding effort here
+                        #TODO: for each protection domain, for each VM, determine if there is a vnic: i'm in a remote site loop: how do I know which VMs to process at this stage?
+                        #do a for loop on each processed_pds: check if the remote site for that pd equals the remote site we are processing. From there, you'll have your list of VMs to process
+                        #or better yet: retrieved protection domains, cross check with list of processed pds, check status is active
+                        
+                        #TODO: if there is no vnic, it means we are connecting to a dvportgroup. get the network mapping from Prism.
+                        #TODO: now that we have the network mapping, foreach vm, add a vmxnet3 vnic to that dvportgroup
                     }
                     else 
                     {#we have either no or multiple management servers...
