@@ -1229,7 +1229,6 @@ $HistoryText = @'
     #endregion
 
     #region reconnect vnics to dvportgroups (vSphere only): applies only to migrate & activate. If migrate, figure out remote site ips, otherwise, use cluster
-    #! code assumes only 1 vnic. vms connecting to dvportgroups will end up w/out vnics on vsphere, so we had 1 vnic per vm here and we assume vmxnet3.
         if ($migrate -or $activate)
         {#we are either in the activate or migrate workflow
             $clusters = @()
@@ -1251,8 +1250,6 @@ $HistoryText = @'
                 $prism_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $prism"
 
-                #TODO: add a check for source hypervisor as well as the workflow below supports AHV -> ESXi only
-                #TODO: for ESXi -> ESXi, a vNIC should not be added, but vNICs should be reconnected. Investigate other areas in the script that are hypervisor specific.
                 if ($prism.hypervisor_types -contains "kVMware")
                 {#we have a vsphere cluster
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is running VMware vSphere..."
@@ -1318,21 +1315,20 @@ $HistoryText = @'
                             if ($debugme) {Write-LogOutput -LogFile $myvarOutputLogFile -Category "DEBUG" -Message "List of active protection domains which were processed on this site: $prism_processed_pds"}
                             if (!$prism_processed_pds)
                             {
-                                #! do something here
+                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find applicable protection domains on Nutanix cluster $prism ..."
                                 Continue
                             }
                         #endregion
                         
                         #region process vms inside protection domains
-                                #TODO: now that we have the network mapping, foreach vm, add a vmxnet3 vnic to that dvportgroup
                             
                             #step 1: foreach protection domain loop
                             ForEach ($prism_processed_pd in $prism_processed_pds)
-                            {
+                            {#process each applicable protection domain
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VMs for protection domain $($prism_processed_pd.name) on $prism ..."
                                 #step 2: process each vm inside the protection domain
                                 ForEach ($prism_processed_pd_vm in $prism_processed_pd.vms)
-                                {
+                                {#process all vms in the applicable protection domain
                                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VM $($prism_processed_pd_vm.name) ..."
                                     try
                                     {#get vm object from vCenter
@@ -1373,32 +1369,65 @@ $HistoryText = @'
                                             $cluster_network_name = ($cluster_networks.entities | Where-Object {$_.uuid -eq $vm_ahv_cluster_vnic.network_uuid}).name
                                             #figure out the mapped network name
                                             $prism_mapped_network_name = ($cluster_remote_site.network_mapping.l2_network_mappings | Where-Object {$_.src_network_name -eq $cluster_network_name}).dest_network_name
-                                            #! Resume coding effort here
+                                            
                                             #figure out if this is a dvportgroup
                                             try 
-                                            {
-                                                
+                                            {#get vdportgroup
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Searching for $prism_mapped_network_name ..."
+                                                $mapped_network_vdportgroup = Get-VDPortgroup -Name $prism_mapped_network_name -ErrorAction Stop
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "$prism_mapped_network_name is a VDPortGroup."
                                             }
                                             catch 
-                                            {
-                                                
+                                            {#no vdportgroup
+                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "$prism_mapped_network_name is not a VDPortGroup or we could not retrieve it from vCenter. Skipping this vnic."
+                                                Continue
                                             }
                                             #if it is a dvportgroup, add a vnic and map it to the correct dvportgroup
-                                            try 
-                                            {
-                                                
-                                            }
-                                            catch 
-                                            {
-                                                
+                                            if ($mapped_network_vdportgroup)
+                                            {#got a vdportgroup
+                                                try 
+                                                {#add vnic
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting $($prism_processed_pd_vm.name) to VDPortGroup $prism_mapped_network_name ..."
+                                                    $add_vnic = new-networkadapter -vm $vm_vCenter_object -type vmxnet3 -StartConnected -PortGroup $mapped_network_vdportgroup -ErrorAction Stop
+                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully connected $($prism_processed_pd_vm.name) to VDPortGroup $prism_mapped_network_name ..."
+                                                }
+                                                catch 
+                                                {#couldn't add vnic
+                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect $($prism_processed_pd_vm.name) to VDPortGroup $prism_mapped_network_name : $($_.Exception.Message)"
+                                                }
                                             }
                                         }
                                     }
                                     else 
-                                    {#source was not AHV and we could be migrate or activate
-                                        #step 6: if source was not AHV but VMware, or if activate, then get the list of vnics on the vm
-                                        #step 7: foreach vnic, figure out if the connected portgroup is a dvportgroup.  If it is, reconnect it via vCenter
-                                        
+                                    {#source was not AHV and we could be migrate or activate, but we're on vSphere
+                                        #foreach vnic, figure out if the connected portgroup is a dvportgroup.  If it is, reconnect it via vCenter
+                                        ForEach ($vm_vCenter_vnic in $vm_vCenter_vnics)
+                                        {
+                                            try 
+                                            {#get vdportgroup
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Searching for $($vm_vCenter_vnic.NetworkName) ..."
+                                                $vdportgroup = Get-VDPortgroup -Name $vm_vCenter_vnic.NetworkName -ErrorAction Stop
+                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "$($vm_vCenter_vnic.NetworkName) is a VDPortGroup."
+                                            }
+                                            catch 
+                                            {#no vdportgroup
+                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "$($vm_vCenter_vnic.NetworkName) is not a VDPortGroup or we could not retrieve it from vCenter. Skipping this vnic."
+                                                Continue
+                                            }
+                                            if ($vdportgroup)
+                                            {#got a vdportgroup
+                                                try 
+                                                {#add vnic
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Reconnecting $($prism_processed_pd_vm.name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
+                                                    $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected -PortGroup $vdportgroup -Connected $true -ErrorAction Stop
+                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully reconnected $($prism_processed_pd_vm.name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
+                                                }
+                                                catch 
+                                                {#couldn't add vnic
+                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($prism_processed_pd_vm.name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)"
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1421,8 +1450,6 @@ $HistoryText = @'
                         Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no or more than one management server(s) defined on $prism"
                         Exit
                     }
-                    #TODO: for each protection domain, for each VM, for each vNIC, determine if it is connected to a dvportgroup
-                    #TODO: if vnic is connected to a dvportgroup, remap it via vCenter (figure out if reconnecting is enough or if back and forth is necessary)
                 }
             }
             
