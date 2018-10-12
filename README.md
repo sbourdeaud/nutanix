@@ -24,4 +24,4 @@ When setting up a new Nutanix cluster, use:
 - set-hostconfig.ps1 to configure redundant dns and ntp on esxi servers,
 - add-DRSAffinityRulesForMA.ps1 after having configured Metro Availability (if applicable) to create the relevant DRS groups and rules for MA.
 
-Please report any bugs here.  Not that scripts were recently modified to deal with PowerCLI 6.5 (dropped snapins) and updated Nutanix cmdlets (errors should now be more verbose when those aren't installed properly).
+Please report any bugs here.  Note that scripts were recently modified to deal with PowerCLI 6.5 (dropped snapins) and updated Nutanix cmdlets (errors should now be more verbose when those aren't installed properly).
