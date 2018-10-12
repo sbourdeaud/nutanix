@@ -1046,7 +1046,16 @@ $HistoryText = @'
             }
             else 
             {#if it was passed as an argument, let's convert the string to a secure string and flush the memory
-                $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+                try
+                {#convert password to secure
+                    $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+                }
+                catch
+                {
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not convert password to secure string: $($_.Exception.Message)"
+                }
+            Exit
+                }
                 Remove-Variable password
             }
         } 
@@ -1231,6 +1240,7 @@ $HistoryText = @'
     #region reconnect vnics to dvportgroups (vSphere only): applies only to migrate & activate. If migrate, figure out remote site ips, otherwise, use cluster
         if ($migrate -or $activate)
         {#we are either in the activate or migrate workflow
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking if we need to reconnect vNICs ..."
             $clusters = @()
             if ($activate)
             {#we are in the activating workflow
