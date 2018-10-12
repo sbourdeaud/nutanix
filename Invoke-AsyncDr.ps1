@@ -1053,8 +1053,7 @@ $HistoryText = @'
                 catch
                 {
                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not convert password to secure string: $($_.Exception.Message)"
-                }
-            Exit
+                    Exit
                 }
                 Remove-Variable password
             }
