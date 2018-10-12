@@ -1134,7 +1134,7 @@ $HistoryText = @'
         $cluster_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $cluster"
 
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Hypervisor on Nutanix cluster $cluster is of type $($prism.hypervisor_types)."
+        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)."
 
     #endregion
 
