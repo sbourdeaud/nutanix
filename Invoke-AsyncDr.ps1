@@ -436,8 +436,20 @@ Param
             } 
             else 
             {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"
+                if ($taskDetails.progress_status -ne "Succeeded")
+                {
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
+                    $userChoice = Write-CustomPrompt
+                    if ($userChoice -eq "n")
+                    {
+                        Exit
+                    }
+                }
+                else 
+                {
+                    New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"   
+                }
             }
         }
         
@@ -1113,11 +1125,41 @@ $HistoryText = @'
 
 #region processing
     
+    #region get stuff we'll need regardless
+        
+        #get cluster information
+        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $cluster ..."
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
+        $method = "GET"
+        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $cluster"
+
+        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Hypervisor on Nutanix cluster $cluster is of type $($prism.hypervisor_types)."
+
+    #endregion
+
     #region migrate
         if ($migrate)
         {   
             Write-Host ""
             Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain migration workflow--"
+
+            #get vms and networks if AHV (for later when we will try to reconnect to dvportgroups)
+            if ($cluster_details.hypervisor_types -eq "kKvm")
+            {
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Vm details on Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
+                $method = "GET"
+                $cluster_vms = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved VM details on Nutanix cluster $cluster"
+
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving networks on Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
+                $method = "GET"
+                $cluster_networks = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved networks on Nutanix cluster $cluster"
+            }
+
             $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
             if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
             Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "deactivate"
@@ -1209,6 +1251,8 @@ $HistoryText = @'
                 $prism_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $prism"
 
+                #TODO: add a check for source hypervisor as well as the workflow below supports AHV -> ESXi only
+                #TODO: for ESXi -> ESXi, a vNIC should not be added, but vNICs should be reconnected. Investigate other areas in the script that are hypervisor specific.
                 if ($prism.hypervisor_types -contains "kVMware")
                 {#we have a vsphere cluster
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is running VMware vSphere..."
@@ -1224,13 +1268,13 @@ $HistoryText = @'
                             if (!(Get-Module VMware.PowerCLI)) 
                             {#module isn't loaded
                                 try 
-                                {#load
+                                {#load powercli
                                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Loading VMware.PowerCLI module..."
                                     Import-Module VMware.PowerCLI -ErrorAction Stop
                                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Loaded VMware.PowerCLI module"
                                 }
                                 catch 
-                                {#couldn't load
+                                {#couldn't load powercli
                                     Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not load VMware.PowerCLI module! We can't check for dvPortGroups!"
                                     Exit
                                 }
@@ -1249,24 +1293,128 @@ $HistoryText = @'
 
                         #region connect to vCenter
                             try 
-                            {
+                            {#connect to vCenter
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to vCenter server $vcenter_ip ..."
-                                Connect-VIServer -Server $vcenter_ip
+                                $vCenter_Connect = Connect-VIServer -Server $vcenter_ip -ErrorAction Stop
                             }
                             catch 
-                            {
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to to vCenter server $vcenter_ip : $($_.Exception.Message)"
+                            {#couldn't connect to vCenter
+                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to vCenter server $vcenter_ip : $($_.Exception.Message)"
                                 Exit
                             }
                         #endregion
 
-                        #! Resume coding effort here
-                        #TODO: for each protection domain, for each VM, determine if there is a vnic: i'm in a remote site loop: how do I know which VMs to process at this stage?
-                        #do a for loop on each processed_pds: check if the remote site for that pd equals the remote site we are processing. From there, you'll have your list of VMs to process
-                        #or better yet: retrieved protection domains, cross check with list of processed pds, check status is active
+                        #region figure out which protection domains to process on this specific remote site
+                            
+                            #step 1: retrieve protection domains on this remote site
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $prism ..."
+                            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                            $method = "GET"
+                            $prism_PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $prism"
+                            
+                            #step 2: compare list of active protection domains on this remote site with the list of processed protection domains returned by the activate or migrate workflow in $processed_pds
+                            $prism_processed_pds = $prism_PdList.entities | Where-Object {$processed_pds -contains $_.name} | Where-Object {$_.active -eq $true}
+                            if ($debugme) {Write-LogOutput -LogFile $myvarOutputLogFile -Category "DEBUG" -Message "List of active protection domains which were processed on this site: $prism_processed_pds"}
+                            if (!$prism_processed_pds)
+                            {
+                                #! do something here
+                                Continue
+                            }
+                        #endregion
                         
-                        #TODO: if there is no vnic, it means we are connecting to a dvportgroup. get the network mapping from Prism.
-                        #TODO: now that we have the network mapping, foreach vm, add a vmxnet3 vnic to that dvportgroup
+                        #region process vms inside protection domains
+                                #TODO: now that we have the network mapping, foreach vm, add a vmxnet3 vnic to that dvportgroup
+                            
+                            #step 1: foreach protection domain loop
+                            ForEach ($prism_processed_pd in $prism_processed_pds)
+                            {
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VMs for protection domain $($prism_processed_pd.name) on $prism ..."
+                                #step 2: process each vm inside the protection domain
+                                ForEach ($prism_processed_pd_vm in $prism_processed_pd.vms)
+                                {
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VM $($prism_processed_pd_vm.name) ..."
+                                    try
+                                    {#get vm object from vCenter
+                                        $vm_vCenter_object = Get-VM -Name $prism_processed_pd_vm.Name -ErrorAction Stop
+                                    }
+                                    catch
+                                    {#couldn't get vm object from vCenter
+                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not get VM object from vCenter server $vcenter_ip : $($_.Exception.Message)"
+                                        Continue
+                                    }
+                                    try
+                                    {#get the vnics for that vm from vCenter
+                                        $vm_vCenter_vnics = $vm_vCenter_object | Get-NetworkAdapter -ErrorAction Stop
+                                    }
+                                    catch
+                                    {#couldn't get vnics for that vm from vCenter
+                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not vNICs for that VM object from vCenter server $vcenter_ip : $($_.Exception.Message)"
+                                        Continue
+                                    }
+                                    
+                                    #step 3: if migrate, and if source was AHV, based on vm name, figure out the list of vnics and which portgroup they are connected to at the source
+                                    if (($cluster_details.hypervisor_types -eq "kKvm") -and ($migrate))
+                                    {#source was AHV and we are migrating, so there is a chance that VMs will end up without vnics if those are connected to a network mapped to a dvportgroup
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "We are migrating from an AHV cluster."
+                                        #step 4: get remote site details and figure out network mappings
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving network mappings for remote site $($cluster) on $prism ..."
+                                        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$cluster"
+                                        $method = "GET"
+                                        $cluster_remote_site = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved network mappings for remote site $($cluster) on $prism"
+                                        
+                                        #step 5: foreach vm vnic defined at the source, figure out if the vnic already exists on the target. if not, add it and connect it to the right dvportgroup
+                                        #get the vnics on the vm
+                                        $vm_ahv_cluster_vnics = ($cluster_vms.entities | Where-Object {$_.name -eq $prism_processed_pd_vm.name}).vm_nics
+                                        ForEach ($vm_ahv_cluster_vnic in $vm_ahv_cluster_vnics)
+                                        {#foreach vnic that existed at the source on AHV
+                                            #figure out network name
+                                            $cluster_network_name = ($cluster_networks.entities | Where-Object {$_.uuid -eq $vm_ahv_cluster_vnic.network_uuid}).name
+                                            #figure out the mapped network name
+                                            $prism_mapped_network_name = ($cluster_remote_site.network_mapping.l2_network_mappings | Where-Object {$_.src_network_name -eq $cluster_network_name}).dest_network_name
+                                            #! Resume coding effort here
+                                            #figure out if this is a dvportgroup
+                                            try 
+                                            {
+                                                
+                                            }
+                                            catch 
+                                            {
+                                                
+                                            }
+                                            #if it is a dvportgroup, add a vnic and map it to the correct dvportgroup
+                                            try 
+                                            {
+                                                
+                                            }
+                                            catch 
+                                            {
+                                                
+                                            }
+                                        }
+                                    }
+                                    else 
+                                    {#source was not AHV and we could be migrate or activate
+                                        #step 6: if source was not AHV but VMware, or if activate, then get the list of vnics on the vm
+                                        #step 7: foreach vnic, figure out if the connected portgroup is a dvportgroup.  If it is, reconnect it via vCenter
+                                        
+                                    }
+                                }
+                            }
+                        #endregion
+                    
+                        #region disconnect from vCenter
+                            try 
+                            {
+                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from vCenter server..."
+                                $vCenter_Disconnect = Disconnect-VIServer * -Confirm:$false -ErrorAction Stop 
+                            }
+                            catch 
+                            {
+                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not disconnect from vCenter server : $($_.Exception.Message)"
+                            }
+                        #endregion
                     }
                     else 
                     {#we have either no or multiple management servers...
