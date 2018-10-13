@@ -69,14 +69,12 @@ Param
     [parameter(mandatory = $false)] [switch]$deactivate,
     [parameter(mandatory = $false)] [string]$cluster,
 	[parameter(mandatory = $false)] [string]$username,
-	[parameter(mandatory = $false)] $password,
+	[parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $pd, #don't specify type as this is sometimes a string, sometimes an array in the script
     [parameter(mandatory = $false)] $prismCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
     [parameter(mandatory = $false)] [switch]$powerOnVms
 )
 #endregion
-
-#TODO: add check n hypervisor at target: if vSphere, check if portgroup is on a dvswitch, if so, then reconnect vnics.
 
 #region functions
     function Write-LogOutput
@@ -962,6 +960,8 @@ Param
                             transition = "ON"
                             uuid = $vm.vm_id
                         }
+                        #TODO: fix this shit
+                        #! there is an issue in that when doing CHDR, the vm uuid may have changed, so we would need to get its new uuid based on its name
                         $body = (ConvertTo-Json $content -Depth 4)
                         $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully created task to power on VM $($vm.vm_name) on $cluster"
@@ -1048,7 +1048,7 @@ $HistoryText = @'
             {#if it was passed as an argument, let's convert the string to a secure string and flush the memory
                 try
                 {#convert password to secure
-                    $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+                    $PrismSecurePassword = ConvertTo-SecureString $password –AsPlainText –Force
                 }
                 catch
                 {
@@ -1072,6 +1072,11 @@ $HistoryText = @'
         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
 
         #TODO: insert here PoSH version check
+        if ($psversiontable.PSVersion.Major -lt 6)
+        {#PoSH version <6
+            Write-LogOutput -LogFile $myvarOutputLogFile -Category "ERROR" -Message "Your version of Powershell is too old, please update to Powershell Core version 6 or above!"
+            Exit
+        }
 
         #TODO: review this code region for errors
         #region module sbourdeaud is used for facilitating Prism REST calls
@@ -1127,7 +1132,8 @@ $HistoryText = @'
         #region module BetterTls
             $result = Set-PoshTls
         #endregion
-    #endregion
+
+#endregion
 
 #endregion
 
@@ -1259,29 +1265,29 @@ $HistoryText = @'
                 $prism_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $prism"
 
-                if ($prism.hypervisor_types -contains "kVMware")
+                if ($prism_details.hypervisor_types -contains "kVMware")
                 {#we have a vsphere cluster
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is running VMware vSphere..."
                     
                     if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "$prism.management_servers.count is $($prism.management_servers.count)"}
                     
-                    if ($prism.management_servers.count -eq 1)
+                    if ($prism_details.management_servers.count -eq 1)
                     {#let's grab our vCenter IP
-                        $vCenter_ip = $prism.management_servers.ip_address
+                        $vCenter_ip = $prism_details.management_servers.ip_address
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is managed by vCenter server $vCenter_ip ..."
                         
                         #region load powercli
-                            if (!(Get-Module VMware.PowerCLI)) 
+                            if (!(Get-Module VMware.VimAutomation.Core,VMware.VimAutomation.Common)) 
                             {#module isn't loaded
                                 try 
                                 {#load powercli
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Loading VMware.PowerCLI module..."
-                                    Import-Module VMware.PowerCLI -ErrorAction Stop
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Loading modules VMware.VimAutomation.Core,VMware.VimAutomation.Common..."
+                                    Import-Module VMware.VimAutomation.Core,VMware.VimAutomation.Common -ErrorAction Stop
                                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Loaded VMware.PowerCLI module"
                                 }
                                 catch 
                                 {#couldn't load powercli
-                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not load VMware.PowerCLI module! We can't check for dvPortGroups!"
+                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not load modules VMware.VimAutomation.Core,VMware.VimAutomation.Common! We can't check for dvPortGroups!"
                                     Exit
                                 }
                             }
@@ -1302,6 +1308,7 @@ $HistoryText = @'
                             {#connect to vCenter
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to vCenter server $vcenter_ip ..."
                                 $vCenter_Connect = Connect-VIServer -Server $vcenter_ip -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully connected to vCenter server $vcenter_ip"
                             }
                             catch 
                             {#couldn't connect to vCenter
@@ -1338,10 +1345,10 @@ $HistoryText = @'
                                 #step 2: process each vm inside the protection domain
                                 ForEach ($prism_processed_pd_vm in $prism_processed_pd.vms)
                                 {#process all vms in the applicable protection domain
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VM $($prism_processed_pd_vm.name) ..."
+                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VM $($prism_processed_pd_vm.vm_name) ..."
                                     try
                                     {#get vm object from vCenter
-                                        $vm_vCenter_object = Get-VM -Name $prism_processed_pd_vm.Name -ErrorAction Stop
+                                        $vm_vCenter_object = Get-VM -Name $prism_processed_pd_vm.vm_name -ErrorAction Stop
                                     }
                                     catch
                                     {#couldn't get vm object from vCenter
@@ -1363,21 +1370,23 @@ $HistoryText = @'
                                     {#source was AHV and we are migrating, so there is a chance that VMs will end up without vnics if those are connected to a network mapped to a dvportgroup
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "We are migrating from an AHV cluster."
                                         #step 4: get remote site details and figure out network mappings
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving network mappings for remote site $($cluster) on $prism ..."
-                                        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$cluster"
+                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving network mappings for remote site $($cluster_details.name) on $prism ..."
+                                        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$($cluster_details.name)"
                                         $method = "GET"
                                         $cluster_remote_site = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved network mappings for remote site $($cluster) on $prism"
+                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved network mappings for remote site $($cluster_details.name) on $prism"
                                         
                                         #step 5: foreach vm vnic defined at the source, figure out if the vnic already exists on the target. if not, add it and connect it to the right dvportgroup
                                         #get the vnics on the vm
-                                        $vm_ahv_cluster_vnics = ($cluster_vms.entities | Where-Object {$_.name -eq $prism_processed_pd_vm.name}).vm_nics
+                                        $vm_ahv_cluster_vnics = ($cluster_vms.entities | Where-Object {$_.name -eq $prism_processed_pd_vm.vm_name}).vm_nics
                                         ForEach ($vm_ahv_cluster_vnic in $vm_ahv_cluster_vnics)
                                         {#foreach vnic that existed at the source on AHV
                                             #figure out network name
+                                            #TODO: add logic to make sure we get something here
                                             $cluster_network_name = ($cluster_networks.entities | Where-Object {$_.uuid -eq $vm_ahv_cluster_vnic.network_uuid}).name
                                             #figure out the mapped network name
-                                            $prism_mapped_network_name = ($cluster_remote_site.network_mapping.l2_network_mappings | Where-Object {$_.src_network_name -eq $cluster_network_name}).dest_network_name
+                                            #TODO: add logic to make sure we get something here
+                                            $prism_mapped_network_name = ($cluster_remote_site.network_mapping.l2_network_mappings | Where-Object {$_.dest_network_name -eq $cluster_network_name}).src_network_name
                                             
                                             #figure out if this is a dvportgroup
                                             try 
@@ -1396,13 +1405,13 @@ $HistoryText = @'
                                             {#got a vdportgroup
                                                 try 
                                                 {#add vnic
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting $($prism_processed_pd_vm.name) to VDPortGroup $prism_mapped_network_name ..."
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $prism_mapped_network_name ..."
                                                     $add_vnic = new-networkadapter -vm $vm_vCenter_object -type vmxnet3 -StartConnected -PortGroup $mapped_network_vdportgroup -ErrorAction Stop
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully connected $($prism_processed_pd_vm.name) to VDPortGroup $prism_mapped_network_name ..."
+                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully connected $($prism_processed_pd_vm.vm_name) to VDPortGroup $prism_mapped_network_name ..."
                                                 }
                                                 catch 
                                                 {#couldn't add vnic
-                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect $($prism_processed_pd_vm.name) to VDPortGroup $prism_mapped_network_name : $($_.Exception.Message)"
+                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect $($prism_processed_pd_vm.vm_name) to VDPortGroup $prism_mapped_network_name : $($_.Exception.Message)"
                                                 }
                                             }
                                         }
@@ -1427,13 +1436,13 @@ $HistoryText = @'
                                             {#got a vdportgroup
                                                 try 
                                                 {#add vnic
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Reconnecting $($prism_processed_pd_vm.name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
+                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
                                                     $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected -PortGroup $vdportgroup -Connected $true -ErrorAction Stop
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully reconnected $($prism_processed_pd_vm.name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
+                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
                                                 }
                                                 catch 
                                                 {#couldn't add vnic
-                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($prism_processed_pd_vm.name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)"
+                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)"
                                                 }
                                             }
                                         }
@@ -1446,7 +1455,8 @@ $HistoryText = @'
                             try 
                             {
                                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from vCenter server..."
-                                $vCenter_Disconnect = Disconnect-VIServer * -Confirm:$false -ErrorAction Stop 
+                                $vCenter_Disconnect = Disconnect-VIServer * -Confirm:$false -ErrorAction Stop
+                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully disconnected from vCenter server."
                             }
                             catch 
                             {
@@ -1471,7 +1481,8 @@ $HistoryText = @'
             if ($powerOnVms)
             {#user wants to power on vms
                 Write-Host ""
-                Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering VM power on workflow--"
+                Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering VM power on workflow in 60 seconds--"
+                Start-Sleep -Seconds 60
 
                 #let's retrieve the list of protection domains
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
