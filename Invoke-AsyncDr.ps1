@@ -1449,7 +1449,8 @@ $HistoryText = @'
                                                 try 
                                                 {#add vnic
                                                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
-                                                    $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected $true -PortGroup $vdportgroup -Connected $true -ErrorAction Stop
+                                                    $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -PortGroup $vdportgroup -ErrorAction Stop -Confirm:$false
+                                                    $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -Connected:$true -ErrorAction Stop -Confirm:$false
                                                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
                                                 }
                                                 catch 
