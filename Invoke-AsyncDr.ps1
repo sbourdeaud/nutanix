@@ -72,7 +72,7 @@ Param
     [parameter(mandatory = $true)] [string]$cluster,
 	[parameter(mandatory = $false)] [string]$username,
 	[parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $true)] $pd, #don't specify type as this is sometimes a string, sometimes an array in the script
+    [parameter(mandatory = $false)] $pd, #don't specify type as this is sometimes a string, sometimes an array in the script
     [parameter(mandatory = $false)] $prismCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
     [parameter(mandatory = $false)] [switch]$powerOnVms,
     [parameter(mandatory = $false)] [switch]$reconnectVnicsOnly
