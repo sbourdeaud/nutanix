@@ -40,6 +40,8 @@
   Specifies a custom credentials file name for Prism authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt).
 .PARAMETER powerOnVms
   Specifies you want VMs to power on after failover.
+.PARAMETER reconnectVnicsOnly
+  Specifies you just want to reconnect the virtual NICs of the VMs in the specified protection domain (applies to vSphere cluster only).
 .EXAMPLE
 .\Invoke-AsyncDr.ps1 -cluster <ip> -migrate -prismCreds prism_api-user -pd <protection domain name>
 Trigger a planned failover workflow for the specified protection domain. Use the previously stored credentials in the %USERPROFILE%\Documents\WindowsPowerShell\Credentials\prism_api-user.txt file (use the Set-CustomCredentials function in the sbourdeaud module to create the credentials file).
@@ -67,12 +69,13 @@ Param
     [parameter(mandatory = $false)] [switch]$migrate,
     [parameter(mandatory = $false)] [switch]$activate,
     [parameter(mandatory = $false)] [switch]$deactivate,
-    [parameter(mandatory = $false)] [string]$cluster,
+    [parameter(mandatory = $true)] [string]$cluster,
 	[parameter(mandatory = $false)] [string]$username,
 	[parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $false)] $pd, #don't specify type as this is sometimes a string, sometimes an array in the script
+    [parameter(mandatory = $true)] $pd, #don't specify type as this is sometimes a string, sometimes an array in the script
     [parameter(mandatory = $false)] $prismCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
-    [parameter(mandatory = $false)] [switch]$powerOnVms
+    [parameter(mandatory = $false)] [switch]$powerOnVms,
+    [parameter(mandatory = $false)] [switch]$reconnectVnicsOnly
 )
 #endregion
 
@@ -673,7 +676,7 @@ Param
                         if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
                         if ($response.metadata.count -ne 0)
                         {#something went wrong with our migration request
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work."
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused ny NGT being disabled on some VMs, or by delta disks due to old snapshots)."
                             Exit
                         }
                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)"
@@ -1015,9 +1018,9 @@ $HistoryText = @'
     }
 
     #region parameter validation
-        if (($activate -and $migrate) -or ($activate -and $deactivate) -or ($migrate -and $deactivate))
+        if (($activate -and $migrate) -or ($activate -and $deactivate) -or ($migrate -and $deactivate) -or ($activate -and $reconnectVnicsOnly) -or ($deactivate -and $reconnectVnicsOnly) -or ($reconnectVnicsOnly -and $migrate))
         {#multiple actions
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You can only use -activate OR -deactivate OR -migrate. Don't try to combine them together."
+            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You can only use -activate OR -deactivate OR -migrate OR -reconnectVnicsOnly. Don't try to combine them together."
             Exit
         }
 
@@ -1027,9 +1030,9 @@ $HistoryText = @'
             Exit
         }
 
-        if (!$activate -and !$migrate -and !$deactivate)
+        if (!$activate -and !$migrate -and !$deactivate -and !$reconnectVnicsOnly)
         {#no action specified
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You must specify an action: -migrate, -activate or -deactivate."
+            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You must specify an action: -migrate, -activate, -deactivate or -reconnectVnicsOnly."
             Exit
         }
 
@@ -1152,6 +1155,8 @@ $HistoryText = @'
 
     #endregion
 
+    #TODO: if the cluster hypervisor is vSphere, check for the presence of VM snapshots as this prevents pd migration.
+    #TODO: also check that NGT is enabled (not sure how to do that in the API)
     #region migrate
         if ($migrate)
         {   
@@ -1243,11 +1248,11 @@ $HistoryText = @'
     #endregion
 
     #region reconnect vnics to dvportgroups (vSphere only): applies only to migrate & activate. If migrate, figure out remote site ips, otherwise, use cluster
-        if ($migrate -or $activate)
+        if ($migrate -or $activate -or $reconnectVnicsOnly)
         {#we are either in the activate or migrate workflow
             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking if we need to reconnect vNICs ..."
             $clusters = @()
-            if ($activate)
+            if ($activate -or $reconnectVnicsOnly)
             {#we are in the activating workflow
                 $clusters += $cluster
             }
@@ -1327,7 +1332,14 @@ $HistoryText = @'
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $prism"
                             
                             #step 2: compare list of active protection domains on this remote site with the list of processed protection domains returned by the activate or migrate workflow in $processed_pds
-                            $prism_processed_pds = $prism_PdList.entities | Where-Object {$processed_pds -contains $_.name} | Where-Object {$_.active -eq $true}
+                            if ($migrate -or $activate)
+                            {#we have activate or migrated pds already, so we have a list of pds processed
+                                $prism_processed_pds = $prism_PdList.entities | Where-Object {$processed_pds -contains $_.name} | Where-Object {$_.active -eq $true}
+                            }
+                            else 
+                            {#we are only reconnecting vnics, so our list of pds to process is what was passed in the pd parameter
+                                $prism_processed_pds = $prism_PdList.entities | Where-Object {$pd -contains $_.name} | Where-Object {$_.active -eq $true}
+                            }
                             if ($debugme) {Write-LogOutput -LogFile $myvarOutputLogFile -Category "DEBUG" -Message "List of active protection domains which were processed on this site: $prism_processed_pds"}
                             if (!$prism_processed_pds)
                             {
