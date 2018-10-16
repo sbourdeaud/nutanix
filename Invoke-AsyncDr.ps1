@@ -1292,7 +1292,7 @@ $HistoryText = @'
                 {#we have a vsphere cluster
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is running VMware vSphere..."
                     
-                    if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "$prism.management_servers.count is $($prism.management_servers.count)"}
+                    if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "$prism.management_servers.count is $($prism_details.management_servers.count)"}
                     
                     if ($prism_details.management_servers.count -eq 1)
                     {#let's grab our vCenter IP
