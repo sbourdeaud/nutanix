@@ -967,6 +967,11 @@ Param
                     {
                         #region get the vm uuid
                             $vm_uuid = ($vms_info.entities | Where-Object {$_.name -eq $vm.vm_name}).uuid
+                            if ($vm_uuid -is [array])
+                            {#we have multiple vms with the same name...
+                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one VM with the name $($vm.vm_name) on $cluster. Setting uuid to what is in the protection domain ($($vm.vm_id))"
+                                $vm_uuid = $vm.vm_id
+                            }
                         #endregion
 
                         #region power the vm on
