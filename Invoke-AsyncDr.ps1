@@ -952,24 +952,37 @@ Param
             Write-Host "$($pd.vms)" -ForegroundColor Red
 
             #region process
+
+                #region get vms
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of VMs on $cluster ..."
+                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
+                    $method = "GET"
+                    $vms_info = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of VMs on $cluster"
+                #endregion
+
                 ForEach ($protection_domain in $pd)
                 {
                     ForEach ($vm in $protection_domain.vms)
                     {
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VM $($vm.vm_name) on $cluster ..."
-                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($vm.vm_id)/set_power_state"
-                        $method = "POST"
-                        $content = @{
-                            transition = "ON"
-                            uuid = $vm.vm_id
-                        }
-                        #TODO: fix this shit
-                        #! there is an issue in that when doing CHDR, the vm uuid may have changed, so we would need to get its new uuid based on its name
-                        $body = (ConvertTo-Json $content -Depth 4)
-                        $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully created task to power on VM $($vm.vm_name) on $cluster"
-                        
-                        Get-PrismTaskStatus -task $response.task_uuid -cluster $cluster -username $username -password $PrismSecurePassword
+                        #region get the vm uuid
+                            $vm_uuid = ($vms_info.entities | Where-Object {$_.name -eq $vm.vm_name}).uuid
+                        #endregion
+
+                        #region power the vm on
+                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VM $($vm.vm_name) on $cluster ..."
+                            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/set_power_state"
+                            $method = "POST"
+                            $content = @{
+                                transition = "ON"
+                                uuid = $vm_uuid
+                            }
+                            $body = (ConvertTo-Json $content -Depth 4)
+                            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully created task to power on VM $($vm.vm_name) on $cluster"
+                            
+                            Get-PrismTaskStatus -task $response.task_uuid -cluster $cluster -username $username -password $PrismSecurePassword
+                        #endregion
                     }
                 }
             #endregion
