@@ -482,6 +482,7 @@ $HistoryText = @'
  06/27/2018 sb   Added BetterTls module for Tls 1.2
  07/17/2018 sb   Added check for PoSH version and removed silentlycontinue as
                  default for erroractionpreference
+ 10/26/2018 sb   Added additional error control.
 ################################################################################
 '@
         $myvarScriptName = ".\add-DRSAffinityRulesForMA.ps1"
@@ -760,7 +761,8 @@ add-type @"
 		++$myvarCounter
 	}#end foreach Nutanix cluster loop
 
-	
+    $result = Disconnect-viserver * -Confirm:$False #making sure we are not already connected to a vCenter server
+    
 	foreach ($myvarvCenter in $myvarvCenterServers)
 	{#connect to vcenter now
 		OutputLogData -category "INFO" -message "Connecting to vCenter server $myvarvCenter..."
@@ -782,19 +784,35 @@ add-type @"
                 #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
                 $myvarNtnxC1_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the first Nutanix cluster
                 $myvarNtnxC2_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the second Nutanix cluster
-                OutputLogData -category "INFO" -message "Getting hosts registered in $myvarvCenter..."
-                $myvarVMHosts = Get-VMHost #get all the vmhosts registered in vCenter
+                Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $myvarvCenter..." -ForegroundColor Green
+                try 
+                {#get all the vmhosts registered in vCenter
+                    $myvarVMHosts = Get-VMHost -ErrorAction Stop 
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $myvarvCenter" -ForegroundColor Cyan
+                }
+                catch
+                {#couldn't get all the vmhosts registered in vCenter
+                    throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $myvarvCenter : $($_.Exception.Message)"
+                }
                 foreach ($myvarVMHost in $myvarVMHosts) 
                 {#let's look at each host and determine which is which
-                    OutputLogData -category "INFO" -message "Retrieving vmk interfaces for $myvarVMHost..."
-                    $myvarHostVmks = $myvarVMHost.NetworkInfo.VirtualNic #retrieve all vmk NICs for that host
+                    Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $myvarVMHost..." -ForegroundColor Green
+                    try 
+                    {#retrieve all vmk NICs for that host
+                        $myvarHostVmks = $myvarVMHost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $myvarVMHost" -ForegroundColor Cyan
+                    }
+                    catch
+                    {#couldn't retrieve all vmk NICs for that host
+                        throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $myvarVMHost : $($_.Exception.Message)"
+                    }
                     foreach ($myvarHostVmk in $myvarHostVmks) 
                     {#examine all VMKs
                         foreach ($myvarHostIP in $myvarNtnxC1_hosts) 
                         {#compare to the host IP addresses we got from the Nutanix cluster 1
                             if ($myvarHostVmk.IP -eq $myvarHostIP)
                             {#if we get a match, that vcenter host is in cluster 1
-                                OutputLogData -category "INFO" -message "$myvarVMHost.Name is a host in $ntnx_cluster1..."
+                                Write-Host "$(get-date) [INFO] $($myvarVMHost.Name) is a host in Nutanix cluster $ntnx_cluster1..." -ForegroundColor Green
                                 $myvarNtnxC1_vmhosts += $myvarVMHost
                             }
                         }#end foreach IP C1 loop
@@ -802,7 +820,7 @@ add-type @"
                         {#compare to the host IP addresses we got from the Nutanix cluster 2
                             if ($myvarHostVmk.IP -eq $myvarHostIP)
                             {#if we get a match, that vcenter host is in cluster 2
-                                OutputLogData -category "INFO" -message "$myvarVMHost.Name is a host in $ntnx_cluster2..."
+                                Write-Host "$(get-date) [INFO] $($myvarVMHost.Name) is a host in Nutanix cluster $ntnx_cluster2..." -ForegroundColor Green
                                 $myvarNtnxC2_vmhosts += $myvarVMHost 
                             }
                         }#end foreacch IP C2 loop
@@ -811,29 +829,62 @@ add-type @"
 
                 if (!$myvarNtnxC1_vmhosts) 
                 {#couldn't find hosts in cluster1
-                    throw "$(get-date) [ERROR] No vmhosts were found for $ntnx_cluster1"
+                    throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $ntnx_cluster1 in vCenter server $myvarvCenter"
                 }
                 if (!$myvarNtnxC2_vmhosts) 
                 {#couldn't find hosts in cluster2
-                    throw "$(get-date) [ERROR] No vmhosts were found for $ntnx_cluster2"
+                    throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $ntnx_cluster2 in vCenter server $myvarvCenter"
                 }
 
                 #check all vmhosts are part of the same vSphere cluster
                 OutputLogData -category "INFO" -message "Checking that all hosts are part of the same compute cluster..."
-                $myvarvSphereCluster = $myvarNtnxC1_vmhosts[0] | Get-Cluster  #we look at which cluster the first vmhost in cluster 1 belongs to.
+                try 
+                {#we look at which cluster the first vmhost in cluster 1 belongs to.
+                    $myvarvSphereCluster = $myvarNtnxC1_vmhosts[0] | Get-Cluster -ErrorAction Stop 
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvarNtnxC1_vmhosts[0].Name) : $($_.Exception.Message)"
+                }
+                
                 $myvarvSphereClusterName = $myvarvSphereCluster.Name
                 $myvarvSphereClusterVMHosts = $myvarNtnxC1_vmhosts + $myvarNtnxC2_vmhosts #let's create an array with all vmhosts that should be in the compute cluster
 
-                #get existing DRS groups
-                $myvarDRSGroups = (get-cluster $myvarvSphereClusterName).ExtensionData.ConfigurationEx.group
+                
+                try 
+                {#get existing DRS groups
+                    $myvarClusterObject = get-cluster $myvarvSphereClusterName -ErrorAction Stop
+                    $myvarDRSGroups = $myvarClusterObject.ExtensionData.ConfigurationEx.group
+                }
+                catch 
+                {#couldn't get existing DRS groups
+                    throw "$(get-date) [ERROR] Could not retrieve vSphere object for cluster $myvarvSphereClusterName : $($_.Exception.Message)"
+                }
+                
 
                 #get existing DRS rules
-                $myvarClusterComputeResourceView = Get-View -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvarvSphereClusterName}
-                $myvarClusterDRSRules = $myvarClusterComputeResourceView.ConfigurationEx.Rule
+                try 
+                {
+                    $myvarClusterComputeResourceView = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvarvSphereClusterName}
+                    $myvarClusterDRSRules = $myvarClusterComputeResourceView.ConfigurationEx.Rule
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $myvarvSphereClusterName : $($_.Exception.Message)"
+                }
+                
 
                 foreach ($myvarvSphereClusterVMHost in $myvarvSphereClusterVMHosts) 
                 {#let's now look at each vmhost and which cluster they belong to
-                    $myvarVMHostCluster = $myvarvSphereClusterVMHost | Get-Cluster #which cluster does this host belong to?
+                    try 
+                    {#which cluster does this host belong to?
+                        $myvarVMHostCluster = $myvarvSphereClusterVMHost | Get-Cluster -ErrorAction Stop 
+                    }
+                    catch 
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve vSphere cluster object for vmhost $myvarvSphereClusterVMHost : $($_.Exception.Message)"
+                    }
+                    
                     if ($myvarVMHostCluster -ne $myvarvSphereCluster) 
                     {#let's check if it's the same cluster as our first host
                         $myvarVMHostName = $myvarvSphereClusterVMHost.Name
@@ -844,12 +895,12 @@ add-type @"
                 }#end foreach cluster vmhost loop
 
                 #check that vSphere cluster has HA and DRS enabled
-                OutputLogData -category "INFO" -message "Checking HA is enabled on $myvarvSphereClusterName..."
-                if ($myvarvSphereCluster.HaEnabled -ne $true) {OutputLogData -category "WARN" -message "HA is not enabled on $myvarvSphereClusterName!"}
-                OutputLogData -category "INFO" -message "Checking DRS is enabled on $myvarvSphereClusterName..."
+                OutputLogData -category "INFO" -message "Checking HA is enabled on vSphere cluster $myvarvSphereClusterName..."
+                if ($myvarvSphereCluster.HaEnabled -ne $true) {OutputLogData -category "WARN" -message "HA is not enabled on vSphere cluster $myvarvSphereClusterName!"}
+                OutputLogData -category "INFO" -message "Checking DRS is enabled on vSphere cluster $myvarvSphereClusterName..."
                 if ($myvarvSphereCluster.DrsEnabled -ne $true)
                 {
-                    OutputLogData -category "ERROR" -message "DRS is not enabled on $myvarvSphereClusterName!"
+                    OutputLogData -category "ERROR" -message "DRS is not enabled on vSphere cluster $myvarvSphereClusterName!"
                     break #exit since DRS is not enabled
                 }
 
@@ -897,7 +948,14 @@ add-type @"
                     foreach ($myvarDatastore in $myvarNtnxC1_MaActiveCtrs)
                     {#process each datastore
                         OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
-                        $myvarNtnxC1_vms += Get-Datastore -Name $myvarDatastore | Get-VM
+                        try 
+                        {
+                            $myvarNtnxC1_vms += Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                        }
+                        catch 
+                        {
+                            throw "$(get-date) [ERROR] Could not retrieve VMs in datastore $myvarDatastore : $($_.Exception.Message)"
+                        }
 
                         $myvarDRSVMGroupName = "DRS_VM_MA_" + $myvarDatastore
 
@@ -934,7 +992,15 @@ add-type @"
                     foreach ($myvarDatastore in $myvarNtnxC2_MaActiveCtrs)
                     {
                         OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
-                        $myvarNtnxC2_vms += Get-Datastore -Name $myvarDatastore | Get-VM
+                        try 
+                        {
+                            $myvarNtnxC2_vms += Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                        }
+                        catch 
+                        {
+                            throw "$(get-date) [ERROR] Could not retrieve VMs in datastore $myvarDatastore : $($_.Exception.Message)"
+                        }
+                        
 
                         $myvarDRSVMGroupName = "DRS_VM_MA_" + $myvarDatastore
 
