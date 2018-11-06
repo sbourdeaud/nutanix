@@ -952,6 +952,11 @@ add-type @"
                         try 
                         { 
                             $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                            if (!$vm_objects)
+                            {#no vms in the datastore...
+                                OutputLogData -category "ERROR" -message "There are no VMs in datastore $myvarDatastore. Please put at least 1 VM in that datastore and run the script again."
+                                Exit
+                            }
                             $myvarNtnxC1_vms = [Array]$myvarNtnxC1_vms + $vm_objects
                         }
                         catch 
@@ -997,6 +1002,11 @@ add-type @"
                         try 
                         {
                             $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                            if (!$vm_objects)
+                            {#no vms in the datastore...
+                                OutputLogData -category "ERROR" -message "There are no VMs in datastore $myvarDatastore. Please put at least 1 VM in that datastore and run the script again."
+                                Exit
+                            }
                             $myvarNtnxC2_vms = [Array]$myvarNtnxC2_vms + $vm_objects
                         }
                         catch 
