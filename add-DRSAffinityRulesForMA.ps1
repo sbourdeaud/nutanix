@@ -942,7 +942,8 @@ add-type @"
                 $myvarDRSVMGroups = $myvarDRSGroups |Where-Object {$_.vm} #keep vm groups
 
                 #retrieve names of VMs in each active datastore
-                $myvarNtnxC1_vms, $myvarNtnxC2_vms = @()
+                [System.Collections.ArrayList]$myvarNtnxC1_vms = New-Object System.Collections.ArrayList($null)
+                [System.Collections.ArrayList]$myvarNtnxC2_vms = New-Object System.Collections.ArrayList($null)
 
                 #region process cluster 1
                     foreach ($myvarDatastore in $myvarNtnxC1_MaActiveCtrs)
@@ -952,7 +953,7 @@ add-type @"
                         try 
                         { 
                             $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
-                            $myvarNtnxC1_vms += $vm_objects
+                            $myvarNtnxC1_vms.Add((New-Object PSObject -Property $vm_objects)) | Out-Null
                         }
                         catch 
                         {
@@ -998,7 +999,7 @@ add-type @"
                         try 
                         {
                             $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
-                            $myvarNtnxC2_vms += $vm_objects
+                            $myvarNtnxC2_vms.Add((New-Object PSObject -Property $vm_objects)) | Out-Null
                         }
                         catch 
                         {
