@@ -942,18 +942,17 @@ add-type @"
                 $myvarDRSVMGroups = $myvarDRSGroups |Where-Object {$_.vm} #keep vm groups
 
                 #retrieve names of VMs in each active datastore
-                [System.Collections.ArrayList]$myvarNtnxC1_vms = New-Object System.Collections.ArrayList($null)
-                [System.Collections.ArrayList]$myvarNtnxC2_vms = New-Object System.Collections.ArrayList($null)
+                $myvarNtnxC1_vms = @()
+                $myvarNtnxC2_vms = @()
 
                 #region process cluster 1
                     foreach ($myvarDatastore in $myvarNtnxC1_MaActiveCtrs)
                     {#process each datastore
                         OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
-                        $vm_objects = New-Object -TypeName PSObject
                         try 
                         { 
                             $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
-                            $myvarNtnxC1_vms.Add((New-Object PSObject -Property $vm_objects)) | Out-Null
+                            $myvarNtnxC1_vms = [Array]$myvarNtnxC1_vms + $vm_objects
                         }
                         catch 
                         {
@@ -995,11 +994,10 @@ add-type @"
                     foreach ($myvarDatastore in $myvarNtnxC2_MaActiveCtrs)
                     {
                         OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
-                        $vm_objects = New-Object -TypeName PSObject
                         try 
                         {
                             $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
-                            $myvarNtnxC2_vms.Add((New-Object PSObject -Property $vm_objects)) | Out-Null
+                            $myvarNtnxC2_vms = [Array]$myvarNtnxC2_vms + $vm_objects
                         }
                         catch 
                         {
