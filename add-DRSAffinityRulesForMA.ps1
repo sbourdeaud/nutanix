@@ -761,7 +761,7 @@ add-type @"
 		++$myvarCounter
 	}#end foreach Nutanix cluster loop
 
-    $result = Disconnect-viserver * -Confirm:$False #making sure we are not already connected to a vCenter server
+    $result = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue #making sure we are not already connected to a vCenter server
     
 	foreach ($myvarvCenter in $myvarvCenterServers)
 	{#connect to vcenter now
