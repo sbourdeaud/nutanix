@@ -948,9 +948,11 @@ add-type @"
                     foreach ($myvarDatastore in $myvarNtnxC1_MaActiveCtrs)
                     {#process each datastore
                         OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
+                        $vm_objects = New-Object -TypeName PSObject
                         try 
-                        {
-                            $myvarNtnxC1_vms += Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                        { 
+                            $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                            $myvarNtnxC1_vms += $vm_objects
                         }
                         catch 
                         {
@@ -992,9 +994,11 @@ add-type @"
                     foreach ($myvarDatastore in $myvarNtnxC2_MaActiveCtrs)
                     {
                         OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
+                        $vm_objects = New-Object -TypeName PSObject
                         try 
                         {
-                            $myvarNtnxC2_vms += Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                            $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
+                            $myvarNtnxC2_vms += $vm_objects
                         }
                         catch 
                         {
