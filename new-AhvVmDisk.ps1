@@ -419,7 +419,6 @@ $size = $size * 1024 * 1024 * 1024
         $displayed_progress=$false
         While ($task.progress_status -ne "Succeeded")
         {
-            $task = (Get-NTNXTask -TaskId $diskAddTask)
             if ($task.progress_status -eq "Failed") 
             {#task failed
                 throw "$(get-date) [ERROR] Disk creation task $($diskAddTask.task_uuid) failed. Exiting!"
@@ -430,6 +429,7 @@ $size = $size * 1024 * 1024 * 1024
                 $displayed_progress=$true
                 Start-Sleep -Seconds 5
             }
+            $task = (Get-NTNXTask -TaskId $diskAddTask)
         } 
         if ($displayed_progress) {Write-Host}
         Write-Host "$(get-date) [SUCCESS] Disk creation task $($diskAddTask.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
