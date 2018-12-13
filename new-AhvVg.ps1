@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  Use this script to add one or more disks to an existing VM.
+  Use this script to create and direct attach a volume group to an existing VM.
 .DESCRIPTION
-  The script takes a VM, a size (in GiB) and a quantity of disks as input. Optionally, it can also take a storage container as input. It then adds the specified number of disks to the VM, either in the same container as disk scsi0:0, or in the specified container.
+  The script takes a VM, a volume group name, a size (in GiB) and a quantity of disks as input. Optionally, it can also take a storage container as input. It then adds the specified number of disks to the volume group, either in the same container, or in the specified container, and then attaches the volume group to the VM.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -19,22 +19,24 @@
   Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER vg
+  Specifies the name of the volume group to be created.
 .PARAMETER vm
-  Specifies the name of the VM to add disks to.
+  Specifies the name of the VM to attach the volume group to.
 .PARAMETER qty
-  Quantity of disks to add (default is 1 if qty is not specified).
+  Quantity of disks to add to the volume group (default is 1 if qty is not specified).
 .PARAMETER size
-  Size in GiB of the disk(s) to add.
+  Size in GiB of the disk(s) to add inside the volume group.
 .PARAMETER container
-  Name of the container where you want the disks to be created in. If none is specified, the disks will be added in the same container as disk scsi0:0.
+  Name of the container where you want the volume group disks to be created in. If none is specified, the disks will be added in the same container as disk scsi0:0 of the VM.
 .EXAMPLE
-.\new-AhvVmDisk.ps1 -cluster ntnxc1.local -username admin -password admin -vm myvm -size 100
-Adds a single 100 GiB disk to VM myvm.
+.\new-AhvVmDisk.ps1 -cluster ntnxc1.local -username admin -password admin -vg myvm_data -vm myvm -size 100 -qty 5
+Creates a volume group called myvm_data, adds five 100 GiB disks to it, then attach it to the VM myvm.
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: November 9th 2018
+  Revision: December 13th 2018 (happy birthday Elodie!)
 #>
 
 #region parameters
@@ -49,7 +51,8 @@ Param
     [parameter(mandatory = $false)] [string]$username,
     [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $prismCreds,
-    [parameter(mandatory = $true,HelpMessage = "Enter the name of the VM to add disks to")] [string]$vm,
+    [parameter(mandatory = $true,HelpMessage = "Enter the name of the volume group to create")] [string]$vg,
+    [parameter(mandatory = $true,HelpMessage = "Enter the name of the VM to attach the volume group to")] [string]$vm,
     [parameter(mandatory = $true,HelpMessage = "Enter the size in GiB of the disks to add")] [int64]$size,
     [parameter(mandatory = $false)] [string]$container,
     [parameter(mandatory = $false)] [int]$qty
@@ -170,10 +173,10 @@ $HistoryText = @'
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
-09/11/2018 sb   Initial release.
+12/13/2018 sb   Initial release. Happy birthday to my beloved wife, Elodie!
 ################################################################################
 '@
-$myvarScriptName = ".\new-AhvVmDisk.ps1"
+$myvarScriptName = ".\new-AhvVg.ps1"
 
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
@@ -382,59 +385,106 @@ $size = $size * 1024 * 1024 * 1024
     }
 #endregion
 
-#region add the disks
-
-    Write-Host "$(get-date) [INFO] Adding $qty disk(s) of size $size bytes to $vm in container $diskContainerUUid..." -ForegroundColor Green
-    $taskUuids = @()
-    While ($qty -ne 0)
-    {
-        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($vmDetails.uuid)/disks/attach"
-        $method = "POST"
-        $content = @{
-            vm_disks = 
-            @(
-            @{
-            is_cdrom = "false"
-            vm_disk_create = 
+#region create the volume group, including disks
+    Write-Host "$(get-date) [INFO] Creating volume group $vg with $qty disk(s) of size $size bytes to $vm in container $diskContainerUUid..." -ForegroundColor Green
+    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/volume_groups/"
+    $method = "POST"
+    $content = @{
+        description = "Volume group attached to vm $vm"
+        disk_list = 
+        @(
+            while ($qty -ne 0) {
                 @{
-                    size = $size
-                    "storage_container_uuid" = $diskContainerUUid
+                create_config = 
+                    @{
+                        size = $size
+                        storage_container_uuid = $diskContainerUUid
+                    }
                 }
-            }           
-            )
-        }
-        $body = (ConvertTo-Json $content -Depth 4)
-        if ($debugme) {Write-Host $body -ForegroundColor White}
-        $taskUuid = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
-        Write-Host "$(get-date) [SUCCESS] Successfully requested 1 disk of size $size bytes to be added to $vm in container $diskContainerUUid!" -ForegroundColor Cyan
-        $qty = $qty - 1
-        $taskUuids += $taskUuid
+                $qty = $qty - 1
+            }
+        )
+        flash_mode_enabled = "false"
+        is_shared = "false"
+        name = "$vg"
     }
+    $body = (ConvertTo-Json $content -Depth 4)
+    if ($debugme) {Write-Host $body -ForegroundColor White}
+    $taskUuid = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+    Write-Host "$(get-date) [SUCCESS] Successfully requested creation of volume group $vg in container $diskContainerUUid!" -ForegroundColor Cyan
 
-    #check on image import task status
-    Foreach ($diskAddTask in $taskUuids)
+    Write-Host "$(get-date) [INFO] Checking status of the volume group creation task $($taskUuid.task_uuid)..." -ForegroundColor Green
+    $task = (Get-NTNXTask -TaskId $taskUuid)
+    $displayed_progress=$false
+    While ($task.progress_status -ne "Succeeded")
     {
-        Write-Host "$(get-date) [INFO] Checking status of the disk creation task $($diskAddTask.task_uuid)..." -ForegroundColor Green
-        $task = (Get-NTNXTask -TaskId $diskAddTask)
-        $displayed_progress=$false
-        While ($task.progress_status -ne "Succeeded")
-        {
-            $task = (Get-NTNXTask -TaskId $diskAddTask)
-            if ($task.progress_status -eq "Failed") 
-            {#task failed
-                throw "$(get-date) [ERROR] Disk creation task $($diskAddTask.task_uuid) failed. Exiting!"
-            }
-            else 
-            {#task hasn't completed yet
-                Write-Host -NoNewLine "`r$(get-date) [WARNING] Disk creation task $($diskAddTask.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
-                $displayed_progress=$true
-                Start-Sleep -Seconds 5
-            }
-        } 
-        if ($displayed_progress) {Write-Host}
-        Write-Host "$(get-date) [SUCCESS] Disk creation task $($diskAddTask.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
-    }
+        $task = (Get-NTNXTask -TaskId $taskUuid)
+        if ($task.progress_status -eq "Failed") 
+        {#task failed
+            throw "$(get-date) [ERROR] Volume group creation task $($taskUuid.task_uuid) failed. Exiting!"
+        }
+        else 
+        {#task hasn't completed yet
+            Write-Host -NoNewLine "`r$(get-date) [WARNING] Volume group creation task $($taskUuid.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+            $displayed_progress=$true
+            Start-Sleep -Seconds 5
+        }
+    } 
+    if ($displayed_progress) {Write-Host}
+    Write-Host "$(get-date) [SUCCESS] Volume group creation task $($taskUuid.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
+#endregion
 
+#region retrieving details about the created vg
+    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving cluster volume groups information..."
+    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/volume_groups/?include_disk_size=true"
+    $method = "GET"
+    $vgInfo = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved information cluster volume groups!"
+
+    if ($createdVg = $vgInfo.entities | Where-Object {$_.name -eq $vg})
+    {#found our created vg
+        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Found $($vg) with uuid $($createdVg.uuid)"
+    }
+    else
+    {#could not find our created vg
+        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not find volume group $vg on cluster $cluster"
+        exit
+    }
+#endregion
+
+#region attach volume group to the vm
+    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Attaching volume group $($createdVg.name) with uuid $($createdVg.uuid) to vm $vm with uuid $($vmDetails.uuid)..."
+    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/volume_groups/$($createdVg.uuid)/attach"
+    $method = "POST"
+    $content = @{
+        operation = "ATTACH"
+        vm_uuid = $($vmDetails.uuid)
+    }
+    $body = (ConvertTo-Json $content)
+    $vgAttachTaskUuid = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started task to attach volume group $($createdVg.name) to vm $vm!"
+
+    Start-Sleep -Seconds 5
+
+    Write-Host "$(get-date) [INFO] Checking status of the volume group attach task $($vgAttachTaskUuid.task_uuid)..." -ForegroundColor Green
+    $task = (Get-NTNXTask -TaskId $vgAttachTaskUuid)
+    $displayed_progress=$false
+    While ($task.progress_status -ne "Succeeded")
+    {
+        $task = (Get-NTNXTask -TaskId $vgAttachTaskUuid)
+        if ($task.progress_status -eq "Failed") 
+        {#task failed
+            throw "$(get-date) [ERROR] Volume group attach task $($vgAttachTaskUuid.task_uuid) failed. Exiting!"
+        }
+        else 
+        {#task hasn't completed yet
+            Write-Host -NoNewLine "`r$(get-date) [WARNING] Volume group attach task $($vgAttachTaskUuid.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+            $displayed_progress=$true
+            Start-Sleep -Seconds 5
+        }
+    } 
+    if ($displayed_progress) {Write-Host}
+    Write-Host "$(get-date) [SUCCESS] Volume group attach task $($vgAttachTaskUuid.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
 #endregion
 
 #endregion
