@@ -1,0 +1,33 @@
+#date: January 2nd 2019
+#blueprint version: 1.0
+#Prism Central version: 5.10.0.1
+#Calm version: 2.5.0
+#Prism Element version: 5.10.0.2
+#AHV version: 20170830.185
+#cloud: Nutanix AHV
+
+#Description:
+A Windows Server 2016 for AHV VM deployment blueprint with customizable options such as a static IP address and an Active Directory domain.
+It contains 3 application profiles for a small, medium or large VM.
+
+#Instructions:
+1. prepare a Windows Server 2016 virtual machine, run sysprep /generalize /shutdown
+2. add VM disk to image library, then add image to Prism Central library
+3. add the blueprint to Calm and update the image it is pointing to for each application profile (small,medium,large)
+4. decide which variables you want to be configurable at runtime and update the variables accordingly
+5. the Active Directory username and password variables must be updated in each application profile
+6. the local administrator password must be set in the credentials window of the blueprint
+7. nic0 of the VM must be attached to the correct network/vlan
+
+#Variables:
+    #in each application profile:
+        ad_domain               : Active Directory domain name to which the VM will be joined
+        ad_password             : Active Directory password for domain join
+        ad_username             : Active Directory username for domain join
+        dns_domain              : DNS suffix for the VM
+        gateway                 : IPv4 gateway for the VM static IP configuration
+        ip_address              : IPv4 static address for the VM static IP configuration
+        prefix                  : IPv4 subnet mask (in bits) for the VM static IP configuration
+        primary_dns_server      : IPv4 address of the primary DNS server for the VM static IP configuration
+        secondary_dns_server    : IPv4 address of the primary DNS server for the VM static IP configuration
+        product_key             : Windows Server 2016 product key for activation

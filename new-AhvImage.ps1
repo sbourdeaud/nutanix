@@ -443,7 +443,6 @@ $HistoryText = @'
         $displayed_progress=$false
         While ($task.progress_status -ne "Succeeded")
         {
-            $task = (Get-NTNXTask -TaskId $taskUuid)
             if ($task.progress_status -eq "Failed") 
             {#task failed
                 throw "$(get-date) [ERROR] Image $($image) import task failed. Exiting!"
@@ -454,6 +453,7 @@ $HistoryText = @'
                 $displayed_progress=$true
                 Start-Sleep -Seconds 5
             }
+            $task = (Get-NTNXTask -TaskId $taskUuid)
         } 
         if ($displayed_progress) {Write-Host}
         Write-Host "$(get-date) [SUCCESS] Image $($image) import task has $($task.progress_status)!" -ForegroundColor Cyan
