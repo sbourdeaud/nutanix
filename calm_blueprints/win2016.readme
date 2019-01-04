@@ -1,5 +1,5 @@
-#date: January 2nd 2019
-#blueprint version: 1.0
+#date: January 4th 2019
+#blueprint version: 1.1
 #Prism Central version: 5.10.0.1
 #Calm version: 2.5.0
 #Prism Element version: 5.10.0.2
@@ -8,12 +8,11 @@
 
 #Description:
 A Windows Server 2016 for AHV VM deployment blueprint with customizable options such as a static IP address and an Active Directory domain.
-It contains 3 application profiles for a small, medium or large VM.
 
 #Instructions:
 1. prepare a Windows Server 2016 virtual machine, run sysprep /generalize /shutdown
 2. add VM disk to image library, then add image to Prism Central library
-3. add the blueprint to Calm and update the image it is pointing to for each application profile (small,medium,large)
+3. add the blueprint to Calm and update the image it is pointing to
 4. decide which variables you want to be configurable at runtime and update the variables accordingly
 5. the Active Directory username and password variables must be updated in each application profile
 6. the local administrator password must be set in the credentials window of the blueprint
@@ -31,3 +30,15 @@ It contains 3 application profiles for a small, medium or large VM.
         primary_dns_server      : IPv4 address of the primary DNS server for the VM static IP configuration
         secondary_dns_server    : IPv4 address of the primary DNS server for the VM static IP configuration
         product_key             : Windows Server 2016 product key for activation
+
+#version history:
+    #1.0 (January 2nd 2019)
+        Initial release
+    #1.1 (January 4th 2019)
+        1. Updated the PerformanceSettings installation package of the Windows_Server VM to include:
+            - disabling of desktop background image
+            - disabling paging of the windows executive
+            - enabling of the max performance powerplan
+            - disabling a number of default scheduled tasks
+        2. Removed the small/medium application profiles and renamed large to default + removed cloned entries in service and task names
+        3. Changed "windows" credentials name to "windows_administrator" and updated the references in the unattend.xml of the Windows_Server service VM
