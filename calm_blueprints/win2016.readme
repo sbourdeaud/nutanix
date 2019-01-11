@@ -1,5 +1,5 @@
-#date: January 4th 2019
-#blueprint version: 1.1
+#date: January 11th 2019
+#blueprint version: 1.2
 #Prism Central version: 5.10.0.1
 #Calm version: 2.5.0
 #Prism Element version: 5.10.0.2
@@ -30,6 +30,10 @@ A Windows Server 2016 for AHV VM deployment blueprint with customizable options 
         primary_dns_server      : IPv4 address of the primary DNS server for the VM static IP configuration
         secondary_dns_server    : IPv4 address of the primary DNS server for the VM static IP configuration
         product_key             : Windows Server 2016 product key for activation
+        vm_hostname             : Hostname you want the VM to have. By default, the array index (0) will be added to the end of the hostname. You can change this by editing the service object at launch time.
+        org                     : Name of the organization registering Windows (used in unattend.xml)
+        owner                   : Name of the person registering Windows (used in unattend.xml)
+        timezone                : Windows timezone (used in unattend.xml; see https://docs.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-timezone for valid entries)
 
 #version history:
     #1.0 (January 2nd 2019)
@@ -42,3 +46,36 @@ A Windows Server 2016 for AHV VM deployment blueprint with customizable options 
             - disabling a number of default scheduled tasks
         2. Removed the small/medium application profiles and renamed large to default + removed cloned entries in service and task names
         3. Changed "windows" credentials name to "windows_administrator" and updated the references in the unattend.xml of the Windows_Server service VM
+    #1.2 (January 11th 2019)
+        1. Added the vm_hostname runtime variable to make it more intuitive to change the VM hostname at launch time.
+        2. Added the "Run Windows Update" custom action which runs Windows Update on the Windows_Server service (wip).
+        3. Added the "SecSettings" task to the Windows_Server VM service which disables TLS 1.0 and 1.1 clients.
+        4. Renamed tasks to indicate sequencing for the Windows_Server VM service.
+        5. Moved all install package tasks to the Windows_Server service "Create" action.
+        6. Added UnjoinDomain task in the "Delete" action of the Windows_Server service VM.
+        7. Added Powershell configuration tasks in the FirstLogon actions section of the unattend.xml of the Windows_Server service VM which:
+            a. Install the NuGet package
+            b. Set the Powershell Gallery repository as trusted
+            c. Install the PSWindowsUpdate module
+        8. Fixed a couple of issues with Terminal Services configuration component items in unattend.xml which would prevent it from being loaded correctly in Windows ADK System Image Manager.
+        9. Added a restart computer PoSH command to the Restart action for the Windows_Server service VM as by default the Restart service action does not do anything.
+        10. Added a chocolatey install custom action which installs the chocolatey.org package manager and a bunch of apps:
+            - updates powershell to 5.1
+            - installs Google Chrome web browser
+            - installs Adobe Flash Player browser plugin
+            - installs Notepad++
+            - installs 7zip
+            - installs jre8
+            - installs Adobe Acrobat Reader
+            - installs Microsoft Sysinternals utilities
+            - installs ConEmu console emulator
+            - installs Ditto (clipboard manager)
+            - installs Git (client)
+            - installs Putty
+            - installs GitHub (client)
+            - installs WinSCP
+        11. Added a Run Windows Update custom action which will schedule a Windows Update installation (with up to 3 reboots) in 2 minutes and email a report when done, provided the following variables are correctly populated at runtime:
+                a. smtp_server
+                b. smtp_port (default is 25)
+                c. wu_rpt_recipient (email address receiving the report)
+                d. wu_rpt_from (email address sending the report thru the smtp gateway)
