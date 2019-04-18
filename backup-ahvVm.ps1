@@ -842,13 +842,14 @@ add-type @"
             $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots"
             $method = "POST"
             $snapshotTask = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -body $body
+            Write-Host "$(get-date) [SUCCESS] Successfully requested snapshot creation for $vm..." -ForegroundColor Cyan
             Write-Host "$(get-date) [INFO] Retrieving status of snapshot $snapshotName ..." -ForegroundColor Green
             Do {
                 $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots/$($snapshotAllocatedId.uuid_list[0])"
                 $method = "GET"
                 $snapshotStatus = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
                 if ($debugme) {Write-Host -ForegroundColor Magenta "$(get-date) [DEBUG] snapshotStatus.status: $($snapshotStatus.status)"}
-                if ($snapshotStatus.status.state -eq "kError") {
+                if ($snapshotStatus.status.state -eq "ERROR") {
                     Write-Host "$(get-date) [ERROR] $($snapshotStatus.status.message_list.message)" -ForegroundColor Red
                     Exit
                 } elseIf ($snapshotStatus.status.state -eq "COMPLETE") {
