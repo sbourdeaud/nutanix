@@ -355,6 +355,8 @@ add-type @"
 	##  Main execution here       ##
 	################################
 
+    #region misc getting ready stuff
+
     #retrieving all AHV vm information
     Write-Host "$(get-date) [INFO] Retrieving list of VMs..." -ForegroundColor Green
     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
@@ -365,8 +367,14 @@ add-type @"
 
     if ($proxy) {$proxyUuid = ($vmList.entities | Where-Object {$_.name -eq $proxy}).uuid}
 
+    #endregion
+
+    #region diskDetachAll
     if ($diskDetachAll) {#detach all disks from the proxy if this is what was asked
         detach-disks -username $username -password $PrismSecurePassword -vm $proxy -uuid $proxyUuid -prism $cluster
+    #endregion
+    
+    #region restore
     #otherwise start normal processing
     } ElseIf ($restore) {#let's restore that vm
 
@@ -745,9 +753,12 @@ add-type @"
         #endregion
 
         }#end foreach vm
-
+    #endregion
+    
+    #region backup
     } Else {#let's backup that vm
 
+        #region get information about the cluster
         #getting info about the cluster networks
         Write-Host "$(get-date) [INFO] Retrieving the list of networks on $cluster..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
@@ -758,6 +769,7 @@ add-type @"
         #saving the cluster networks information
         Write-Host "$(get-date) [INFO] Saving $cluster networks information to $($backupPath)$($cluster)_networks.json..." -ForegroundColor Green
         $clusterNetworks | ConvertTo-Json -Depth 4 | Out-File -FilePath "$($backupPath)$($cluster)_networks.json"
+        #endregion
 
         Foreach ($vm in $vms) {
 
@@ -777,7 +789,8 @@ add-type @"
         $snapshotAllocatedId = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -body $body
         Write-Host "$(get-date) [SUCCESS] Successfully obtained a snapshot id allocation!" -ForegroundColor Cyan
         #endregion
-
+        
+        #region get info about the vm
         #figuring out the uuid for the vm and the proxy
         $vmUuid = ($vmList.entities | Where-Object {$_.name -eq $vm}).uuid
 
@@ -795,7 +808,9 @@ add-type @"
         #saving the source vm configuration information
         Write-Host "$(get-date) [INFO] Saving $vm configuration to $($backupPath)$($vm).json..." -ForegroundColor Green
         $vmConfig | ConvertTo-Json -Depth 4 | Out-File -FilePath "$($backupPath)$($vm).json"
-
+        #endregion
+        
+        #region snapDeleteAll
         #figure out if we are just deleting all snapshots
         if ($snapDeleteAll) {
             Write-Host "$(get-date) [INFO] Deleting all snapshots for vm $vm..." -ForegroundColor Green
@@ -817,7 +832,8 @@ add-type @"
                 Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
                 Write-Host "$(get-date) [SUCCESS] Successfully deleted snapshot $($snapshot.metadata.uuid)!" -ForegroundColor Cyan
             }
-
+        #endregion
+        
         #otherwise continue with normal processing
         } else {#we're not just deleting snapshots
 
@@ -842,9 +858,13 @@ add-type @"
             $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots"
             $method = "POST"
             $snapshotTask = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url -body $body
+            
             Write-Host "$(get-date) [SUCCESS] Successfully requested snapshot creation for $vm..." -ForegroundColor Cyan
+            Write-Host "$(get-date) [INFO] Waiting 60 seconds before retrieving status of snapshot $snapshotName ..." -ForegroundColor Green
+            Start-Sleep -Seconds 60
             Write-Host "$(get-date) [INFO] Retrieving status of snapshot $snapshotName ..." -ForegroundColor Green
-            Do {
+            
+            Do {#loop until the snapshot task is completed
                 $url = "https://$($cluster):9440/api/nutanix/v3/vm_snapshots/$($snapshotAllocatedId.uuid_list[0])"
                 $method = "GET"
                 $snapshotStatus = Get-PrismRESTCall -method $method -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -url $url
@@ -860,9 +880,11 @@ add-type @"
                 }
             } While ($snapshotStatus.status.state -ne "COMPLETE")
             #endregion
+            
             if ($debugme) {Write-Host -ForegroundColor Magenta "$(get-date) [DEBUG] snapshotStatus.status.snapshot_file_list: $($snapshotStatus.status.snapshot_file_list)"}
             #process with a proxy
             if ($proxy) {
+
                 #region attach disks to proxy
                 Write-Host "$(get-date) [INFO] Mounting the $vm snapshots on $proxy..." -ForegroundColor Green
                 #$snapshotFilePath = $snapshotStatus.status.snapshot_file_list.snapshot_file_path
@@ -922,6 +944,7 @@ add-type @"
                     if ($(hostname) -ne $proxy) {
                         Write-Host "$(get-date) [ERROR] $(hostname) is not the backup proxy $proxy. You must run this script on the proxy vm!" -ForegroundColor Red
                     } else {
+
                         #region preparing things in order to backup devices
                         #retrieve details about the proxy vm and its currently attached disks
                         Write-Host "$(get-date) [INFO] Retrieving list of attached disks on $proxy..." -ForegroundColor Green
@@ -962,6 +985,7 @@ add-type @"
                             }
                         }
                         #endregion
+
                     }
                 } else {
                     if ($env:COMPUTERNAME -ne $proxy)
@@ -979,7 +1003,7 @@ add-type @"
 
             }#endif proxy
 
-            #process without a proxy
+            #region process without a proxy
             if (!$proxy) {#this hasn't been implemented yet
                 #region restore disks
                 #we only want to restore disk objects from the snapshot, so let's examine the snapshot and determine which objects are attached disks
@@ -995,6 +1019,7 @@ add-type @"
                 #delete each restored disk in the restore folder from the container
                 #endregion
             }#endif not proxy
+            #endregion
 
         #region cleaning things up
         #now that we are done processing, delete the vm snapshot we created earlier
@@ -1016,6 +1041,8 @@ add-type @"
         #endregion
 
         }
+    #endregion
+
     }#endif else diskDetachAll
 
 #endregion
