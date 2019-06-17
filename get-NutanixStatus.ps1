@@ -151,9 +151,9 @@ if ((Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue) -e
     ############################################################################
 	# customize this section for your environment
 	############################################################################
-    $myvarEmailFrom = "stephane.bourdeaud@krollontrack.com"
-	$myvarSmtpServer = "koltsmtpr.ccp.edp.local"
-    $myvarEmailRecipients = "stephane.bourdeaud@nutanix.com"
+    $myvarEmailFrom = "john.doe@acme.com"
+	$myvarSmtpServer = "smtp.acme.com"
+    $myvarEmailRecipients = "jane.doe@acme.com"
 	
 	############################################################################
 	# command line arguments initialization
@@ -257,7 +257,7 @@ if ((Get-PSSnapin -Name NutanixCmdletsPSSnapin -ErrorAction SilentlyContinue) -e
     {
         #send that email
         OutputLogData -category "INFO" -message "Building the email content..."
-		$myvarEmailSubject = "Kroll Capacity Report " + $myvarReportTimeStamp
+		$myvarEmailSubject = "Acme Capacity Report " + $myvarReportTimeStamp
         
         $myvarhtml = "Container report is  attached in csv.  Copy and paste its content into the NTNX-CLusters tab in the master spreadsheet. Make sure the efficiency column is correctly formatted as numbers and if appropriate, replace the decimal spearator."
         $myvarEmailBody += "<br /><br />" + $myvarhtml
