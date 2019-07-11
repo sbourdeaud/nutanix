@@ -2,7 +2,9 @@
 .SYNOPSIS
   This script powers on virtual machines using the Prism Central v3 API in a specific sequence.
 .DESCRIPTION
-  The power on sequence is specified using labels/groups in Prism Central, or by specifying a reference file.  The script can also be used to do the inital tagging by using a reference csv file.
+  The power on sequence is specified using labels/groups in Prism Central, or by specifying a reference file.  
+  The script can also be used to do the inital tagging by using a reference csv file.
+  Only VMs specified or tagged with the specified labels will be powered on.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -21,8 +23,6 @@
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
 .PARAMETER labels
   By default, the script will use boot_priority_1, boot_priority_2 up to 5.  If you want to use different labels, you can use this parameter and specify the label names, in order, separated by commas.  VMs with no labels will be powered on last.
-.PARAMETER leaveOtherVmsOff
-  By default, the script will power on VMs which are not labeled or in the sequence file last. Using this parameter, you can choose to leave them powered off. 
 .PARAMETER delay
   By default, the script waits for 180 seconds (3 minutes) between each sequence. You can customize this delay in seconds by using this parameter.
 .PARAMETER sequence
@@ -44,7 +44,7 @@ Tag VMs listed in the specified csv file (csv file content is vm_name;integer): 
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: July 10th 2019
+  Revision: July 11th 2019
 #>
 
 #region parameters
@@ -60,7 +60,6 @@ Param
     [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] [string]$prismCreds,
     [parameter(mandatory = $false)] [array]$labels,
-    [parameter(mandatory = $false)] [switch]$leaveOtherVmsOff,
     [parameter(mandatory = $false)] [int]$delay,
     [parameter(mandatory = $false)] [string]$sequence,
     [parameter(mandatory = $false)] [string]$tag,
@@ -252,6 +251,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 07/10/2019 sb   Initial release.
+07/11/2019 sb   First tested version. Missing -sequence still (wip).
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-PcVmPowerOnSequence.ps1"
@@ -355,6 +355,7 @@ if (!$delay) {$delay = 180}
 if (!$labels) {$labels = @("boot_priority_1","boot_priority_2","boot_priority_3","boot_priority_4","boot_priority_5")}
 
 #if a custom sequence file was specified, let's make sure the file can be read
+if ($sequence) {Write-Host "$(Get-Date) [ERROR] This function has not been implemented yet, sorry..." -ForegroundColor Red; Exit 1}
 if ($sequence) {
     Write-Host "$(Get-Date) [INFO] Reading file $($sequence)..." -ForegroundColor Green
     try {        
@@ -777,7 +778,7 @@ if (!$tag) {
             } else {
                 $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
             }
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved the list of VMs with label $($tag)" -ForegroundColor Cyan
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved the list of VMs with label $($tag_entry)" -ForegroundColor Cyan
             ForEach ($result in $resp.group_results[0].entity_results) {
                 if (($result.data | Where-Object -Property name -eq "power_state").values.values -eq "on") {
                     Write-Host "$(Get-Date) [WARN] Virtual machine $(($result.data | Where-Object -Property name -eq "vm_name").values.values) is already powered on" -ForegroundColor Yellow
@@ -841,13 +842,15 @@ if (!$tag) {
                 if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Cluster $($vm.cluster_name) uuid is $($cluster_uuid)" -ForegroundColor White}
                 
                 #build json payload
-                $content = [ordered]@{
-                    generic_dto=@{
-                        transition="on";
-                        uuid=$vm.uuid
-                    };
-                    cluster_uuid = $cluster_uuid
-                }
+                $content = @(
+                    @{
+                        generic_dto=@{
+                            transition="on";
+                            uuid=$vm.uuid
+                        };
+                        cluster_uuid = $cluster_uuid
+                    }
+                )
                 $payload = (ConvertTo-Json $content -Depth 4)
                 if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Payload: $($payload)" -ForegroundColor White}
                 #endregion
