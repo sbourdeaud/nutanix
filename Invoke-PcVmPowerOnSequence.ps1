@@ -307,6 +307,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
 #prepare our overall VM results variable
 [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
+[System.Collections.ArrayList]$cluster_list = New-Object System.Collections.ArrayList($null)
 $cluster_exists = $false
 $length=100 #this specifies how many entities we want in the results of each API query
 $api_server_port = "9440"
@@ -406,7 +407,6 @@ $headers = @{
 
 #* get clusters (results stored in $cluster_list)
 #region get clusters
-if ($cluster) {#a specific cluster was specified, so we need to make sure it exists in Prism Central before we do anything else
     #region prepare api call
     $api_server_endpoint = "/api/nutanix/v3/clusters/list"
     $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
@@ -429,22 +429,21 @@ if ($cluster) {#a specific cluster was specified, so we need to make sure it exi
         try {
             #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
             if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $cluster_list = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
             } else {
-                $cluster_list = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
             }
             
-            if ($resp.metadata.offset) {$offset = $cluster_list.metadata.offset} else {$offset = 0}
-            Write-Host "$(Get-Date) [INFO] Processing results from $($offset) to $($offset + $cluster_list.metadata.length)" -ForegroundColor Green
-            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($cluster_list.metadata | ConvertTo-Json)" -ForegroundColor White}
+            if ($resp.metadata.offset) {$offset = $resp.metadata.offset} else {$offset = 0}
+            Write-Host "$(Get-Date) [INFO] Processing results from $($offset) to $($offset + $resp.metadata.length)" -ForegroundColor Green
+            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
 
-            #grab the information we need in each entity
-            ForEach ($entity in $cluster_list.entities) {
-                #grab the uuid of the specified cluster
-                if ($entity.spec.name -eq $cluster) {
-                    $cluster_exists = $true
-                    break
+            ForEach ($entity in $resp.entities) {
+                $myvarClusterInfo = [ordered]@{
+                    "name" = $entity.status.name;
+                    "uuid" = $entity.metadata.uuid
                 }
+                $cluster_list.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
             }
 
             #prepare the json payload for the next batch of entities/response
@@ -468,6 +467,17 @@ if ($cluster) {#a specific cluster was specified, so we need to make sure it exi
         }
     }
     While ($cluster_list.metadata.length -eq $length)
+    #endregion
+
+if ($cluster) {#a specific cluster was specified, so we need to make sure it exists in Prism Central before we do anything else
+    
+    ForEach ($entity in $cluster_list) {
+        #grab the uuid of the specified cluster
+        if ($entity.spec.name -eq $cluster) {
+            $cluster_exists = $true
+            break
+        }
+    }
 
     if (!$cluster_exists) {
         Write-Host "$(Get-Date) [ERROR] There is no cluster named $($cluster) on Prism Central $($prismcentral)" -ForegroundColor Red
@@ -732,10 +742,10 @@ if (!$tag) {
 
     #region make the api call
     [System.Collections.ArrayList]$poweron_list = New-Object System.Collections.ArrayList($null)
-    ForEach ($tag in $labels) {
-        $tag_uuid = ($tag_uuids | Where-Object -Property name -Eq $tag).uuid
+    ForEach ($tag_entry in $labels) {
+        $tag_uuid = ($tag_uuids | Where-Object -Property name -Eq $tag_entry).uuid
         if (!$tag_uuid) {
-            Write-Host "$(Get-Date) [WARN] Could not find uuid for tag $($tag) in Prism Central $($prismcentral)" -ForegroundColor Yellow
+            Write-Host "$(Get-Date) [WARN] Could not find uuid for tag $($tag_entry) in Prism Central $($prismcentral)" -ForegroundColor Yellow
             Continue
         }
 
@@ -776,7 +786,7 @@ if (!$tag) {
                 $myvarVmInfo = [ordered]@{
                     "name" = ($result.data | Where-Object -Property name -eq "vm_name").values.values;
                     "uuid" = $result.entity_id;
-                    "tag" = $tag;
+                    "tag" = $tag_entry;
                     "cluster_name" = ($result.data | Where-Object -Property name -eq "cluster_name").values.values;
                 }
                 $poweron_list.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
@@ -801,23 +811,64 @@ if (!$tag) {
 
 #* power on vms
 #region power on
+if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Tag: $($tag)" -ForegroundColor White}
 if (!$tag) {
+    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Sequence: $($sequence)" -ForegroundColor White}
     if ($sequence) {
         #TODO: based on sequence csv reference file
     } else {
-        #TODO: based on labels
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Labels: $($labels)" -ForegroundColor White}
         ForEach ($label in $labels) {
             Write-Host "$(Get-Date) [INFO] Powering on virtual machines labeled with $($label)" -ForegroundColor Green
-            $vmlist = $poweron_list | Where-Object -Property tag -Eq $label
-            ForEach ($vm in $VmList) {
+            $vm_list = $poweron_list | Where-Object -Property tag -Eq $label
+            if (!$vm_list) {
+                Write-Host "$(Get-Date) [WARN] No Vms to process with label $($label)!" -ForegroundColor Yellow
+                Continue 
+            }
+
+            ForEach ($vm in $vm_list) {
+                Write-Host "$(Get-Date) [INFO] Powering on virtual machine $($vm.name)" -ForegroundColor Green
                 #region prepare api call
                 $api_server_endpoint = "/api/nutanix/v0.8/vms/set_power_state/fanout"
                 $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
                 $method = "POST"
-                $cluster_uuid = ($cluster_list.entities | Where-Object -Property status.name -Eq $vm.cluster_name).metadata.uuid
+                
+                $cluster_uuid = ($cluster_list | Where-Object -Property name -Eq $vm.cluster_name).uuid
+                if (!$cluster_uuid) {
+                    Write-Host "$(Get-Date) [WARN] Could not get uuid of the cluster $($vm.cluster_name) for vm $($vm.name). Skipping this VM!" -ForegroundColor Yellow
+                    Continue
+                }
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Cluster $($vm.cluster_name) uuid is $($cluster_uuid)" -ForegroundColor White}
+                
+                #build json payload
+                $content = [ordered]@{
+                    generic_dto=@{
+                        transition="on";
+                        uuid=$vm.uuid
+                    };
+                    cluster_uuid = $cluster_uuid
+                }
+                $payload = (ConvertTo-Json $content -Depth 4)
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Payload: $($payload)" -ForegroundColor White}
                 #endregion
 
                 #region make api call
+                Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+                try {
+                    #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
+                    if ($PSVersionTable.PSVersion.Major -gt 5) {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                    } else {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                    }
+                    Write-Host "$(Get-Date) [SUCCESS] Successfully sent power on request for VM $($vm.name). Task uuid is $($resp.taskUuid)" -ForegroundColor Cyan
+                }
+                catch {
+                    $saved_error = $_.Exception.Message
+                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                    Throw "$(get-date) [ERROR] $saved_error"
+                }
                 #endregion
             }
             Write-Host "$(Get-Date) [INFO] Waiting $($delay) seconds before processing the next group..." -ForegroundColor Green
