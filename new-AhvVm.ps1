@@ -421,12 +421,8 @@ Do {
 }
 While ($resp.metadata.length -eq $length)
 
-if ($debugme) {
-    Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
-    $myvarResults
-}
 if (!$cluster_uuid) {
-    Write-Host "$(Get-Date) [ERROR] There is no cluster named $($cluster) on Prism Central ($prismcentral)" -ForegroundColor Red
+    Write-Host "$(Get-Date) [ERROR] There is no cluster named $($cluster) on Prism Central $($prismcentral)" -ForegroundColor Red
     Exit 1
 } else {
     Write-Host "$(Get-Date) [SUCCESS] Cluster $($cluster) has uuid $($cluster_uuid)" -ForegroundColor Cyan
