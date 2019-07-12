@@ -828,6 +828,7 @@ if (!$tag) {
                 $count++
                 Continue
             }
+            $vms_processed = 0
             ForEach ($vm in $vms_to_process) {
                 #determine if the vm is already powered on and if it is, skip ahead to the next vm
                 $vm_details = $myvarVmResults | Where-Object -Property name -eq $vm.name
@@ -877,6 +878,7 @@ if (!$tag) {
                         $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
                     }
                     Write-Host "$(Get-Date) [SUCCESS] Successfully sent power on request for VM $($vm.name). Task uuid is $($resp.taskUuid)" -ForegroundColor Cyan
+                    $vms_processed++
                 }
                 catch {
                     $saved_error = $_.Exception.Message
@@ -886,8 +888,10 @@ if (!$tag) {
                 }
                 #endregion
             }
-            Write-Host "$(Get-Date) [INFO] Waiting $($delay) seconds before processing the next group..." -ForegroundColor Green
-            Start-Sleep $delay
+            if ($vms_processed -ge 1) {
+                Write-Host "$(Get-Date) [INFO] Waiting $($delay) seconds before processing the next group..." -ForegroundColor Green
+                Start-Sleep $delay
+            }
             $count++
         }
     } else {
@@ -901,7 +905,7 @@ if (!$tag) {
                 Write-Host "$(Get-Date) [WARN] No Vms to process with label $($label)!" -ForegroundColor Yellow
                 Continue 
             }
-
+            $vms_processed = 0
             ForEach ($vm in $vm_list) {#process each applicable vm
                 Write-Host "$(Get-Date) [INFO] Powering on virtual machine $($vm.name)" -ForegroundColor Green
                 #region prepare api call
@@ -941,6 +945,7 @@ if (!$tag) {
                         $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
                     }
                     Write-Host "$(Get-Date) [SUCCESS] Successfully sent power on request for VM $($vm.name). Task uuid is $($resp.taskUuid)" -ForegroundColor Cyan
+                    $vms_processed++
                 }
                 catch {
                     $saved_error = $_.Exception.Message
@@ -950,8 +955,10 @@ if (!$tag) {
                 }
                 #endregion
             }
-            Write-Host "$(Get-Date) [INFO] Waiting $($delay) seconds before processing the next group..." -ForegroundColor Green
-            Start-Sleep $delay
+            if ($vms_processed -ge 1) {
+                Write-Host "$(Get-Date) [INFO] Waiting $($delay) seconds before processing the next group..." -ForegroundColor Green
+                Start-Sleep $delay
+            }
         }
     }
 }
