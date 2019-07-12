@@ -67,6 +67,8 @@ Param
 )
 #endregion
 
+#TODO: enhance the script to check on power on task status after a batch has been processed
+#TODO: add an option to interrupt power on operations when a vm has not successfully powered on (will continue by default)
 
 #region functions
 
@@ -823,6 +825,7 @@ if (!$tag) {
             $vms_to_process = $sequenceRef | Where-Object -Property boot_priority -eq $count
             if (!$vms_to_process) {
                 Write-Host "$(Get-Date) [WARN] No Vms to process in boot sequence number $($count)!" -ForegroundColor Yellow
+                $count++
                 Continue
             }
             ForEach ($vm in $vms_to_process) {
