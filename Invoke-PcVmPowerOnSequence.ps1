@@ -22,7 +22,7 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
 .PARAMETER labels
-  By default, the script will use boot_priority_1, boot_priority_2 up to 5.  If you want to use different labels, you can use this parameter and specify the label names, in order, separated by commas.  VMs with no labels will be powered on last.
+  By default, the script will use boot_priority_1, boot_priority_2 up to 5.  If you want to use different labels, you can use this parameter and specify the label names, in order, separated by commas.  VMs with no labels will remain untouched.
 .PARAMETER delay
   By default, the script waits for 180 seconds (3 minutes) between each sequence. You can customize this delay in seconds by using this parameter.
 .PARAMETER sequence
@@ -33,7 +33,7 @@
   Limit processing VMs to the specified cluster.
 .EXAMPLE
 .\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -username myuser -password mypassword
-Power on all VMs in the specified Prism Central based on their labels: boot_priority_1 labelled Vms will power on first, then boot_priority_2 labelled Vms, etc... up to boot_priority_5 labelled VMs.  All remaining Vms (with no label) will then be powered on.  The script will wait 180 seconds between each group/sequence of VMs.
+Power on all VMs in the specified Prism Central based on their labels: boot_priority_1 labelled Vms will power on first, then boot_priority_2 labelled Vms, etc... up to boot_priority_5 labelled VMs.  All remaining Vms (with no label) will remain untouched.  The script will wait 180 seconds between each group/sequence of VMs.
 .EXAMPLE
 .\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -username myuser -password mypassword -labels group1,group2 -delay 60 -leaveOtherVmsOff
 Power on VMs labeled group1 and group2 in the specified order. All other Vms will remain untouched.  The script will wait 60 seconds between each group/sequence of VMs.
@@ -44,7 +44,7 @@ Tag VMs listed in the specified csv file (csv file content is vm_name;integer): 
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: July 11th 2019
+  Revision: July 12th 2019
 #>
 
 #region parameters
@@ -252,6 +252,7 @@ Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 07/10/2019 sb   Initial release.
 07/11/2019 sb   First tested version. Missing -sequence still (wip).
+07/12/2019 sb   Implementing -sequence
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-PcVmPowerOnSequence.ps1"
@@ -355,7 +356,6 @@ if (!$delay) {$delay = 180}
 if (!$labels) {$labels = @("boot_priority_1","boot_priority_2","boot_priority_3","boot_priority_4","boot_priority_5")}
 
 #if a custom sequence file was specified, let's make sure the file can be read
-if ($sequence) {Write-Host "$(Get-Date) [ERROR] This function has not been implemented yet, sorry..." -ForegroundColor Red; Exit 1}
 if ($sequence) {
     Write-Host "$(Get-Date) [INFO] Reading file $($sequence)..." -ForegroundColor Green
     try {        
@@ -367,7 +367,7 @@ if ($sequence) {
         Write-Host "$(Get-Date) [ERROR] Could not read file $($sequence)" -ForegroundColor Red
         Throw "$(get-date) [ERROR] $saved_error"
     }
-    if ((($sequenceRef | Get-member -MemberType 'NoteProperty' | Select-Object -ExpandProperty 'Name') -contains "boot_priority") -and (($sequenceRef | Get-member -MemberType 'NoteProperty' | Select-Object -ExpandProperty 'Name') -contains "vm")) {
+    if ((($sequenceRef | Get-member -MemberType 'NoteProperty' | Select-Object -ExpandProperty 'Name') -contains "boot_priority") -and (($sequenceRef | Get-member -MemberType 'NoteProperty' | Select-Object -ExpandProperty 'Name') -contains "name")) {
         Write-Host "$(Get-Date) [INFO] $($sequence) content is valid" -ForegroundColor Green
     } else {
         Write-Host "$(Get-Date) [ERROR] $($sequence) content is invalid. Make sure it contains the following headers: 'vm' and 'boot_priority'" -ForegroundColor Red
@@ -470,8 +470,7 @@ $headers = @{
     While ($cluster_list.metadata.length -eq $length)
     #endregion
 
-if ($cluster) {#a specific cluster was specified, so we need to make sure it exists in Prism Central before we do anything else
-    
+if ($cluster) {#a specific cluster was specified, so we need to make sure it exists in Prism Central before we do anything else 
     ForEach ($entity in $cluster_list) {
         #grab the uuid of the specified cluster
         if ($entity.spec.name -eq $cluster) {
@@ -486,8 +485,6 @@ if ($cluster) {#a specific cluster was specified, so we need to make sure it exi
     } else {
         Write-Host "$(Get-Date) [SUCCESS] Cluster $($cluster) found on Prism Central $($prismcentral)" -ForegroundColor Cyan
     }
-    #endregion
-
 }
 #endregion
 
@@ -575,6 +572,7 @@ if ($cluster) {#a specific cluster was specified, so we need to make sure it exi
 
 #* get existing tags (results stored in $pc_tags)
 #region get tags
+if (!$sequence) {
     #region prepare api call
     $api_server_endpoint = "/PrismGateway/services/rest/v1/tags"
     $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
@@ -598,6 +596,7 @@ if ($cluster) {#a specific cluster was specified, so we need to make sure it exi
             Throw "$(get-date) [ERROR] $saved_error"
         }
     #endregion
+}
 #endregion
 
 #* -tag
@@ -720,7 +719,7 @@ if ($tag) {
 
 #* get groups/labels (results stored in $poweron_list)
 #region get groups/labels
-if (!$tag) {
+if ((!$tag) -and (!$sequence)) {
     #region prepare api call
     $api_server_endpoint = "/api/nutanix/v3/groups"
     $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
@@ -781,7 +780,7 @@ if (!$tag) {
             Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved the list of VMs with label $($tag_entry)" -ForegroundColor Cyan
             ForEach ($result in $resp.group_results[0].entity_results) {
                 if (($result.data | Where-Object -Property name -eq "power_state").values.values -eq "on") {
-                    Write-Host "$(Get-Date) [WARN] Virtual machine $(($result.data | Where-Object -Property name -eq "vm_name").values.values) is already powered on" -ForegroundColor Yellow
+                    Write-Host "$(Get-Date) [WARN] Virtual machine $(($result.data | Where-Object -Property name -eq "vm_name").values.values) is already powered on!" -ForegroundColor Yellow
                     Continue
                 }
                 $myvarVmInfo = [ordered]@{
@@ -816,26 +815,100 @@ if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Tag: $($tag)" -ForegroundColor Wh
 if (!$tag) {
     if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Sequence: $($sequence)" -ForegroundColor White}
     if ($sequence) {
-        #TODO: based on sequence csv reference file
+        #process boot sequences from 1 to 5
+        $count = 1
+        While ($count -le 5) {
+            Write-Host "$(Get-Date) [STEP] Processing boot sequence number $($count)" -ForegroundColor Magenta
+            #process each vm with the same sequence number
+            $vms_to_process = $sequenceRef | Where-Object -Property boot_priority -eq $count
+            if (!$vms_to_process) {
+                Write-Host "$(Get-Date) [WARN] No Vms to process in boot sequence number $($count)!" -ForegroundColor Yellow
+                Continue
+            }
+            ForEach ($vm in $vms_to_process) {
+                #determine if the vm is already powered on and if it is, skip ahead to the next vm
+                $vm_details = $myvarVmResults | Where-Object -Property name -eq $vm.name
+                if (!$vm_details) {
+                    Write-Host "$(Get-Date) [WARN] Could not find VM $($vm.name)!" -ForegroundColor Yellow
+                    Continue
+                }
+                if ($vm_details.power_state -eq "ON") {
+                    Write-Host "$(Get-Date) [WARN] Virtual machine $($vm.name) is already powered on!" -ForegroundColor Yellow
+                    Continue
+                }
+                
+                #region prepare the api call
+                $api_server_endpoint = "/api/nutanix/v0.8/vms/set_power_state/fanout"
+                $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+                $method = "POST"
+
+                #determine the cluster uuid for the vm to power on
+                $cluster_uuid = ($cluster_list | Where-Object -Property name -Eq $vm_details.cluster).uuid
+                if (!$cluster_uuid) {#couldn't figure out the cluster uuid, so let's skip to the next vm
+                    Write-Host "$(Get-Date) [WARN] Could not get uuid of the cluster $($vm_details.cluster) for vm $($vm.name). Skipping this VM!" -ForegroundColor Yellow
+                    Continue
+                }
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Cluster $($vm_details.cluster) uuid is $($cluster_uuid)" -ForegroundColor White}
+
+                #build json payload
+                $content = @(
+                    @{
+                        generic_dto=@{
+                            transition="on";
+                            uuid=$vm_details.uuid
+                        };
+                        cluster_uuid = $cluster_uuid
+                    }
+                )
+                $payload = (ConvertTo-Json $content -Depth 4)
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Payload: $($payload)" -ForegroundColor White}
+                #endregion
+
+                #region make the api call
+                Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+                try {
+                    #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
+                    if ($PSVersionTable.PSVersion.Major -gt 5) {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                    } else {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                    }
+                    Write-Host "$(Get-Date) [SUCCESS] Successfully sent power on request for VM $($vm.name). Task uuid is $($resp.taskUuid)" -ForegroundColor Cyan
+                }
+                catch {
+                    $saved_error = $_.Exception.Message
+                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                    Throw "$(get-date) [ERROR] $saved_error"
+                }
+                #endregion
+            }
+            Write-Host "$(Get-Date) [INFO] Waiting $($delay) seconds before processing the next group..." -ForegroundColor Green
+            Start-Sleep $delay
+            $count++
+        }
     } else {
         if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Labels: $($labels)" -ForegroundColor White}
+        #process each label
         ForEach ($label in $labels) {
-            Write-Host "$(Get-Date) [INFO] Powering on virtual machines labeled with $($label)" -ForegroundColor Green
+            Write-Host "$(Get-Date) [STEP] Powering on virtual machines labeled with $($label)" -ForegroundColor Magenta
+            #find applicable vms with that label
             $vm_list = $poweron_list | Where-Object -Property tag -Eq $label
-            if (!$vm_list) {
+            if (!$vm_list) {#no applicable vm was found, so let's skip ahead to the next label
                 Write-Host "$(Get-Date) [WARN] No Vms to process with label $($label)!" -ForegroundColor Yellow
                 Continue 
             }
 
-            ForEach ($vm in $vm_list) {
+            ForEach ($vm in $vm_list) {#process each applicable vm
                 Write-Host "$(Get-Date) [INFO] Powering on virtual machine $($vm.name)" -ForegroundColor Green
                 #region prepare api call
                 $api_server_endpoint = "/api/nutanix/v0.8/vms/set_power_state/fanout"
                 $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
                 $method = "POST"
                 
+                #figure out the cluster uuid for that vm
                 $cluster_uuid = ($cluster_list | Where-Object -Property name -Eq $vm.cluster_name).uuid
-                if (!$cluster_uuid) {
+                if (!$cluster_uuid) {#couldn't figure out the cluster uuid, so let's skip to the next vm
                     Write-Host "$(Get-Date) [WARN] Could not get uuid of the cluster $($vm.cluster_name) for vm $($vm.name). Skipping this VM!" -ForegroundColor Yellow
                     Continue
                 }
