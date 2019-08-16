@@ -707,9 +707,20 @@ add-type @"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
+        try 
+        {
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        catch 
+        {
+            $credname = Read-Host "Enter the credentials name"
+            Set-CustomCredentials -credname $credname
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
     }
 #endregion
 
