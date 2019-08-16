@@ -638,7 +638,7 @@ $HistoryText = @'
 
     #region C5 - get ready to use the Nutanix REST API
 #Accept self signed certs
-if (!$IsLinux) {
+if ((!$IsLinux) -or ($PSVersionTable.PSVersion.Major -lt 6)) {
 add-type @"
     using System.Net;
     using System.Security.Cryptography.X509Certificates;
