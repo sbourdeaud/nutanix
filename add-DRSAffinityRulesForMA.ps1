@@ -1022,8 +1022,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
         }
         catch 
         {
-            $credname = Read-Host "Enter the credentials name"
-            Set-CustomCredentials -credname $credname
+            Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
             $username = $prismCredentials.UserName
             $PrismSecurePassword = $prismCredentials.Password
