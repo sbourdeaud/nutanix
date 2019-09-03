@@ -975,12 +975,6 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
         $myvarvCenterServers = @() #used to store the list of all the vCenter servers we must connect to
         $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
         $myvarOutputLogFile += "OutputLog.log"
-
-        #* CUSTOMIZATION: if you want to edit the object names, check out the section below
-        $myvarNutanixCluster_1_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster1
-        $myvarNutanixCluster_2_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster2
-        #! for vm group names, search for multiple instances of $myvarDRSVMGroupName =
-        #! for DRS rule names, search for multiple instances of $myvarDRSRuleName =
     #endregion
 
 #endregion
@@ -1035,6 +1029,12 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $PrismSecurePassword = $prismCredentials.Password
         }
     }
+
+    #* CUSTOMIZATION: if you want to edit the object names, check out the section below
+    $myvarNutanixCluster_1_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster1
+    $myvarNutanixCluster_2_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster2
+    #! for vm group names, search for multiple instances of $myvarDRSVMGroupName =
+    #! for DRS rule names, search for multiple instances of $myvarDRSRuleName =
 #endregion
 
 #region E - processing
