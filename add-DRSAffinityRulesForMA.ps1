@@ -1038,12 +1038,13 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 #endregion
 
 #region E - processing
+    #region Prism Element
 	#building a variable containing the Nutanix cluster names
 	$myvarNutanixClusters = @($ntnx_cluster1,$ntnx_cluster2)
 	#initialize variables we'll need to store information about the Nutanix clusters
 	$myvarNtnxC1_hosts, $myvarNtnxC2_hosts, $myvarNtnxC1_MaActiveCtrs, $myvarNtnxC2_MaActiveCtrs = @()
 	$myvarCounter = 1 #we use this to store results differently for cluster 1 and 2
-	
+    
 	foreach ($myvarNutanixCluster in $myvarNutanixClusters)
 	{#connect to each Nutanix cluster to figure out the info we need
 		if ($myvarCounter -eq 1) 
@@ -1111,12 +1112,15 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 
 		#increment the counter
 		++$myvarCounter
-	}#end foreach Nutanix cluster loop
+    }#end foreach Nutanix cluster loop
+    #endregion
 
+    #region vCenter
     $result = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue #making sure we are not already connected to a vCenter server
     
 	foreach ($myvarvCenter in $myvarvCenterServers)
-	{#connect to vcenter now
+    {#connect to vcenter now
+        #region connect
 		OutputLogData -category "INFO" -message "Connecting to vCenter server $myvarvCenter..."
 		if (!($myvarvCenterObject = Connect-VIServer $myvarvCenter))
 		{#make sure we can connect to the vCenter server
@@ -1127,8 +1131,10 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 		else 
 		{#...otherwise show the error message
 			OutputLogData -category "INFO" -message "Connected to vCenter server $myvarvCenter."
-		}#endelse
+        }#endelse
+        #endregion
 
+        #region process
 		if ($myvarvCenterObject)
 		{#process vcenter
 
@@ -1401,11 +1407,12 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 
             #endregion
 
-
 		}#endif
         OutputLogData -category "INFO" -message "Disconnecting from vCenter server $vcenter..."
-		Disconnect-viserver -Confirm:$False #cleanup after ourselves and disconnect from vcenter
-	}#end foreach vCenter
+        Disconnect-viserver -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+        #endregion
+    }#end foreach vCenter
+    #endregion
 #endregion
 
 #region F - cleanup
