@@ -176,19 +176,19 @@ Function Invoke-PrismRESTCall
                 {
                     $exception = $_.Exception.Message
                     $message = $_.ErrorDetails.Message
-			        Write-LogOutput -category "ERROR" -message "$exception $message"
+			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
                     try 
                     {
                         $RESTError = Get-RESTError -ErrorAction Stop
                         $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
                         if ($RESTErrorMessage) 
                         {
-                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
                         }
                     }
                     catch 
                     {
-                        Write-LogOutput -category "ERROR" -message "Could not retrieve full REST error details."
+                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
                     }
 			        Exit
 		        }
@@ -210,19 +210,19 @@ Function Invoke-PrismRESTCall
                 {
 			        $exception = $_.Exception.Message
                     $message = $_.ErrorDetails.Message
-			        Write-LogOutput -category "ERROR" -message "$exception $message"
+			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
                     try 
                     {
                         $RESTError = Get-RESTError -ErrorAction Stop
                         $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
                         if ($RESTErrorMessage) 
                         {
-                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
                         }
                     }
                     catch 
                     {
-                        Write-LogOutput -category "ERROR" -message "Could not retrieve additional REST error details."
+                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
                     }
 			        Exit
 		        }
@@ -247,19 +247,19 @@ Function Invoke-PrismRESTCall
                 {
 			        $exception = $_.Exception.Message
                     $message = $_.ErrorDetails.Message
-			        Write-LogOutput -category "ERROR" -message "$exception $message"
+			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
                     try 
                     {
                         $RESTError = Get-RESTError -ErrorAction Stop
                         $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
                         if ($RESTErrorMessage) 
                         {
-                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
                         }
                     }
                     catch 
                     {
-                        Write-LogOutput -category "ERROR" -message "Could not retrieve additional REST error details."
+                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
                     }
 			        Exit
 		        }
@@ -281,19 +281,19 @@ Function Invoke-PrismRESTCall
                 {
 			        $exception = $_.Exception.Message
                     $message = $_.ErrorDetails.Message
-			        Write-LogOutput -category "ERROR" -message "$exception $message"
+			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
                     try 
                     {
                         $RESTError = Get-RESTError -ErrorAction Stop
                         $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
                         if ($RESTErrorMessage) 
                         {
-                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
                         }
                     }
                     catch 
                     {
-                        Write-LogOutput -category "ERROR" -message "Could not retrieve additional REST error details."
+                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
                     }
 			        Exit
 		        }
