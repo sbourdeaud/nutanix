@@ -1029,12 +1029,6 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $PrismSecurePassword = $prismCredentials.Password
         }
     }
-
-    #* CUSTOMIZATION: if you want to edit the object names, check out the section below
-    $myvarNutanixCluster_1_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster1
-    $myvarNutanixCluster_2_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster2
-    #! for vm group names, search for multiple instances of $myvarDRSVMGroupName =
-    #! for DRS rule names, search for multiple instances of $myvarDRSRuleName =
 #endregion
 
 #region E - processing
@@ -1048,8 +1042,21 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 	foreach ($myvarNutanixCluster in $myvarNutanixClusters)
 	{#connect to each Nutanix cluster to figure out the info we need
 		if ($myvarCounter -eq 1) 
-		{#we're processing data from cluster 1
-            
+		{#we're processing data from cluster 1    
+            Write-Host "$(get-date) [INFO] Retrieving cluster information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
+            $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/cluster/"
+            $method = "GET"
+            try 
+            {
+                $myvarNTNXCluster1Info = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            }
+            catch
+            {
+                throw "$(get-date) [ERROR] Could not retrieve cluster information from Nutanix cluster $myvarNutanixCluster : $($_.Exception.Message)"
+            }
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
+            $myvarNTNXCluster1Name = $myvarNTNXCluster1Info.name
+
             Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
             $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/hosts/"
             $method = "GET"
@@ -1080,6 +1087,19 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 		}
 		if ($myvarCounter -eq 2) 
 		{#we're processing data from cluster 2
+            Write-Host "$(get-date) [INFO] Retrieving cluster information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
+            $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/cluster/"
+            $method = "GET"
+            try 
+            {
+                $myvarNTNXCluster2Info = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            }
+            catch
+            {
+                throw "$(get-date) [ERROR] Could not retrieve cluster information from Nutanix cluster $myvarNutanixCluster : $($_.Exception.Message)"
+            }
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
+            $myvarNTNXCluster2Name = $myvarNTNXCluster2Info.name
 
             Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
             $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/hosts/"
@@ -1118,6 +1138,27 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
     #region vCenter
     $result = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue #making sure we are not already connected to a vCenter server
     
+    #* CUSTOMIZATION: if you want to edit the object names, check out the section below
+    if ($myvarNTNXCluster1Name)
+    {
+        $myvarNutanixCluster_1_HostGroupName = "DRS_HG_MA_" + $myvarNTNXCluster1Name
+    }
+    else 
+    {
+        $myvarNutanixCluster_1_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster1
+    }
+    
+    if ($myvarNTNXCluster2Name)
+    {
+        $myvarNutanixCluster_2_HostGroupName = "DRS_HG_MA_" + $myvarNTNXCluster2Name
+    }
+    else 
+    {
+        $myvarNutanixCluster_2_HostGroupName = "DRS_HG_MA_" + $ntnx_cluster2
+    }
+    #! for vm group names, search for multiple instances of $myvarDRSVMGroupName =
+    #! for DRS rule names, search for multiple instances of $myvarDRSRuleName =
+
 	foreach ($myvarvCenter in $myvarvCenterServers)
     {#connect to vcenter now
         #region connect
