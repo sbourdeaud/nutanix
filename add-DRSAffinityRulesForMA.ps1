@@ -32,7 +32,7 @@
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: July 18th 2018
+  Revision: September 3rd 2019
 #>
 
 #region A - parameters
@@ -855,6 +855,8 @@ $HistoryText = @'
  07/17/2018 sb   Added check for PoSH version and removed silentlycontinue as
                  default for erroractionpreference
  10/26/2018 sb   Added additional error control.
+ 09/03/2019 sb   Added yet additional error control.  Removed dependencies on
+                 sbourdeaud and BetterTls modules.
 ################################################################################
 '@
         $myvarScriptName = ".\add-DRSAffinityRulesForMA.ps1"
