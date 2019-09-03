@@ -107,6 +107,378 @@ Function OutputLogData
     }
 }#end function OutputLogData
 
+#this function is used to connect to Prism REST API
+Function Invoke-PrismRESTCall
+{
+	#input: username, password, url, method, body
+	#output: REST response
+<#
+.SYNOPSIS
+  Connects to Nutanix Prism REST API.
+.DESCRIPTION
+  This function is used to connect to Prism REST API.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER username
+  Specifies the Prism username.
+.PARAMETER password
+  Specifies the Prism password.
+.PARAMETER url
+  Specifies the Prism url.
+.EXAMPLE
+  PS> PrismRESTCall -username admin -password admin -url https://10.10.10.10:9440/PrismGateway/services/rest/v1/ 
+#>
+	param
+	(
+		[string] 
+        $username,
+		
+        [string] 
+        $password,
+        
+        [string] 
+        $url,
+        
+        [string] 
+        [ValidateSet('GET','PATCH','PUT','POST','DELETE')]
+        $method,
+        
+        $body
+	)
+
+    begin
+    {
+	 	#Setup authentication header for REST call
+        $myvarHeader = @{"Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+$password ))}   
+    }
+
+    process
+    {
+        if ($body) 
+        {
+            $myvarHeader += @{"Accept"="application/json"}
+		    $myvarHeader += @{"Content-Type"="application/json"}
+            
+            if ($IsLinux -or $IsMacOS) 
+            {
+                try 
+                {
+                    if ($PSVersionTable.PSVersion.Major -ge 6) 
+                    {
+			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                    } 
+                    else 
+                    {
+                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -SkipCertificateCheck -ErrorAction Stop
+                    }
+		        }
+                catch 
+                {
+                    $exception = $_.Exception.Message
+                    $message = $_.ErrorDetails.Message
+			        Write-LogOutput -category "ERROR" -message "$exception $message"
+                    try 
+                    {
+                        $RESTError = Get-RESTError -ErrorAction Stop
+                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
+                        if ($RESTErrorMessage) 
+                        {
+                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                        }
+                    }
+                    catch 
+                    {
+                        Write-LogOutput -category "ERROR" -message "Could not retrieve full REST error details."
+                    }
+			        Exit
+		        }
+            }
+            else 
+            {
+                try 
+                {
+                    if ($PSVersionTable.PSVersion.Major -ge 6) 
+                    {
+			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                    } 
+                    else 
+                    {
+                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -ErrorAction Stop
+                    }
+		        }
+                catch 
+                {
+			        $exception = $_.Exception.Message
+                    $message = $_.ErrorDetails.Message
+			        Write-LogOutput -category "ERROR" -message "$exception $message"
+                    try 
+                    {
+                        $RESTError = Get-RESTError -ErrorAction Stop
+                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
+                        if ($RESTErrorMessage) 
+                        {
+                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                        }
+                    }
+                    catch 
+                    {
+                        Write-LogOutput -category "ERROR" -message "Could not retrieve additional REST error details."
+                    }
+			        Exit
+		        }
+            }
+        } 
+        else 
+        {
+            if ($IsLinux -or $IsMacOS) 
+            {
+                try 
+                {
+			        if ($PSVersionTable.PSVersion.Major -ge 6) 
+                    {
+			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                    } 
+                    else 
+                    {
+                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -ErrorAction Stop
+                    }
+		        }
+                catch 
+                {
+			        $exception = $_.Exception.Message
+                    $message = $_.ErrorDetails.Message
+			        Write-LogOutput -category "ERROR" -message "$exception $message"
+                    try 
+                    {
+                        $RESTError = Get-RESTError -ErrorAction Stop
+                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
+                        if ($RESTErrorMessage) 
+                        {
+                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                        }
+                    }
+                    catch 
+                    {
+                        Write-LogOutput -category "ERROR" -message "Could not retrieve additional REST error details."
+                    }
+			        Exit
+		        }
+            }
+            else 
+            {
+                try 
+                {
+			        if ($PSVersionTable.PSVersion.Major -ge 6) 
+                    {
+			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                    } 
+                    else 
+                    {
+                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -ErrorAction Stop
+                    }
+		        }
+                catch 
+                {
+			        $exception = $_.Exception.Message
+                    $message = $_.ErrorDetails.Message
+			        Write-LogOutput -category "ERROR" -message "$exception $message"
+                    try 
+                    {
+                        $RESTError = Get-RESTError -ErrorAction Stop
+                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
+                        if ($RESTErrorMessage) 
+                        {
+                            Write-LogOutput -category "ERROR" -message "$RESTErrorMessage"
+                        }
+                    }
+                    catch 
+                    {
+                        Write-LogOutput -category "ERROR" -message "Could not retrieve additional REST error details."
+                    }
+			        Exit
+		        }
+            }
+        }
+    }
+
+    end
+    {
+        return $myvarRESTOutput
+    }
+}#end function Get-PrismRESTCall
+
+#Function Get-RESTError
+Function Get-RESTError 
+{
+    $global:helpme = $body
+    $global:helpmoref = $moref
+    $global:result = $_.Exception.Response.GetResponseStream()
+    $global:reader = New-Object System.IO.StreamReader($global:result)
+    $global:responseBody = $global:reader.ReadToEnd();
+
+    return $global:responsebody
+
+    break
+}#end function Get-RESTError
+
+#this function is used to create saved credentials for the current user
+Function Set-CustomCredentials 
+{
+#input: path, credname
+	#output: saved credentials file
+<#
+.SYNOPSIS
+  Creates a saved credential file using DAPI for the current user on the local machine.
+.DESCRIPTION
+  This function is used to create a saved credential file using DAPI for the current user on the local machine.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
+Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
+#>
+	param
+	(
+		[parameter(mandatory = $false)]
+        [string] 
+        $path,
+		
+        [parameter(mandatory = $true)]
+        [string] 
+        $credname
+	)
+
+    begin
+    {
+        if (!$path)
+        {
+            $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
+        } 
+    }
+    process
+    {
+        #prompt for credentials
+        $credentialsFilePath = "$path\$credname.txt"
+		$credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+		
+		#put details in hashed format
+		$user = $credentials.UserName
+		$securePassword = $credentials.Password
+        
+        #convert secureString to text
+        try 
+        {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        #create directory to store creds if it does not already exist
+        if(!(Test-Path $path))
+		{
+            try 
+            {
+                $result = New-Item -type Directory $path -ErrorAction Stop
+            } 
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+            }
+		}
+
+        #save creds to file
+        try 
+        {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        } 
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try 
+        {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        } 
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
+    }
+    end
+    {}
+}
+
+#this function is used to retrieve saved credentials for the current user
+Function Get-CustomCredentials 
+{
+#input: path, credname
+	#output: credential object
+<#
+.SYNOPSIS
+  Retrieves saved credential file using DAPI for the current user on the local machine.
+.DESCRIPTION
+  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+#>
+	param
+	(
+        [parameter(mandatory = $false)]
+		[string] 
+        $path,
+		
+        [parameter(mandatory = $true)]
+        [string] 
+        $credname
+	)
+
+    begin
+    {
+        if (!$path)
+        {
+            $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+    }
+    process
+    {
+        $credentialsFilePath = "$path\$credname.txt"
+        if(!(Test-Path $credentialsFilePath))
+	    {
+            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+		$user = $credFile[0]
+		$securePassword = $credFile[1] | ConvertTo-SecureString
+
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
+    }
+    end
+    {
+        return $customCredentials
+    }
+}
+
+
 #this function is used to create a DRS host group
 Function New-DrsHostGroup
 {
@@ -507,87 +879,6 @@ $HistoryText = @'
     #check if we have all the required PoSH modules
     Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
 
-    #region C2 - module BetterTls
-        if (!(Get-Module -Name BetterTls)) {
-            Write-Host "$(get-date) [INFO] Importing module 'BetterTls'..." -ForegroundColor Green
-            try
-            {
-                Import-Module -Name BetterTls -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'BetterTls'!" -ForegroundColor Cyan
-            }#end try
-            catch #we couldn't import the module, so let's install it
-            {
-                Write-Host "$(get-date) [INFO] Installing module 'BetterTls' from the Powershell Gallery..." -ForegroundColor Green
-                try {Install-Module -Name BetterTls -Scope CurrentUser -ErrorAction Stop}
-                catch {throw "$(get-date) [ERROR] Could not install module 'BetterTls': $($_.Exception.Message)"}
-
-                try
-                {
-                    Import-Module -Name BetterTls -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] Imported module 'BetterTls'!" -ForegroundColor Cyan
-                }#end try
-                catch #we couldn't import the module
-                {
-                    Write-Host "$(get-date) [ERROR] Unable to import the module BetterTls : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/BetterTls/0.1.0.0" -ForegroundColor Yellow
-                    Exit
-                }#end catch
-            }#end catch
-        }
-        Write-Host "$(get-date) [INFO] Disabling Tls..." -ForegroundColor Green
-        try {Disable-Tls -Tls -Confirm:$false -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not disable Tls : $($_.Exception.Message)"}
-        Write-Host "$(get-date) [INFO] Enabling Tls 1.2..." -ForegroundColor Green
-        try {Enable-Tls -Tls12 -Confirm:$false -ErrorAction Stop} catch {throw "$(get-date) [ERROR] Could not enable Tls 1.2 : $($_.Exception.Message)"}
-    #endregion
-
-    #region C3 - module sbourdeaud is used for facilitating Prism REST calls
-        if (!(Get-Module -Name sbourdeaud)) 
-        {#module sbourdeaud is not loaded...
-            Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-            try
-            {#importing module sbourdeaud
-                Import-Module -Name sbourdeaud -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-            }#end try
-            catch 
-            {#we couldn't import the module, so let's install it
-                Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-                try 
-                {#installing module sbourdeaud for the current user
-                    Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-                }
-                catch 
-                {#couldn't install module sbourdeaud
-                    throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"
-                }
-
-                try
-                {#trying again to import module sbourdeaud
-                    Import-Module -Name sbourdeaud -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-                }#end try
-                catch 
-                {#we couldn't import the module
-                    Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud" -ForegroundColor Yellow
-                    Exit
-                }#end catch
-            }#end catch
-        }#endif module sbourdeaud
-        if (((Get-Module -Name sbourdeaud).Version.Major -le 1) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 1)) 
-        {#check the version of module sbourdeaud
-            Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-            try 
-            {#updating module sbourdeaud
-                Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-            }
-            catch 
-            {#we couldn't update module sbourdeaud
-                throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"
-            }
-        }
-    #endregion
-
     #region C4 - Load/Install VMware.PowerCLI
         if (!(Get-Module VMware.PowerCLI)) 
         {#module VMware.PowerCLI is not loaded
@@ -637,24 +928,44 @@ $HistoryText = @'
     #endregion
 
     #region C5 - get ready to use the Nutanix REST API
-#Accept self signed certs
-if ((!$IsLinux) -or ($PSVersionTable.PSVersion.Major -lt 6)) {
-add-type @"
+# ignore SSL warnings
+Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+    $certCallback = @"
+    using System;
     using System.Net;
+    using System.Net.Security;
     using System.Security.Cryptography.X509Certificates;
-    public class TrustAllCertsPolicy : ICertificatePolicy {
-        public bool CheckValidationResult(
-            ServicePoint srvPoint, X509Certificate certificate,
-            WebRequest request, int certificateProblem) {
-            return true;
+    public class ServerCertificateValidationCallback
+    {
+        public static void Ignore()
+        {
+            if(ServicePointManager.ServerCertificateValidationCallback ==null)
+            {
+                ServicePointManager.ServerCertificateValidationCallback += 
+                    delegate
+                    (
+                        Object obj, 
+                        X509Certificate certificate, 
+                        X509Chain chain, 
+                        SslPolicyErrors errors
+                    )
+                    {
+                        return true;
+                    };
+            }
         }
     }
 "@
-#we also need to use the proper encryption protocols
-[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-[Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls12"
-[Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    Add-Type $certCallback
 }
+[ServerCertificateValidationCallback]::Ignore()
+
+# add Tls12 support
+Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+[Net.ServicePointManager]::SecurityProtocol = `
+    ([Net.ServicePointManager]::SecurityProtocol -bor `
+    [Net.SecurityProtocolType]::Tls12)
     #endregion
 
     #region C6 - set some runtime variables
@@ -739,14 +1050,28 @@ add-type @"
             Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
             $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/hosts/"
             $method = "GET"
-            $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            try 
+            {
+                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            }
+            catch
+            {
+                throw "$(get-date) [ERROR] Could not retrieve hosts information from Nutanix cluster $myvarNutanixCluster : $($_.Exception.Message)"
+            }
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
             $myvarNtnxC1_hosts = ($NTNXHosts.entities).hypervisor_address
 
             Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
             $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
-            $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            try 
+            {
+                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            }
+            catch
+            {
+                throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $myvarNutanixCluster : $($_.Exception.Message)"
+            }
             $myvarNtnxC1_MaActiveCtrs = ($myvarMaActivePDs.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
 		}
@@ -756,14 +1081,28 @@ add-type @"
             Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
             $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/hosts/"
             $method = "GET"
-            $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            try
+            {
+                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            }
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not retrieve hosts information from Nutanix cluster $myvarNutanixCluster : $($_.Exception.Message)"
+            }
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
             $myvarNtnxC2_hosts = ($NTNXHosts.entities).hypervisor_address
 
             Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $myvarNutanixCluster ..." -ForegroundColor Green
             $url = "https://$($myvarNutanixCluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
-            $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            try 
+            {
+                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            }
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $myvarNutanixCluster : $($_.Exception.Message)"
+            }
             $myvarNtnxC2_MaActiveCtrs = ($myvarMaActivePDs.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $myvarNutanixCluster" -ForegroundColor Cyan
         }
