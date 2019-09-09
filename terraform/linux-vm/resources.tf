@@ -9,8 +9,8 @@
 #endregion
 
 #region data
-    data "nutanix_subnet" "ipam" {
-        subnet_name = "${var.nutanix_ipam_subnet}"
+    data "nutanix_subnet" "ahv_network" {
+        subnet_name = "${var.nutanix_network}"
     }
     data "nutanix_image" "image" {
         image_name = "${var.nutanix_image}"
@@ -46,7 +46,7 @@
         cluster_uuid = "${data.nutanix_cluster.cluster.id}"
 
         nic_list {
-            subnet_uuid = "${data.nutanix_subnet.ipam.id}"
+            subnet_uuid = "${data.nutanix_subnet.ahv_network.id}"
         }
 
         disk_list {

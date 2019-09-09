@@ -15,7 +15,7 @@
     variable nutanix_image {
         default = "CentOS_7_Cloud"
     }
-    variable nutanix_ipam_subnet {}
+    variable nutanix_network {}
 #endregion
 
 #region vm configuration
