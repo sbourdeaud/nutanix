@@ -407,7 +407,14 @@ Create a new image called _template-windows2016 in the image library of AHV clus
         {
             if (!$path)
             {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                if ($IsLinux -or $IsMacOS) 
+                {
+                    $path = $home
+                }
+                else 
+                {
+                    $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                }
                 Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
             } 
         }
@@ -503,9 +510,16 @@ Create a new image called _template-windows2016 in the image library of AHV clus
         {
             if (!$path)
             {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                if ($IsLinux -or $IsMacOS) 
+                {
+                    $path = $home
+                }
+                else 
+                {
+                    $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                }
                 Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-            }
+            } 
         }
         process
         {
@@ -528,6 +542,7 @@ Create a new image called _template-windows2016 in the image library of AHV clus
             return $customCredentials
         }
     }
+
 #endregion
 
 #region prepwork
