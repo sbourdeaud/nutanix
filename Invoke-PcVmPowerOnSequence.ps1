@@ -1,16 +1,21 @@
 <#
 .SYNOPSIS
-  This script powers on virtual machines using the Prism Central v3 API in a specific sequence.
+  This script powers on virtual machines using the Prism Central v3 API in a 
+  specific sequence.
 .DESCRIPTION
-  The power on sequence is specified using labels/groups in Prism Central, or by specifying a reference file.  
-  The script can also be used to do the inital tagging by using a reference csv file.
+  The power on sequence is specified using labels/groups in Prism Central, or 
+  by specifying a reference file.  
+  The script can also be used to do the inital tagging by using a reference 
+  csv file.
   Only VMs specified or tagged with the specified labels will be powered on.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
-  Displays a release history for this script (provided the editors were smart enough to document this...)
+  Displays a release history for this script (provided the editors were smart 
+  enough to document this...)
 .PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
+  Specifies that you want the output messages to be written in a log file as 
+  well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prismcentral
@@ -20,15 +25,26 @@
 .PARAMETER password
   Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
+  Specifies a custom credentials file name (will look for 
+  %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on 
+  Windows or in $home/$prismCreds.txt on Mac and Linux).
 .PARAMETER labels
-  By default, the script will use boot_priority_1, boot_priority_2 up to 5.  If you want to use different labels, you can use this parameter and specify the label names, in order, separated by commas.  VMs with no labels will remain untouched.
+  By default, the script will use boot_priority_1, boot_priority_2 up to 5.  
+  If you want to use different labels, you can use this parameter and specify 
+  the label names, in order, separated by commas.  VMs with no labels will 
+  remain untouched.
 .PARAMETER delay
-  By default, the script waits for 180 seconds (3 minutes) between each sequence. You can customize this delay in seconds by using this parameter.
+  By default, the script waits for 180 seconds (3 minutes) between each 
+  sequence. You can customize this delay in seconds by using this parameter.
 .PARAMETER sequence
-  By default, the script will use labels to determine the power on sequence.  If -sequence is used, you can specify a reference csv file name which contains the vm name followed by an integer (1,2,3, etc...) to determine the sequence yourself.
+  By default, the script will use labels to determine the power on sequence.  
+  If -sequence is used, you can specify a reference csv file name which 
+  contains the vm name followed by an integer (1,2,3, etc...) to determine the 
+  sequence yourself.
 .PARAMETER tag
-  Use this parameter, followed by a csv file name (with name[string], boot_priority[int]) to tag initially your vms. It will label them with boot_priority_1, 2 up to 5 based on that csv file content.
+  Use this parameter, followed by a csv file name (with name[string], 
+  boot_priority[int]) to tag initially your vms. It will label them with 
+  boot_priority_1, 2 up to 5 based on that csv file content.
 .PARAMETER cluster
   Limit processing VMs to the specified cluster.
 .EXAMPLE

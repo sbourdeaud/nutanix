@@ -26,8 +26,8 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
 .EXAMPLE
-  Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
-  PS> .\add-DRSAffinityRulesForMA.ps1 -ntnx_cluster1 ntnxc1.local -ntnx_cluster2 ntnxc2.local -username admin -password nutanix/4u -vcenter vcenter1.local
+.\add-DRSAffinityRulesForMA.ps1 -ntnx_cluster1 ntnxc1.local -ntnx_cluster2 ntnxc2.local -username admin -password nutanix/4u -vcenter vcenter1.local
+Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
 .LINK
   http://www.nutanix.com/services
 .NOTES
