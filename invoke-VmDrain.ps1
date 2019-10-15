@@ -115,6 +115,10 @@ Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -For
     }
 #endregion
 
+if ((Get-PowerCLIConfiguration | where-object {$_.Scope -eq "User"}).InvalidCertificateAction -ne "Ignore") {
+    Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -confirm:$false
+}
+
 #endregion
 
 #! customize this section
