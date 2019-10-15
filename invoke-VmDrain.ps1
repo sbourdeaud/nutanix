@@ -247,8 +247,14 @@ if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the vmhost 
             catch {throw "$(get-date) [ERROR] Could not find host $vmhost in vCenter server $myvarvCenter : $($_.Exception.Message)"}
 
             #* get the list of vms running on that host and exclude the cvm
-            if (!($myvar_vms = $myvar_vmhostObject | get-vm | where-object {$_.Name -notlike "NTNX-*-CVM"})) {
-                throw "$(get-date) [ERROR] Could not retrieve the list of VMs on host $vmhost (or there are no VMs except the CVM)"
+            try {
+                $myvar_vms = $myvar_vmhostObject | get-vm -ErrorAction Stop | where-object {$_.Name -notlike "NTNX-*-CVM"}
+            }
+            catch {
+                throw "$(get-date) [ERROR] Could not retrieve the list of VMs on host $vmhost : $($_.Exception.Message)"
+            }
+            if ($myvar_vms.length -eq 0) {
+                throw "$(get-date) [ERROR] There are no VMs except the CVM on host $vmhost"
             }
 
             #* vmotion loop
