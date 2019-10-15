@@ -242,9 +242,9 @@ if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the vmhost 
             try {
                 Write-Host "$(get-date) [INFO] Checking hosts $vmhost exists in vCenter $myvarvCenter..." -ForegroundColor Green
                 $myvar_vmhostObject = Get-VMHost $vmhost -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Connected to vCenter server $myvarvCenter" -ForegroundColor Cyan
+                Write-Host "$(get-date) [SUCCESS] Found host $vmhost in $myvarvCenter" -ForegroundColor Cyan
             }
-            catch {throw "$(get-date) [ERROR] Could not connect to vCenter server $myvarvCenter : $($_.Exception.Message)"}
+            catch {throw "$(get-date) [ERROR] Could not find host $vmhost in vCenter server $myvarvCenter : $($_.Exception.Message)"}
 
             #* get the list of vms running on that host and exclude the cvm
             if (!($myvar_vms = $myvar_vmhostObject | get-vm | where-object {$_.Name -notlike "NTNX-*-CVM"})) {
@@ -284,8 +284,13 @@ if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the vmhost 
 
                     Write-Host "$(get-date) [INFO] Moving vm $($vm.Name) to host $($target_host)" -ForegroundColor Green
                     if (!$debugme) {
-                        $result = Move-Vm -VM $vm -Destination $target_host -confirm:$false -RunAsync:$false -ErrorAction Stop
-                        Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) has moved to host $($target_host)" -ForegroundColor Cyan
+                        try {
+                            $result = Move-Vm -VM $vm -Destination $target_host -confirm:$false -RunAsync:$false -ErrorAction Stop
+                            Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) has moved to host $($target_host)" -ForegroundColor Cyan
+                        }
+                        catch {
+                            Write-Host "$(get-date) [WARNING] Could not move vm $($vm.Name) to host $($myvar_vmhosts[$index]) : $($_.Exception.Message)" -ForegroundColor Yellow
+                        }
                     }
                 }
                 catch {
