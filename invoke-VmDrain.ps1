@@ -140,6 +140,7 @@ if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the vmhost 
 #endregion
 
 #region processing
+    #region balance
     if ($balance) {
         if ($balance -eq 1) {
             $myvar_vmhosts = $myvar_host_group_01
@@ -219,6 +220,8 @@ if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the vmhost 
             Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
         }#end foreach vCenter        
     }
+    #endregion
+    #region drain
     else {
         #* check the specified host belongs to a defined host group
         if ($myvar_host_group_01 -contains $vmhost) {
@@ -312,6 +315,7 @@ if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the vmhost 
             Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
         }#end foreach vCenter
     }
+    #endregion
 #endregion
 
 #region cleanup
