@@ -1,49 +1,45 @@
 <#
 .SYNOPSIS
-  This script can be used to add or remove an AHV network to a specified AHV vswitch.
+  This script can be used to manage alerts in Prism Central (get, acknowledge and resolve).
 .DESCRIPTION
-  Given a Nutanix cluster, a network name, a vlan ID, a description and a virtual switch, add or remove the AHV network using Prism Element REST API.
+  Given a Prism Central IP or FQDN, get, acknowledge or resolve alerts.
 .PARAMETER prism
-  IP address or FQDN of Prism Element.
+  IP address or FQDN of Prism Central.
 .PARAMETER username
   Prism Central username.
 .PARAMETER password
   Prism Central username password.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
-.PARAMETER network
-  Name of the network to add.
-.PARAMETER id
-  VLAN id of the network.
-.PARAMETER description
-  Description of the network.
-.PARAMETER vswitch
-  Name of the AHV virtual switch where the network should be added (exp: br1).
-.PARAMETER uuid
-  Uuid of the AHV network you want to remove (use -get to figure that out if needed). This is an alternative way to specify the network you want to remove when the name matches multiple instances.
-.PARAMETER add
-  Adds the specified network.
-.PARAMETER remove
-  Removes the specified network.
 .PARAMETER get
-  Retrieves and displays the specified network. (wip)
+  Get active alerts.
+.PARAMETER acknowledge
+  Acknowledges the alert specified by -uuid or all alerts. You can also filter using -severity.
+.PARAMETER resolve
+  Resolves the alert specified by -uuid or all alerts. You can also filter using -severity.
+.PARAMETER severity
+  Filter alerts for get by severity.
+.PARAMETER uuid
+  Uuid of the alert to acknowledge or resolve.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
 .PARAMETER log
   Specifies that you want the output messages to be written in a log file as well as on the screen.
+.PARAMETER csv
+  Name of csv file to export to. By default results are only printed to the default output.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .EXAMPLE
-.\add-AhvNetwork.ps1 -prism 10.10.10.1 -prismCreds myuser -network mynetwork -id 100 -description "This is my network" -vswitch br1 -add
-Adds the network mynetwork with vlan id 100 to the AHV br1 virtual switch on cluster 10.10.10.1.
+.\get-ntnxAlerts.ps1 -prism 10.10.10.1 -prismCreds myuser -get -severity Critical
+Get all critical alerts which are neither acknowledged nor resolved from Prism Central 10.10.10.1.
 .LINK
   http://www.nutanix.com/services
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: January 15th 2020
+  Revision: January 17th 2020
 #>
 
 #region Parameters
@@ -58,14 +54,12 @@ Param
     [parameter(mandatory = $false)] [string]$username,
     [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $prismCreds,
-    [parameter(mandatory = $false)] [string]$network,
-    [parameter(mandatory = $false)] [Int32]$vlanid,
-    [parameter(mandatory = $false)] [string]$description,
-    [parameter(mandatory = $false)] [string]$vswitch,
-    [parameter(mandatory = $false)] [string]$uuid,
     [parameter(mandatory = $false)] [switch]$get,
-    [parameter(mandatory = $false)] [switch]$add,
-    [parameter(mandatory = $false)] [switch]$remove
+    [parameter(mandatory = $false)] [string]$uuid,
+    [parameter(mandatory = $false)] [switch]$acknowledge,
+    [parameter(mandatory = $false)] [switch]$resolve,
+    [parameter(mandatory = $false)] [ValidateSet("critical","warning","info")][string]$severity,
+    [parameter(mandatory = $false)] [string]$csv
 )
 #endregion
 
@@ -307,13 +301,9 @@ $myvarOutputLogFile += "OutputLog.log"
 # command line arguments initialization
 ############################################################################	
 #let's initialize parameters if they haven't been specified
-if ((!$add) -and !($remove) -and !($get)) {throw "You must specify either get, add or remove!"}
-if ($add -and $remove) {throw "You must specify either add or remove but not both!"}
+if ((!$get) -and !($acknowledge) -and !($resolve)) {throw "You must specify either get, acknowledge or resolve!"}
+if ($acknowledge -and $resolve) {throw "You must specify either acknowledge or resolve but not both!"}
 if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism Central"}
-if (!$network) {$network = read-host "Enter the network name"}
-if ((!$get) -and (!$vlanid)) {$vlanid = read-host "Enter the vlan id"}
-if ($add -and (!$description)) {$description = read-host "Enter a description for the network"}
-if ((!$get) -and (!$vswitch)) {$vswitch = read-host "Enter the name of the AHV virtual switch (br0, br1, ...)"}
 if (!$prismCreds) {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
     if (!$username) 
     {#if Prism username has not been specified ask for it
@@ -345,49 +335,97 @@ else { #we are using custom credentials, so let's grab the username and password
         $PrismSecurePassword = $prismCredentials.Password
     }
 }
+
+[System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
 #endregion
 
 #region processing
 
-    #! -add
-    #region -add
-    if ($add) {
+    #! -get
+    #region -get
+    if ($get) {
         #region prepare api call
         $api_server = $prism
         $api_server_port = "9440"
-        $api_server_endpoint = "/PrismGateway/services/rest/v2.0/networks/"
+        $api_server_endpoint = "/api/nutanix/v3/alerts/list"
         $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
             $api_server_endpoint
         $method = "POST"
+        $length = 500
         $headers = @{
             "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
             "Content-Type"="application/json";
             "Accept"="application/json"
         }
+        $filter = "resolved!=true"
+        if ($severity) {$filter += ";severity==$($severity)"}
         $content = @{
-            annotation= $description;
-            name= $network;
-            vlan_id= $vlanid;
-            vswitch_name= $vswitch
+            kind= "alert";
+            length= $length;
+            filter= $filter
         }
         $payload = (ConvertTo-Json $content -Depth 4)
         #endregion
 
+        #todo process multiple pages
         #region make the api call
-        Write-Host "$(Get-Date) [INFO] Adding network $network with vlan id $vlanid to vswitch $vswitch on $prism..." -ForegroundColor Green
+        Write-Host "$(Get-Date) [INFO] Getting alerts from $prism..." -ForegroundColor Green
         try {
-        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
-        } else {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-        }
-        Write-Host "$(Get-Date) [SUCCESS] Successfully added network $network with vlan id $vlanid to vswitch $vswitch on $prism" -ForegroundColor Cyan
+            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            }
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved alerts from $prism" -ForegroundColor Cyan
+            if ($resp -is [string]) {
+                $alerts = $resp | ConvertFrom-Json -AsHashTable -Depth 20
+            } else {
+                $alerts = $resp
+            }
+            if ($alerts.entities.count -eq 0) {
+                Write-Host "$(get-date) [WARNING] There are no active alerts of the specified type." -ForegroundColor Yellow
+            } else {
+                Write-Host "$(Get-Date) [INFO] Processing results..." -ForegroundColor Green
+                ForEach ($alert in $alerts.entities) {
+                    #substituting parameter values in the default message (as this varies for every alert)
+                    $alert_message = $alert.status.resources.default_message
+                    if ($resp -is [string]) {
+                        $alert.status.resources.default_message | Select-String -Pattern "{(.*?)}" -AllMatches | % {$_.Matches} | % {$alert_message = $alert_message -replace $_.Groups[0].Value,$alert.status.resources.parameters.$($_.Groups[1].Value).Values}
+                    } else {
+                        $alert.status.resources.default_message | Select-String -Pattern "{(.*?)}" -AllMatches | % {$_.Matches} | % {$alert_message = $alert_message -replace $_.Groups[0].Value,$alert.status.resources.parameters.$($_.Groups[1].Value).$((Get-Member -InputObject $alert.status.resources.parameters.$($_.Groups[1].Value) -MemberType NoteProperty).Name)}
+                    }
+                    
+                    #populating the details we want to capture for each alert
+                    $myvarAlert = [ordered]@{
+                        "type" = $alert.status.resources.type;
+                        "acknowledged" = $alert.status.resources.acknowledged_status.is_true;
+                        "latest_occurrence_time" = $alert.status.resources.latest_occurrence_time;
+                        "severity"= $alert.status.resources.severity;
+                        "creation_time"= $alert.status.resources.creation_time;
+                        "title"= $alert.status.resources.title;
+                        "alert_message"= $alert_message;
+                        #"default_message"= $alert.status.resources.default_message;
+                        #"parameters"= $alert.status.resources.parameters;
+                        "source_entity_type"= $alert.status.resources.source_entity.entity.type;
+                        "source_entity_name"= $alert.status.resources.source_entity.entity.name;
+                        "uuid"= $alert.metadata.uuid
+                    }
+                    #adding the captured details to the final result
+                    $myvarResults.Add((New-Object PSObject -Property $myvarAlert)) | Out-Null
+                }
+                if ($csv) {
+                    Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
+                    $myvarResults | export-csv -NoTypeInformation $csv
+                } else {
+                    $myvarResults | Sort-Object -Property latest_occurrence_time
+                }
+            }
         }
         catch {
-        $saved_error = $_.Exception.Message
-        throw "$(get-date) [ERROR] $saved_error"
+            $saved_error = $_.Exception.Message
+            throw "$(get-date) [ERROR] $saved_error"
         }
         finally {
         }
@@ -395,139 +433,94 @@ else { #we are using custom credentials, so let's grab the username and password
     }
     #endregion
 
-    #! -remove
-    #region -remove
-    if ($remove) {
-        #region get network uuid
-            #region prepare api call
-            $api_server = $prism
-            $api_server_port = "9440"
-            $api_server_endpoint = "/PrismGateway/services/rest/v2.0/networks/" -f $network_uuid
-            $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-                $api_server_endpoint
-            $method = "GET"
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            #endregion
-
-            #region make the api call
-            Write-Host "$(Get-Date) [INFO] Getting details of network $network with vlan id $vlanid on vswitch $vswitch from $prism..." -ForegroundColor Green
-            try {
-                Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-                #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-                if ($PSVersionTable.PSVersion.Major -gt 5) {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
-                } else {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
-                }
-                Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved details of network $network with vlan id $vlanid on vswitch $vswitch from $prism" -ForegroundColor Cyan
-                if (!$uuid) {
-                    $network_uuid = ($resp.entities | Where-Object {$_.name -eq $network} | Where-Object {$_.vswitch_name -eq $vswitch} | Where-Object {$_.vlan_id -eq $vlanid}).uuid
-                    if (!$network_uuid) {
-                        Write-Host "$(Get-Date) [ERROR] Could not find network $network on vswitch $vswitch on $prism!" -ForegroundColor Red
-                        exit
-                    }
-                    if ($network_uuid -is [array]) {
-                        Write-Host "$(Get-Date) [ERROR] There are multiple instances of network $network on vswitch $vswitch on $prism!" -ForegroundColor Red
-                        exit
-                    }
-                } else {$network_uuid = $uuid}
-            }
-            catch {
-                $saved_error = $_.Exception.Message
-                throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally {
-            }
-            #endregion
+    #! -acknowledge
+    #region -acknowledge
+    if ($acknowledge) {
+        #region prepare api call
+        $api_server = $prism
+        $api_server_port = "9440"
+        $api_server_endpoint = "/api/nutanix/v3/alerts/action/ACKNOWLEDGE"
+        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+            $api_server_endpoint
+        $method = "POST"
+        $length = 500
+        $headers = @{
+            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
+            "Content-Type"="application/json";
+            "Accept"="application/json"
+        }
+        $filter = "resolved!=true"
+        if ($severity) {$filter += ";severity==$($severity)"}
+        $content = @{
+            alert_uuid_list= @($uuid)
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
         #endregion
-        #region delete network
-            #region prepare api call
-            $api_server = $prism
-            $api_server_port = "9440"
-            $api_server_endpoint = "/PrismGateway/services/rest/v2.0/networks/{0}" -f $network_uuid
-            $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-                $api_server_endpoint
-            $method = "DELETE"
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            #endregion
 
-            #region make the api call
-            Write-Host "$(Get-Date) [INFO] Deleting network $network with vlan id $vlanid to vswitch $vswitch on $prism..." -ForegroundColor Green
-            try {
+        #region make the api call
+        Write-Host "$(Get-Date) [INFO] Acknowledging alert $uuid in $prism..." -ForegroundColor Green
+        try {
             Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
             #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
             if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
             } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
             }
-            Write-Host "$(Get-Date) [SUCCESS] Successfully deleted network $network with vlan id $vlanid to vswitch $vswitch on $prism" -ForegroundColor Cyan
-            }
-            catch {
+            Write-Host "$(Get-Date) [SUCCESS] Successfully triggered acknowledgement of alert $uuid in $prism" -ForegroundColor Cyan
+        }
+        catch {
             $saved_error = $_.Exception.Message
             throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally {
-            }
-            #endregion
+        }
+        finally {
+        }
         #endregion
     }
     #endregion
 
-    #! -get
-    #region -get
-    if ($get) {
-        #region get network details
-            #region prepare api call
-            $api_server = $prism
-            $api_server_port = "9440"
-            $api_server_endpoint = "/PrismGateway/services/rest/v2.0/networks/" -f $network_uuid
-            $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-                $api_server_endpoint
-            $method = "GET"
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            #endregion
+    #! -resolve
+    #region -resolve
+    if ($resolve) {
+        #region prepare api call
+        $api_server = $prism
+        $api_server_port = "9440"
+        $api_server_endpoint = "/api/nutanix/v3/alerts/action/RESOLVE"
+        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+            $api_server_endpoint
+        $method = "POST"
+        $length = 500
+        $headers = @{
+            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
+            "Content-Type"="application/json";
+            "Accept"="application/json"
+        }
+        $filter = "resolved!=true"
+        if ($severity) {$filter += ";severity==$($severity)"}
+        $content = @{
+            alert_uuid_list= @($uuid)
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
 
-            #region make the api call
-            Write-Host "$(Get-Date) [INFO] Getting details of network $network with vlan id $vlanid on vswitch $vswitch from $prism..." -ForegroundColor Green
-            try {
+        #region make the api call
+        Write-Host "$(Get-Date) [INFO] Resolving alert $uuid in $prism..." -ForegroundColor Green
+        try {
             Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
             #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
             if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
             } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
             }
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved details of network $network with vlan id $vlanid on vswitch $vswitch from $prism" -ForegroundColor Cyan
-            $network_details = $resp.entities | Where-Object {$_.name -eq $network}
-            ForEach ($network_entry in $network_details) {
-                Write-Host "Network Name: $($network_entry.name)" -ForegroundColor White
-                Write-Host "VLAN id: $($network_entry.vlan_id)" -ForegroundColor White
-                Write-Host "vSwitch: $($network_entry.vswitch_name)" -ForegroundColor White
-                Write-Host "Description: $($network_entry.annotation)" -ForegroundColor White
-                Write-Host "Uuid: $($network_entry.uuid)" -ForegroundColor White
-                Write-Host
-            }
-            }
-            catch {
+            Write-Host "$(Get-Date) [SUCCESS] Successfully triggered resolution of alert $uuid in $prism" -ForegroundColor Cyan
+        }
+        catch {
             $saved_error = $_.Exception.Message
             throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally {
-            }
-            #endregion
+        }
+        finally {
+        }
         #endregion
     }
     #endregion
@@ -548,10 +541,5 @@ Remove-Variable username -ErrorAction SilentlyContinue
 Remove-Variable password -ErrorAction SilentlyContinue
 Remove-Variable prism -ErrorAction SilentlyContinue
 Remove-Variable debugme -ErrorAction SilentlyContinue
-Remove-Variable network_uuid -ErrorAction SilentlyContinue
-Remove-Variable network -ErrorAction SilentlyContinue
-Remove-Variable vswitch -ErrorAction SilentlyContinue
-Remove-Variable vlanid -ErrorAction SilentlyContinue
-Remove-Variable description -ErrorAction SilentlyContinue
 Remove-Variable prismCreds -ErrorAction SilentlyContinue
 #endregion

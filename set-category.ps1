@@ -493,10 +493,12 @@ do {
         $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
     }
     Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
+    $resp_return_code = 200
   }
   catch {
     $saved_error = $_.Exception
-    if ($_.Exception.Response.StatusCode.value__ -eq 409) {
+    $resp_return_code = $saved_error.Response.StatusCode.value__
+    if ($resp_return_code -eq 409) {
       Write-Host "$(Get-Date) [WARNING] VM $vm cannot be updated now. Retrying in 30 seconds..." -ForegroundColor Yellow
       sleep 30
     }
@@ -507,7 +509,7 @@ do {
   }
   finally {
   }
-} while ($saved_error.Response.StatusCode.value__ -eq 409)
+} while ($resp_return_code -eq 409)
 
 #endregion
 
