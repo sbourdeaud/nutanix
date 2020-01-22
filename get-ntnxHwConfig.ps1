@@ -450,7 +450,7 @@ if (!$csv) {$csv = $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"prism-hw-report.csv"}
                             "serial_number" = $entity.disk_hardware_config.serial_number;
                             "model" = $entity.disk_hardware_config.model;
                             "storage_tier_name" = $entity.storage_tier_name;
-                            "disk_size" = $entity.disk_size;
+                            "disk_size" = [Int64]$entity.disk_size;
                             "online" = $entity.online;
                             "disk_status" = $entity.disk_status;
                             "location" = $entity.location;
@@ -542,12 +542,12 @@ if (!$csv) {$csv = $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"prism-hw-report.csv"}
                         "block_model" = $entity.status.resources.block.block_model;
                         "block_serial_number" = $entity.status.resources.block.block_serial_number;
                         "cpu_model" = $entity.status.resources.cpu_model;
-                        "cpu_capacity_hz" = $entity.status.resources.cpu_capacity_hz;
+                        "cpu_capacity_hz" = [Int64]$entity.status.resources.cpu_capacity_hz;
                         "num_cpu_sockets" = $entity.status.resources.num_cpu_sockets;
                         "num_cpu_cores" = $entity.status.resources.num_cpu_cores;
                         "memory_capacity_gib" = "{0:n0}" -f ($entity.status.resources.memory_capacity_mib /1024);
                         "storage_capacity_tib" = "{0:n2}" -f ((($myvarDisksResults | Where-Object {$_.node_name -eq $entity.status.name}).disk_size | Measure-Object -Sum).Sum /1024/1024/1024/1024);
-                        "ssd_qty" = ($myvarDisksResults | Where-Object {$_.node_name -eq $entity.status.name} | Where-Object {$_.storage_tier_name -eq "SSD"}).Count;
+                        "ssd_qty" = [Int32]($myvarDisksResults | Where-Object {$_.node_name -eq $entity.status.name} | Where-Object {$_.storage_tier_name -eq "SSD"}).Count;
                         "ssd_size_gib" = "{0:n0}" -f ((($myvarDisksResults | Where-Object {$_.node_name -eq $entity.status.name} | Where-Object {$_.storage_tier_name -eq "SSD"}).disk_size | Measure-Object -Minimum).Minimum /1024/1024/1024);
                         "cvm_ip" = $entity.status.resources.controller_vm.ip;
                         "hypervisor_ip" = $entity.status.resources.hypervisor.ip;
@@ -619,9 +619,9 @@ if (!$csv) {$csv = $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"prism-hw-report.csv"}
     #! step 5: export the results
     #Write-Host "$(Get-Date) [INFO] Writing results to $(csv)" -ForegroundColor Green
     #$myvarResults | export-csv -NoTypeInformation $csv
-    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")DiskResults.csv" -ForegroundColor Green
-    $myvarDisksResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"DiskResults.csv")
-    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")HostResults.csv" -ForegroundColor Green
+    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")DisksResults.csv" -ForegroundColor Green
+    $myvarDisksResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"DisksResults.csv")
+    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")HostsResults.csv" -ForegroundColor Green
     $myvarHostsResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"HostsResults.csv")
     Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")ClustersResults.csv" -ForegroundColor Green
     $myvarClustersResultsFinal | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"ClustersResults.csv")
