@@ -19,6 +19,8 @@
   Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
+.PARAMETER update
+  Use this if you want to update the vm agent status to false for all the vms returned.
 .EXAMPLE
 .\get-AhvVmAgent.ps1 -cluster ntnxc1.local -username admin -password admin
 Connect to a Nutanix Prism Element of your choice and retrieve the list of agent VMs.
@@ -40,7 +42,8 @@ Param
     [parameter(mandatory = $true)] [string]$prism,
     [parameter(mandatory = $false)] [string]$username,
     [parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $false)] $prismCreds
+    [parameter(mandatory = $false)] $prismCreds,
+    [parameter(mandatory = $false)] [switch]$update
 )
 #endregion
 
@@ -353,7 +356,8 @@ Do {
         ForEach ($entity in $resp.entities) {
             $myvarVmInfo = [ordered]@{
                 "name" = $entity.name;
-                "is_agent_vm" = $entity.vm_features.AGENT_VM
+                "is_agent_vm" = $entity.vm_features.AGENT_VM;
+                "uuid" = $entity.uuid
             }
             #store the results for this entity in our overall result variable
             if ($myvarVmInfo.is_agent_vm) {
@@ -378,7 +382,58 @@ if ($debugme) {
     $myvarResults
 }
 #Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")VmList.csv" -ForegroundColor Green
-$myvarResults
+ForEach ($vm in $myvarResults) {
+    write-host "$($vm.name), $($vm.uuid)"
+}
+#endregion
+
+#region update
+if ($update) {
+    ForEach ($vm in $myvarResults) {
+        #region prepare api call
+        $api_server_port = "9440"
+        $api_server_endpoint = "/PrismGateway/services/rest/v2.0/vms/{0}" -f $vm.uuid 
+        $url = "https://{0}:{1}{2}" -f $prism,$api_server_port, $api_server_endpoint
+        $method = "PUT"
+
+        $headers = @{
+            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+            "Content-Type"="application/json";
+            "Accept"="application/json"
+        }
+
+        # this is used to capture the content of the payload
+        $content = @{
+            vm_features= @{
+                AGENT_VM= "false"
+            }
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
+
+        #region make api call
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        try {
+            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            }
+            
+            Write-Host "$(Get-Date) [INFO] Changed vm $($vm.name) to NOT be an agent vm." -ForegroundColor Green
+        }
+        catch {
+            $saved_error = $_.Exception.Message
+            Write-Host "$(Get-Date) [INFO] Payload: $($payload)"
+            Throw "$(get-date) [ERROR] $saved_error"
+        }
+        finally {
+            #add any last words here; this gets processed no matter what
+        }
+        #endregion
+    }
+}
 #endregion
 
 #region Cleanup	
