@@ -348,9 +348,9 @@ Do {
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
         if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
         } else {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
         }
         
         Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length)" -ForegroundColor Green
