@@ -333,13 +333,6 @@ $headers = @{
     "Accept"="application/json"
 }
 
-# this is used to capture the content of the payload
-$content = @{
-    kind="vm";
-    offset=0;
-    length=$length
-}
-$payload = (ConvertTo-Json $content -Depth 4)
 #endregion
 
 #region make api call
@@ -368,18 +361,10 @@ Do {
             }
         }
 
-        #prepare the json payload for the next batch of entities/response
-        $content = @{
-            kind="vm";
-            offset=($resp.metadata.length + $resp.metadata.offset);
-            length=$length
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
     }
     catch {
         $saved_error = $_.Exception.Message
         # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
         Throw "$(get-date) [ERROR] $saved_error"
     }
     finally {
