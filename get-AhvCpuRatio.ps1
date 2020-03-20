@@ -335,12 +335,6 @@ $api_server_endpoint = "/api/nutanix/v3/vms/list"
 $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
 $method = "POST"
 
-$headers = @{
-    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-    "Content-Type"="application/json";
-    "Accept"="application/json"
-}
-
 # this is used to capture the content of the payload
 $content = @{
     kind="vm";
@@ -356,8 +350,18 @@ Do {
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
         if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $prismCredentials -ErrorAction Stop
         } else {
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
             $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
         }
         Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
@@ -411,12 +415,6 @@ $api_server_endpoint = "/api/nutanix/v3/hosts/list"
 $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
 $method = "POST"
 
-$headers = @{
-    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-    "Content-Type"="application/json";
-    "Accept"="application/json"
-}
-
 # this is used to capture the content of the payload
 $content = @{
     kind="host";
@@ -432,8 +430,18 @@ Do {
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
         if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $prismCredentials -ErrorAction Stop
         } else {
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
             $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
         }
         
@@ -487,12 +495,6 @@ $api_server_endpoint = "/api/nutanix/v3/clusters/list"
 $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
 $method = "POST"
 
-$headers = @{
-    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-    "Content-Type"="application/json";
-    "Accept"="application/json"
-}
-
 # this is used to capture the content of the payload
 $content = @{
     kind="cluster";
@@ -508,8 +510,18 @@ Do {
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
         if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $prismCredentials -ErrorAction Stop
         } else {
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
             $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
         }
         
