@@ -222,6 +222,106 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
     }
 }
 
+#this function is used to make a REST api call to Prism
+function Invoke-PrismAPICall
+{
+<#
+.SYNOPSIS
+  Makes api call to prism based on passed parameters. Returns the json response.
+.DESCRIPTION
+  Makes api call to prism based on passed parameters. Returns the json response.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+#>
+param
+(
+    [parameter(mandatory = $true)]
+    [ValidateSet("POST","GET","DELETE","PUT")]
+    [string] 
+    $method,
+    
+    [parameter(mandatory = $true)]
+    [string] 
+    $url,
+
+    [parameter(mandatory = $false)]
+    [string] 
+    $payload,
+    
+    [parameter(mandatory = $false)]
+    [System.Management.Automation.PSCredential]
+    $credential,
+
+    [parameter(mandatory = $false)]
+    [string]
+    $username,
+
+    [parameter(mandatory = $false)]
+    [securestring]
+    $password
+)
+
+begin
+{
+    if (($PSVersionTable.PSVersion.Major -gt 5) -and (!$credential)) {
+        throw "$(get-date) [ERROR] You must specify a credential object when using Powershell Core!"
+    }
+    if (($PSVersionTable.PSVersion.Major -le 5) -and (!$username) -and (!$password))  {
+        throw "$(get-date) [ERROR] You must specify a username and password (as a secure string)!"
+    }   
+}
+process
+{
+    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+    try {
+        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            }
+        } else {
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+            }
+        }
+        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
+    catch {
+        $saved_error = $_.Exception.Message
+        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
+    }
+    finally {
+        #add any last words here; this gets processed no matter what
+    }
+}
+end
+{
+    return $resp
+}    
+}
 #endregion
 
 #region prepwork
@@ -309,6 +409,7 @@ if (!$prismCreds)
         $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
         Remove-Variable password
     }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 } 
 else 
 { #we are using custom credentials, so let's grab the username and password from that
@@ -326,6 +427,7 @@ else
         $username = $prismCredentials.UserName
         $PrismSecurePassword = $prismCredentials.Password
     }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 }
 #endregion
 
@@ -346,66 +448,37 @@ $payload = (ConvertTo-Json $content -Depth 4)
 
 #region make api call and process results (get vms)
 Do {
-    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-    try {
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-            $headers = @{
-                "Content-Type"="application/json";
-                "Accept"="application/json"
+    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+    Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+    
+    #grab the information we need in each entity
+    ForEach ($entity in $resp.entities) {
+        if ($entity.spec.resources.num_sockets) {
+            $myvarVmInfo = [ordered]@{
+                "num_sockets" = $entity.spec.resources.num_sockets;
+                "power_state" = $entity.spec.resources.power_state;
+                "cluster" = $entity.spec.cluster_reference.name;
+                "hypervisor" = $entity.status.resources.hypervisor_type;
+                "cluster_uuid" = $entity.status.cluster_reference.uuid;
             }
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $prismCredentials -ErrorAction Stop
-        } else {
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            #store the results for this entity in our overall result variable
+            $myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
         }
-        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-        Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
 
-        #grab the information we need in each entity
-        ForEach ($entity in $resp.entities) {
-            if ($entity.spec.resources.num_sockets) {
-                $myvarVmInfo = [ordered]@{
-                    "num_sockets" = $entity.spec.resources.num_sockets;
-                    "power_state" = $entity.spec.resources.power_state;
-                    "cluster" = $entity.spec.cluster_reference.name;
-                    "hypervisor" = $entity.status.resources.hypervisor_type;
-                    "cluster_uuid" = $entity.status.cluster_reference.uuid;
-                }
-                #store the results for this entity in our overall result variable
-                $myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
-            }
-        }
-
-        #prepare the json payload for the next batch of entities/response
-        $content = @{
-            kind="vm";
-            offset=($resp.metadata.length + $resp.metadata.offset);
-            length=$length
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
+    #prepare the json payload for the next batch of entities/response
+    $content = @{
+        kind="vm";
+        offset=($resp.metadata.length + $resp.metadata.offset);
+        length=$length
     }
-    catch {
-        $saved_error = $_.Exception.Message
-        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        Throw "$(get-date) [ERROR] $saved_error"
-    }
-    finally {
-        #add any last words here; this gets processed no matter what
-    }
+    $payload = (ConvertTo-Json $content -Depth 4)
 }
 While ($resp.metadata.length -eq $length)
 
 if ($debugme) {
     Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
-    $myvarVmResults
+    $resp
 }
 #endregion
 
@@ -427,59 +500,31 @@ $payload = (ConvertTo-Json $content -Depth 4)
 #region make api call and process results (get hosts)
 Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
 Do {
-    try {
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-            $headers = @{
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $prismCredentials -ErrorAction Stop
-        } else {
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-        }
-        
-        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-        Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+    Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
 
-        #grab the information we need in each entity
-        ForEach ($entity in $resp.entities) {
-            if ($entity.status.resources.num_cpu_sockets) {
-                $myvarHostInfo = [ordered]@{
-                    "num_cpu_sockets" = $entity.status.resources.num_cpu_sockets;
-                    "num_cpu_cores" = $entity.status.resources.num_cpu_cores;
-                    #"num_cpu_total_cores" = ($entity.status.resources.num_cpu_sockets * $entity.status.resources.num_cpu_cores);
-                    "cluster_uuid" = $entity.status.cluster_reference.uuid;
-                }
-                #store the results for this entity in our overall result variable
-                $myvarHostResults.Add((New-Object PSObject -Property $myvarHostInfo)) | Out-Null
+    #grab the information we need in each entity
+    ForEach ($entity in $resp.entities) {
+        if ($entity.status.resources.num_cpu_sockets) {
+            $myvarHostInfo = [ordered]@{
+                "num_cpu_sockets" = $entity.status.resources.num_cpu_sockets;
+                "num_cpu_cores" = $entity.status.resources.num_cpu_cores;
+                #"num_cpu_total_cores" = ($entity.status.resources.num_cpu_sockets * $entity.status.resources.num_cpu_cores);
+                "cluster_uuid" = $entity.status.cluster_reference.uuid;
             }
+            #store the results for this entity in our overall result variable
+            $myvarHostResults.Add((New-Object PSObject -Property $myvarHostInfo)) | Out-Null
         }
+    }
 
-        #prepare the json payload for the next batch of entities/response
-        $content = @{
-            kind="host";
-            offset=($resp.metadata.length + $resp.metadata.offset);
-            length=$length
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
+    #prepare the json payload for the next batch of entities/response
+    $content = @{
+        kind="host";
+        offset=($resp.metadata.length + $resp.metadata.offset);
+        length=$length
     }
-    catch {
-        $saved_error = $_.Exception.Message
-        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        Throw "$(get-date) [ERROR] $saved_error"
-    }
-    finally {
-        #add any last words here; this gets processed no matter what
-    }
+    $payload = (ConvertTo-Json $content -Depth 4)
 }
 While ($resp.metadata.length -eq $length)
 
@@ -507,58 +552,29 @@ $payload = (ConvertTo-Json $content -Depth 4)
 #region make api call and process results (get clusters)
 Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
 Do {
-    try {
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-            $headers = @{
-                "Content-Type"="application/json";
-                "Accept"="application/json"
+    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+    Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+    
+    #grab the information we need in each entity
+    ForEach ($entity in $resp.entities) {
+        if ($entity.status.resources.nodes.hypervisor_server_list) {
+            $myvarClusterInfo = [ordered]@{
+                "cluster_name" = $entity.spec.name;
+                "hypervisor" = $entity.status.resources.nodes.hypervisor_server_list[0].type;
+                "cluster_uuid" = $entity.metadata.uuid;
             }
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $prismCredentials -ErrorAction Stop
-        } else {
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            #store the results for this entity in our overall result variable
+            $myvarClusterResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
         }
-        
-        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-        Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
 
-        #grab the information we need in each entity
-        ForEach ($entity in $resp.entities) {
-            if ($entity.status.resources.nodes.hypervisor_server_list) {
-                $myvarClusterInfo = [ordered]@{
-                    "cluster_name" = $entity.spec.name;
-                    "hypervisor" = $entity.status.resources.nodes.hypervisor_server_list[0].type;
-                    "cluster_uuid" = $entity.metadata.uuid;
-                }
-                #store the results for this entity in our overall result variable
-                $myvarClusterResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
-            }
-        }
-
-        #prepare the json payload for the next batch of entities/response
-        $content = @{
-            kind="host";
-            offset=($resp.metadata.length + $resp.metadata.offset);
-            length=$length
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
+    #prepare the json payload for the next batch of entities/response
+    $content = @{
+        kind="host";
+        offset=($resp.metadata.length + $resp.metadata.offset);
+        length=$length
     }
-    catch {
-        $saved_error = $_.Exception.Message
-        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        Throw "$(get-date) [ERROR] $saved_error"
-    }
-    finally {
-        #add any last words here; this gets processed no matter what
-    }
+    $payload = (ConvertTo-Json $content -Depth 4)
 }
 While ($resp.metadata.length -eq $length)
 
@@ -595,7 +611,7 @@ ForEach ($cluster in $myvarClusterResults) {
 $myvarClusterReport | ft
 #endregion
 
-#region Cleanup	
+#region cleanup	
 #let's figure out how much time this all took
 Write-Host "$(Get-Date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
