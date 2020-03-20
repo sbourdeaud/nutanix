@@ -449,8 +449,19 @@ $payload = (ConvertTo-Json $content -Depth 4)
 #region make api call and process results (get vms)
 Do {
     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-    Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-    
+    $listLength = 0
+    if ($resp.metadata.offset) {
+        $firstItem = $resp.metadata.offset
+    } else {
+        $firstItem = 0
+    }
+    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+        $listLength = $resp.metadata.length
+    } else {
+        $listLength = $resp.metadata.total_matches
+    }
+    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+
     #grab the information we need in each entity
     ForEach ($entity in $resp.entities) {
         if ($entity.spec.resources.num_sockets) {
@@ -498,10 +509,19 @@ $payload = (ConvertTo-Json $content -Depth 4)
 #endregion
 
 #region make api call and process results (get hosts)
-Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
 Do {
     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-    Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+    if ($resp.metadata.offset) {
+        $firstItem = $resp.metadata.offset
+    } else {
+        $firstItem = 0
+    }
+    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+        $listLength = $resp.metadata.length
+    } else {
+        $listLength = $resp.metadata.total_matches
+    }
+    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
     if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
 
     #grab the information we need in each entity
@@ -550,10 +570,19 @@ $payload = (ConvertTo-Json $content -Depth 4)
 #endregion
 
 #region make api call and process results (get clusters)
-Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
 Do {
     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-    Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+    if ($resp.metadata.offset) {
+        $firstItem = $resp.metadata.offset
+    } else {
+        $firstItem = 0
+    }
+    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+        $listLength = $resp.metadata.length
+    } else {
+        $listLength = $resp.metadata.total_matches
+    }
+    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
     
     #grab the information we need in each entity
     ForEach ($entity in $resp.entities) {
