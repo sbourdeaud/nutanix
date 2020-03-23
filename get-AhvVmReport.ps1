@@ -217,6 +217,106 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
     }
 }
 
+#this function is used to make a REST api call to Prism
+function Invoke-PrismAPICall
+{
+<#
+.SYNOPSIS
+  Makes api call to prism based on passed parameters. Returns the json response.
+.DESCRIPTION
+  Makes api call to prism based on passed parameters. Returns the json response.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+#>
+param
+(
+    [parameter(mandatory = $true)]
+    [ValidateSet("POST","GET","DELETE","PUT")]
+    [string] 
+    $method,
+    
+    [parameter(mandatory = $true)]
+    [string] 
+    $url,
+
+    [parameter(mandatory = $false)]
+    [string] 
+    $payload,
+    
+    [parameter(mandatory = $false)]
+    [System.Management.Automation.PSCredential]
+    $credential,
+
+    [parameter(mandatory = $false)]
+    [string]
+    $username,
+
+    [parameter(mandatory = $false)]
+    [securestring]
+    $password
+)
+
+begin
+{
+    if (($PSVersionTable.PSVersion.Major -gt 5) -and (!$credential)) {
+        throw "$(get-date) [ERROR] You must specify a credential object when using Powershell Core!"
+    }
+    if (($PSVersionTable.PSVersion.Major -le 5) -and (!$username) -and (!$password))  {
+        throw "$(get-date) [ERROR] You must specify a username and password (as a secure string)!"
+    }   
+}
+process
+{
+    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+    try {
+        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            }
+        } else {
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+            }
+        }
+        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
+    catch {
+        $saved_error = $_.Exception.Message
+        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
+    }
+    finally {
+        #add any last words here; this gets processed no matter what
+    }
+}
+end
+{
+    return $resp
+}    
+}
 #endregion
 
 #region prepwork
@@ -343,17 +443,21 @@ $payload = (ConvertTo-Json $content -Depth 4)
 #endregion
 
 #region make api call
-Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
 Do {
     try {
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
+        $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+        $listLength = 0
+        if ($resp.metadata.offset) {
+            $firstItem = $resp.metadata.offset
         } else {
-            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            $firstItem = 0
         }
-        
-        Write-Host "$(Get-Date) [INFO] Processing results from $($resp.metadata.offset) to $($resp.metadata.offset + $resp.metadata.length)" -ForegroundColor Green
+        if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+            $listLength = $resp.metadata.length
+        } else {
+            $listLength = $resp.metadata.total_matches
+        }
+        Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
         if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
 
         #grab the information we need in each entity
@@ -374,7 +478,8 @@ Do {
                 "vnic0_vlan" = $entity.spec.resources.nic_list[0].subnet_reference.name;
                 "vnic0_mac" = $entity.spec.resources.nic_list[0].mac_address;
                 "vnic1_vlan" = $entity.spec.resources.nic_list[1].subnet_reference.name;
-                "vnic1_mac" = $entity.spec.resources.nic_list[1].mac_address
+                "vnic1_mac" = $entity.spec.resources.nic_list[1].mac_address;
+                "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1
             }
             #store the results for this entity in our overall result variable
             $myvarResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
