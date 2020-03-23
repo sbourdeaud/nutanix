@@ -250,17 +250,9 @@ param
     [string] 
     $payload,
     
-    [parameter(mandatory = $false)]
+    [parameter(mandatory = $true)]
     [System.Management.Automation.PSCredential]
-    $credential,
-
-    [parameter(mandatory = $false)]
-    [string]
-    $username,
-
-    [parameter(mandatory = $false)]
-    [securestring]
-    $password
+    $credential
 )
 
 begin
@@ -401,6 +393,7 @@ if (!$prismCreds)
         $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
         Remove-Variable password
     }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 } 
 else 
 { #we are using custom credentials, so let's grab the username and password from that
@@ -418,6 +411,7 @@ else
         $username = $prismCredentials.UserName
         $PrismSecurePassword = $prismCredentials.Password
     }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 }
 #endregion
 

@@ -128,182 +128,73 @@ Function Invoke-PrismRESTCall
 .EXAMPLE
   PS> PrismRESTCall -username admin -password admin -url https://10.10.10.10:9440/PrismGateway/services/rest/v1/ 
 #>
-	param
-	(
-		[string] 
-        $username,
-		
+    param
+    (
+        [parameter(mandatory = $true)]
+        [ValidateSet("POST","GET","DELETE","PUT")]
         [string] 
-        $password,
-        
-        [string] 
-        $url,
-        
-        [string] 
-        [ValidateSet('GET','PATCH','PUT','POST','DELETE')]
         $method,
         
-        $body
-	)
+        [parameter(mandatory = $true)]
+        [string] 
+        $url,
+
+        [parameter(mandatory = $false)]
+        [string] 
+        $payload,
+        
+        [parameter(mandatory = $true)]
+        [System.Management.Automation.PSCredential]
+        $credential
+    )
 
     begin
     {
-	 	#Setup authentication header for REST call
-        $myvarHeader = @{"Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+$password ))}   
+ 
     }
-
     process
     {
-        if ($body) 
-        {
-            $myvarHeader += @{"Accept"="application/json"}
-		    $myvarHeader += @{"Content-Type"="application/json"}
-            
-            if ($IsLinux -or $IsMacOS) 
-            {
-                try 
-                {
-                    if ($PSVersionTable.PSVersion.Major -ge 6) 
-                    {
-			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
-                    } 
-                    else 
-                    {
-                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -SkipCertificateCheck -ErrorAction Stop
-                    }
-		        }
-                catch 
-                {
-                    $exception = $_.Exception.Message
-                    $message = $_.ErrorDetails.Message
-			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
-                    try 
-                    {
-                        $RESTError = Get-RESTError -ErrorAction Stop
-                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
-                        if ($RESTErrorMessage) 
-                        {
-                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
-                        }
-                    }
-                    catch 
-                    {
-                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
-                    }
-			        Exit
-		        }
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        try {
+            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $headers = @{
+                    "Content-Type"="application/json";
+                    "Accept"="application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
+            } else {
+                $headers = @{
+                    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                    "Content-Type"="application/json";
+                    "Accept"="application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
             }
-            else 
-            {
-                try 
-                {
-                    if ($PSVersionTable.PSVersion.Major -ge 6) 
-                    {
-			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
-                    } 
-                    else 
-                    {
-                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -Body $body -ErrorAction Stop
-                    }
-		        }
-                catch 
-                {
-			        $exception = $_.Exception.Message
-                    $message = $_.ErrorDetails.Message
-			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
-                    try 
-                    {
-                        $RESTError = Get-RESTError -ErrorAction Stop
-                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
-                        if ($RESTErrorMessage) 
-                        {
-                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
-                        }
-                    }
-                    catch 
-                    {
-                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
-                    }
-			        Exit
-		        }
-            }
-        } 
-        else 
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                try 
-                {
-			        if ($PSVersionTable.PSVersion.Major -ge 6) 
-                    {
-			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
-                    } 
-                    else 
-                    {
-                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -ErrorAction Stop
-                    }
-		        }
-                catch 
-                {
-			        $exception = $_.Exception.Message
-                    $message = $_.ErrorDetails.Message
-			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
-                    try 
-                    {
-                        $RESTError = Get-RESTError -ErrorAction Stop
-                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
-                        if ($RESTErrorMessage) 
-                        {
-                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
-                        }
-                    }
-                    catch 
-                    {
-                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
-                    }
-			        Exit
-		        }
-            }
-            else 
-            {
-                try 
-                {
-			        if ($PSVersionTable.PSVersion.Major -ge 6) 
-                    {
-			            $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -SkipCertificateCheck -SslProtocol Tls12 -ErrorAction Stop
-                    } 
-                    else 
-                    {
-                        $myvarRESTOutput = Invoke-RestMethod -Method $method -Uri $url -Headers $myvarHeader -ErrorAction Stop
-                    }
-		        }
-                catch 
-                {
-			        $exception = $_.Exception.Message
-                    $message = $_.ErrorDetails.Message
-			        Write-Host "$(get-date) [ERROR] $exception $message" -ForegroundColor Red
-                    try 
-                    {
-                        $RESTError = Get-RESTError -ErrorAction Stop
-                        $RESTErrorMessage = ($RESTError | ConvertFrom-Json).Message
-                        if ($RESTErrorMessage) 
-                        {
-                            Write-Host "$(get-date) [ERROR] $RESTErrorMessage" -ForegroundColor Red
-                        }
-                    }
-                    catch 
-                    {
-                        Write-Host "$(get-date) [ERROR] Could not retrieve full REST error details." -ForegroundColor Red
-                    }
-			        Exit
-		        }
-            }
+            Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        }
+        catch {
+            $saved_error = $_.Exception.Message
+            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            Throw "$(get-date) [ERROR] $saved_error"
+        }
+        finally {
+            #add any last words here; this gets processed no matter what
         }
     }
-
     end
     {
-        return $myvarRESTOutput
+        return $resp
     }
 }#end function Get-PrismRESTCall
 
@@ -322,7 +213,7 @@ Function Get-RESTError
 }#end function Get-RESTError
 
 #this function is used to create saved credentials for the current user
-Function Set-CustomCredentials 
+function Set-CustomCredentials 
 {
 #input: path, credname
 	#output: saved credentials file
@@ -356,7 +247,14 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
     {
         if (!$path)
         {
-            $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            if ($IsLinux -or $IsMacOS) 
+            {
+                $path = $home
+            }
+            else 
+            {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
             Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
         } 
     }
@@ -418,7 +316,7 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
 }
 
 #this function is used to retrieve saved credentials for the current user
-Function Get-CustomCredentials 
+function Get-CustomCredentials 
 {
 #input: path, credname
 	#output: credential object
@@ -452,9 +350,16 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
     {
         if (!$path)
         {
-            $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            if ($IsLinux -or $IsMacOS) 
+            {
+                $path = $home
+            }
+            else 
+            {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
             Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-        }
+        } 
     }
     process
     {
@@ -477,7 +382,6 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
         return $customCredentials
     }
 }
-
 
 #this function is used to create a DRS host group
 Function New-DrsHostGroup
@@ -1011,6 +915,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
             Remove-Variable password
         }
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -1027,6 +932,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $username = $prismCredentials.UserName
             $PrismSecurePassword = $prismCredentials.Password
         }
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
 #endregion
 
@@ -1047,7 +953,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarNTNXCluster1Info = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $myvarNTNXCluster1Info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -1061,7 +967,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -1075,7 +981,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -1091,7 +997,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarNTNXCluster2Info = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $myvarNTNXCluster2Info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -1105,7 +1011,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try
             {
-                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch 
             {
@@ -1119,7 +1025,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch 
             {
