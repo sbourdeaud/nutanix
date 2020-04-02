@@ -111,7 +111,8 @@ if (!(Get-Module -Name sbourdeaud)) {
       }#end catch
   }#end catch
 }#endif module sbourdeaud
-if (((Get-Module -Name sbourdeaud).Version.Major -le 3) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 1)) {
+$MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
+if (($MyVarModuleVersion.Version.Major -lt 3) -or (($MyVarModuleVersion.Version.Major -eq 3) -and ($MyVarModuleVersion.Version.Minor -eq 0) -and ($MyVarModuleVersion.Version.Build -lt 1))) {
   Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
   try {Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
   catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
