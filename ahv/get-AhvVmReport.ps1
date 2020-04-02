@@ -20,7 +20,7 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
 .PARAMETER ngt
-  Retrieves additional information about Nutanix Guest Tools (including guest OS).  This requires that the credentials to access Prism Element are the same as the ones used for Prism Central.
+  Retrieves additional VM information, including Nutanix Guest Tools status and version.  This requires that the credentials to access Prism Element are the same as the ones used for Prism Central.
 .EXAMPLE
 .\get-AhvVmReport.ps1 -cluster ntnxc1.local -username admin -password admin
 Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VMs.
@@ -28,7 +28,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 21st 2019
+  Revision: April 2nd 2020
 #>
 
 #region parameters
@@ -274,7 +274,7 @@ Do {
             }
             $myvarVmInfo = [ordered]@{
               "name" = $entity.spec.name;
-              "os" = $myvarVmDetails.entities.guestOperatingSystem;
+              #"os" = $myvarVmDetails.entities.guestOperatingSystem;
               "ip_addresses" = $myvarVmDetails.entities.ipAddresses -join ',';
               "virtual_disks" = $myvarVmDetails.entities.nutanixVirtualDisks -join ',';
               "flash_mode" = $myvarVmDetails.entities.vmFeatures.FLASH_MODE;
@@ -296,7 +296,7 @@ Do {
               "vdisk_count" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"}).Count;
               "vdisk_total_mib" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"} | Measure-Object disk_size_mib -Sum).Sum;
               "vnic_count" = ($entity.spec.resources.nic_list).Count;
-              "vnic_vlans" = (($entity.spec.resources.nic_list | Select-Object -Property subnet_reference).name) -join ',';
+              "vnic_vlans" = (($entity.spec.resources.nic_list | Select-Object -Property subnet_reference).subnet_reference.name) -join ',';
               "vnic_macs" = (($entity.spec.resources.nic_list | Select-Object -Property mac_address).mac_address) -join ',';
               "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
               "uuid" = $entity.metadata.uuid
