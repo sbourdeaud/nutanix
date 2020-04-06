@@ -34,7 +34,7 @@ Adds a single 100 GiB disk to VM myvm.
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: November 9th 2018
+  Revision: April 6th 2020
 #>
 
 #region parameters
@@ -57,7 +57,6 @@ Param
 #endregion
 
 #region functions
-
 function Write-LogOutput
 {
 <#
@@ -126,212 +125,6 @@ https://github.com/sbourdeaud
     }
 
 }#end function Write-LogOutput
-
-function Get-NTNXTask
-{
-<#
-.SYNOPSIS
-Gets status for a given Prism task uuid (replaces NTNX cmdlet)
-.DESCRIPTION
-Gets status for a given Prism task uuid
-#>
-    [CmdletBinding()]
-    [Alias()]
-    [OutputType([int])]
-    Param
-    (
-        # Param1 help description
-        [Parameter(Mandatory=$true,
-                ValueFromPipelineByPropertyName=$true,
-                Position=0)]
-        $TaskId
-    )
-
-    Begin
-    {
-    }
-    Process
-    {
-        $myvarUrl = "https://"+$cluster+":9440/PrismGateway/services/rest/v2.0/tasks/$($TaskId.task_uuid)"
-        $result = Invoke-PrismRESTCall -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -method "GET" -url $myvarUrl
-    }
-    End
-    {
-        return $result
-    }
-}
-
-#this function is used to create saved credentials for the current user
-function Set-CustomCredentials 
-{
-#input: path, credname
-    #output: saved credentials file
-<#
-.SYNOPSIS
-Creates a saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-This function is used to create a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-Author: Stephane Bourdeaud
-.PARAMETER path
-Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-Specifies the credential file name.
-.EXAMPLE
-.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
-Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
-#>
-    param
-    (
-        [parameter(mandatory = $false)]
-        [string] 
-        $path,
-        
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-    )
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
-        #prompt for credentials
-        $credentialsFilePath = "$path\$credname.txt"
-        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
-        
-        #put details in hashed format
-        $user = $credentials.UserName
-        $securePassword = $credentials.Password
-        
-        #convert secureString to text
-        try 
-        {
-            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
-        }
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
-        }
-
-        #create directory to store creds if it does not already exist
-        if(!(Test-Path $path))
-        {
-            try 
-            {
-                $result = New-Item -type Directory $path -ErrorAction Stop
-            } 
-            catch 
-            {
-                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
-            }
-        }
-
-        #save creds to file
-        try 
-        {
-            Set-Content $credentialsFilePath $user -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
-        }
-        try 
-        {
-            Add-Content $credentialsFilePath $password -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
-        }
-
-        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
-    }
-    end
-    {}
-}
-
-#this function is used to retrieve saved credentials for the current user
-function Get-CustomCredentials 
-{
-#input: path, credname
-    #output: credential object
-<#
-.SYNOPSIS
-Retrieves saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-Author: Stephane Bourdeaud
-.PARAMETER path
-Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-Specifies the credential file name.
-.EXAMPLE
-.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
-Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
-#>
-    param
-    (
-        [parameter(mandatory = $false)]
-        [string] 
-        $path,
-        
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-    )
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
-        $credentialsFilePath = "$path\$credname.txt"
-        if(!(Test-Path $credentialsFilePath))
-        {
-            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
-        }
-
-        $credFile = Get-Content $credentialsFilePath
-        $user = $credFile[0]
-        $securePassword = $credFile[1] | ConvertTo-SecureString
-
-        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
-
-        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
-    }
-    end
-    {
-        return $customCredentials
-    }
-}
-
 #endregion
 
 #region prepwork
@@ -342,6 +135,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 09/11/2018 sb   Initial release.
+04/06/2020 sb   Do over with sbourdeaud module
 ################################################################################
 '@
 $myvarScriptName = ".\new-AhvVmDisk.ps1"
@@ -354,147 +148,96 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please up
 
 #check if we have all the required PoSH modules
 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
-
 #region module sbourdeaud is used for facilitating Prism REST calls
-    if (!(Get-Module -Name sbourdeaud)) 
-    {#module is not loaded
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing module 'sbourdeaud'..."
-        try
-        {#try loading the module
-            Import-Module -Name sbourdeaud -ErrorAction Stop
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-        }
-        catch 
-        {#we couldn't import the module, so let's install it
-            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Installing module 'sbourdeaud' from the Powershell Gallery..."
-            try 
-            {#install
-                Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-            }
-            catch 
-            {#couldn't install
-                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not install module 'sbourdeaud': $($_.Exception.Message)"
-                Exit
-            }
+if (!(Get-Module -Name sbourdeaud)) {
+  Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
+  try
+  {
+      Import-Module -Name sbourdeaud -ErrorAction Stop
+      Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+  }#end try
+  catch #we couldn't import the module, so let's install it
+  {
+      Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
+      try {Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+      catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
 
-            try
-            {#import
-                Import-Module -Name sbourdeaud -ErrorAction Stop
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-            }
-            catch 
-            {#we couldn't import the module
-                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)"
-                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1"
-                Exit
-            }
-        }
-    }#endif module sbourdeaud
-    if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 2)) 
-    {#sbourdeaud module version is too old
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating module 'sbourdeaud'..."
-        try 
-        {#update the module
-            Update-Module -Name sbourdeaud -ErrorAction Stop
-        }
-        catch 
-        {#couldn't update
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
-            Exit
-        }
-    }
+      try
+      {
+          Import-Module -Name sbourdeaud -ErrorAction Stop
+          Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+      }#end try
+      catch #we couldn't import the module
+      {
+          Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+          Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
+          Exit
+      }#end catch
+  }#end catch
+}#endif module sbourdeaud
+$MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
+if (($MyVarModuleVersion.Version.Major -lt 3) -or (($MyVarModuleVersion.Version.Major -eq 3) -and ($MyVarModuleVersion.Version.Minor -eq 0) -and ($MyVarModuleVersion.Version.Build -lt 1))) {
+  Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+  try {Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+  catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+}
 #endregion
-
-#region module BetterTls
-    $result = Set-PoshTls
-#endregion
-
-#region get ready to use the Nutanix REST API
-    if ((!$IsMacOS) -and (!$IsLinux))
-    {#this isn't Mac OSx or Linux
-        #Accept self signed certs
-        $code = @"
-        using System.Net;
-        using System.Security.Cryptography.X509Certificates;
-        public class TrustAllCertsPolicy : ICertificatePolicy {
-            public bool CheckValidationResult(
-                ServicePoint srvPoint, X509Certificate certificate,
-                WebRequest request, int certificateProblem) {
-                return true;
-            }
-        }
-"@
-
-        if (!(([System.Management.Automation.PSTypeName]'TrustAllCertsPolicy').Type))
-        {#make sure the type isn't already there in order to avoid annoying error messages
-            $result = add-type $code -ErrorAction SilentlyContinue
-        }
-        
-        #we also need to use the proper encryption protocols
-        [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy -ErrorAction SilentlyContinue
-        [Net.ServicePointManager]::SecurityProtocol =  [System.Security.Authentication.SslProtocols] "tls12"
-
-    }
-    
-#endregion
-
+Set-PoSHSSLCerts
+Set-PoshTls
 #endregion
 
 #region variables
-
 $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-
 #endregion
 
 #region parameters validation
 if (!$prismCreds) 
-    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        if (!$username) 
-        {#if Prism username has not been specified ask for it
-            $username = Read-Host "Enter the Prism username"
-        } 
-
-        if (!$password) 
-        {#if password was not passed as an argument, let's prompt for it
-            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-        }
-        else 
-        {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-            Remove-Variable password
-        }
+{#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+    if (!$username) 
+    {#if Prism username has not been specified ask for it
+        $username = Read-Host "Enter the Prism username"
     } 
-    else 
-    { #we are using custom credentials, so let's grab the username and password from that
-        try 
-        {
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
-        }
-        catch 
-        {
-            Set-CustomCredentials -credname $prismCreds
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
-        }
+
+    if (!$password) 
+    {#if password was not passed as an argument, let's prompt for it
+        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
     }
+    else 
+    {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
+        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+        Remove-Variable password
+    }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+} 
+else 
+{ #we are using custom credentials, so let's grab the username and password from that
+    try 
+    {
+        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+    }
+    catch 
+    {
+        $credname = Read-Host "Enter the credentials name"
+        Set-CustomCredentials -credname $credname
+        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+    }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+}
 
 if (!$qty) {$qty = 1}
 $size = $size * 1024 * 1024 * 1024 
 #endregion
 
 #region processing	
-################################
-##  Main execution here       ##
-################################
-
 #region check cluster is running AHV
     Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $cluster ..." -ForegroundColor Green
     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
     $method = "GET"
-    $cluster_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+    $cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $cluster" -ForegroundColor Cyan
 
     Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)." -ForegroundColor Green
@@ -509,7 +252,7 @@ $size = $size * 1024 * 1024 * 1024
     Write-Host "$(get-date) [INFO] Retrieving VMs from cluster $cluster..." -ForegroundColor Green
     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true"
     $method = "GET"
-    $vmList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+    $vmList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
     Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs from $cluster!" -ForegroundColor Cyan
     
     if (!($vmDetails = $vmList.entities | Where-Object {$_.name -eq $vm}))
@@ -539,7 +282,7 @@ $size = $size * 1024 * 1024 * 1024
             Write-Host "$(get-date) [INFO] Retrieving details of disk $diskUuid..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/virtual_disks/$diskUuid"
             $method = "GET"
-            $diskDetails = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            $diskDetails = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of disk $diskUuid!" -ForegroundColor Cyan
 
             $diskContainerUUid = $diskDetails.storage_container_uuid
@@ -553,7 +296,7 @@ $size = $size * 1024 * 1024 * 1024
         Write-Host "$(get-date) [INFO] Retrieving storage containers from Nutanix cluster $cluster ..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/storage_containers/"
         $method = "GET"
-        $storage_containers = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+        $storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers from Nutanix cluster $cluster" -ForegroundColor Cyan
 
         if (!($diskContainerUUid = ($storage_containers.entities | Where-Object {$_.name -eq $container}).storage_container_uuid))
@@ -586,7 +329,7 @@ $size = $size * 1024 * 1024 * 1024
         }
         $body = (ConvertTo-Json $content -Depth 4)
         if ($debugme) {Write-Host $body -ForegroundColor White}
-        $taskUuid = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+        $taskUuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
         Write-Host "$(get-date) [SUCCESS] Successfully requested 1 disk of size $size bytes to be added to $vm in container $diskContainerUUid!" -ForegroundColor Cyan
         $qty = $qty - 1
         $taskUuids += $taskUuid
@@ -596,8 +339,7 @@ $size = $size * 1024 * 1024 * 1024
     Foreach ($diskAddTask in $taskUuids)
     {
         Write-Host "$(get-date) [INFO] Checking status of the disk creation task $($diskAddTask.task_uuid)..." -ForegroundColor Green
-        $task = (Get-NTNXTask -TaskId $diskAddTask)
-        $displayed_progress=$false
+        $task = (Get-NTNXTask -TaskId $diskAddTask -credential $prismCredentials -cluster $cluster)
         While ($task.progress_status -ne "Succeeded")
         {
             if ($task.progress_status -eq "Failed") 
@@ -606,13 +348,11 @@ $size = $size * 1024 * 1024 * 1024
             }
             else 
             {#task hasn't completed yet
-                Write-Host -NoNewLine "`r$(get-date) [WARNING] Disk creation task $($diskAddTask.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
-                $displayed_progress=$true
+                Write-Host "$(get-date) [WARNING] Disk creation task $($diskAddTask.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
                 Start-Sleep -Seconds 5
             }
-            $task = (Get-NTNXTask -TaskId $diskAddTask)
-        } 
-        if ($displayed_progress) {Write-Host}
+            $task = (Get-NTNXTask -TaskId $diskAddTask -credential $prismCredentials -cluster $cluster)
+        }
         Write-Host "$(get-date) [SUCCESS] Disk creation task $($diskAddTask.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
     }
 
