@@ -39,7 +39,7 @@ Get all critical alerts which are neither acknowledged nor resolved from Prism C
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: January 17th 2020
+  Revision: Apr 15th 2020
 #>
 
 #region Parameters
@@ -63,331 +63,74 @@ Param
 )
 #endregion
 
-#region prep-work
-#check if we need to display help and/or history
-$HistoryText = @'
-Maintenance Log
-Date       By   Updates (newest updates at the top)
----------- ---- ---------------------------------------------------------------
-01/15/2020 sb   Initial release.
-################################################################################
-'@
-$myvarScriptName = ".\add-AhvNetwork.ps1"
-if ($help) {get-help $myvarScriptName; exit}
-if ($History) {$HistoryText; exit}
+#region Functions
+Function GetAlerts 
+{
+	#input: 
+	#output: 
+<#
+.SYNOPSIS
+  This function is used to get alerts from Prism Central.
+.DESCRIPTION
+  This function is used to get alerts from Prism Central.
+.NOTES
+  Author: Stephane Bourdeaud
+.EXAMPLE
+  $myvar = GetAlerts
+#>
+	param
+	(
+	)
 
-#let's get ready to use the Nutanix REST API
-Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
-if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
-  $certCallback = @"
-  using System;
-  using System.Net;
-  using System.Net.Security;
-  using System.Security.Cryptography.X509Certificates;
-  public class ServerCertificateValidationCallback
-  {
-      public static void Ignore()
-      {
-          if(ServicePointManager.ServerCertificateValidationCallback ==null)
-          {
-              ServicePointManager.ServerCertificateValidationCallback += 
-                  delegate
-                  (
-                      Object obj, 
-                      X509Certificate certificate, 
-                      X509Chain chain, 
-                      SslPolicyErrors errors
-                  )
-                  {
-                      return true;
-                  };
-          }
+    begin
+    {
+      #region prepare api call
+      $api_server_endpoint = "/api/nutanix/v3/alerts/list"
+      $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+          $api_server_endpoint
+      $method = "POST"
+      $length = 500
+      $filter = "resolved!=true"
+      if ($severity) {$filter += ";severity==$($severity)"}
+      $content = @{
+          kind= "alert";
+          length= $length;
+          filter= $filter
       }
-  }
-"@
-  Add-Type $certCallback
-}
-[ServerCertificateValidationCallback]::Ignore()
-
-# add Tls12 support
-Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
-[Net.ServicePointManager]::SecurityProtocol = `
-  ([Net.ServicePointManager]::SecurityProtocol -bor `
-  [Net.SecurityProtocolType]::Tls12)
-
-#endregion
-
-#region functions
-#this function is used to create saved credentials for the current user
-function Set-CustomCredentials 
-{
-#input: path, credname
-  #output: saved credentials file
-<#
-.SYNOPSIS
-  Creates a saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to create a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
-Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
-#>
-  param
-  (
-    [parameter(mandatory = $false)]
-        [string] 
-        $path,
-    
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-  )
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
-        } 
+      $payload = (ConvertTo-Json $content -Depth 4)
+      #endregion
+      Write-Host "$(Get-Date) [INFO] Getting alerts from $prism..." -ForegroundColor Green
     }
+
     process
     {
-        #prompt for credentials
-        $credentialsFilePath = "$path\$credname.txt"
-    $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
-    
-    #put details in hashed format
-    $user = $credentials.UserName
-    $securePassword = $credentials.Password
-        
-        #convert secureString to text
-        try 
-        {
-            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
-        }
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
-        }
-
-        #create directory to store creds if it does not already exist
-        if(!(Test-Path $path))
-    {
-            try 
-            {
-                $result = New-Item -type Directory $path -ErrorAction Stop
-            } 
-            catch 
-            {
-                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
-            }
-    }
-
-        #save creds to file
-        try 
-        {
-            Set-Content $credentialsFilePath $user -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
-        }
-        try 
-        {
-            Add-Content $credentialsFilePath $password -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
-        }
-
-        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
-    }
-    end
-    {}
-}
-
-#this function is used to retrieve saved credentials for the current user
-function Get-CustomCredentials 
-{
-#input: path, credname
-  #output: credential object
-<#
-.SYNOPSIS
-  Retrieves saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
-Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
-#>
-  param
-  (
-        [parameter(mandatory = $false)]
-    [string] 
-        $path,
-    
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-  )
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
-        $credentialsFilePath = "$path\$credname.txt"
-        if(!(Test-Path $credentialsFilePath))
-      {
-            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
-        }
-
-        $credFile = Get-Content $credentialsFilePath
-    $user = $credFile[0]
-    $securePassword = $credFile[1] | ConvertTo-SecureString
-
-        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
-
-        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
-    }
-    end
-    {
-        return $customCredentials
-    }
-}
-#endregion
-
-#region variables
-#initialize variables
-#misc variables
-$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-$myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-$myvarOutputLogFile += "OutputLog.log"
-  
-############################################################################
-# command line arguments initialization
-############################################################################	
-#let's initialize parameters if they haven't been specified
-if ((!$get) -and !($acknowledge) -and !($resolve)) {throw "You must specify either get, acknowledge or resolve!"}
-if ($acknowledge -and $resolve) {throw "You must specify either acknowledge or resolve but not both!"}
-if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism Central"}
-if (!$prismCreds) {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-    if (!$username) 
-    {#if Prism username has not been specified ask for it
-        $username = Read-Host "Enter the Prism username"
-    } 
-
-    if (!$password) 
-    {#if password was not passed as an argument, let's prompt for it
-        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-    }
-    else 
-    {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-        Remove-Variable password
-    }
-} 
-else { #we are using custom credentials, so let's grab the username and password from that
-    try 
-    {
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-    }
-    catch 
-    {
-        Set-CustomCredentials -credname $prismCreds
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-    }
-}
-
-[System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
-#endregion
-
-#region processing
-
-    #! -get
-    #region -get
-    if ($get) {
-        #region prepare api call
-        $api_server = $prism
-        $api_server_port = "9440"
-        $api_server_endpoint = "/api/nutanix/v3/alerts/list"
-        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-            $api_server_endpoint
-        $method = "POST"
-        $length = 500
-        $headers = @{
-            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
-            "Content-Type"="application/json";
-            "Accept"="application/json"
-        }
-        $filter = "resolved!=true"
-        if ($severity) {$filter += ";severity==$($severity)"}
-        $content = @{
-            kind= "alert";
-            length= $length;
-            filter= $filter
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
-
-        #todo process multiple pages
-        #region make the api call
-        Write-Host "$(Get-Date) [INFO] Getting alerts from $prism..." -ForegroundColor Green
+      Do {
         try {
-            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-            if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
-            } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-            }
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved alerts from $prism" -ForegroundColor Cyan
+            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            
             if ($resp -is [string]) {
-                $alerts = $resp | ConvertFrom-Json -AsHashTable -Depth 20
+              $alerts = $resp | ConvertFrom-Json -AsHashTable -Depth 20
             } else {
                 $alerts = $resp
             }
+
+            $listLength = 0
+            if ($alerts.metadata.offset) {
+                $firstItem = $resp.metadata.offset
+            } else {
+                $firstItem = 0
+            }
+            if (($alerts.metadata.length -le $length) -and ($alerts.metadata.length -ne 1)) {
+                $listLength = $alerts.metadata.length
+            } else {
+                $listLength = $alerts.metadata.total_matches
+            }
+            Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($alerts.metadata.total_matches)" -ForegroundColor Green
+            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+
             if ($alerts.entities.count -eq 0) {
                 Write-Host "$(get-date) [WARNING] There are no active alerts of the specified type." -ForegroundColor Yellow
             } else {
-                Write-Host "$(Get-Date) [INFO] Processing results..." -ForegroundColor Green
                 ForEach ($alert in $alerts.entities) {
                     #substituting parameter values in the default message (as this varies for every alert)
                     $alert_message = $alert.status.resources.default_message
@@ -415,12 +158,164 @@ else { #we are using custom credentials, so let's grab the username and password
                     #adding the captured details to the final result
                     $myvarResults.Add((New-Object PSObject -Property $myvarAlert)) | Out-Null
                 }
-                if ($csv) {
-                    Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
-                    $myvarResults | export-csv -NoTypeInformation $csv
-                } else {
-                    $myvarResults | Sort-Object -Property latest_occurrence_time
-                }
+            }
+
+            #prepare the json payload for the next batch of entities/response
+            $content = @{
+                kind="alert";
+                offset=($alerts.metadata.length + $alerts.metadata.offset);
+                length=$length;
+                filter= $filter
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        }
+        catch {
+            $saved_error = $_.Exception.Message
+            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            Throw "$(get-date) [ERROR] $saved_error"
+        }
+        finally {
+            #add any last words here; this gets processed no matter what
+        }
+    }
+    While ($alerts.metadata.length -eq $length)
+    }
+
+    end
+    {
+      return $myvarResults
+    }
+}#end function FunctionName
+#endregion
+
+#region prep-work
+#check if we need to display help and/or history
+$HistoryText = @'
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+01/15/2020 sb   Initial release.
+04/15/2020 sb   Do over with sbourdeaud module
+################################################################################
+'@
+$myvarScriptName = ".\add-AhvNetwork.ps1"
+if ($help) {get-help $myvarScriptName; exit}
+if ($History) {$HistoryText; exit}
+
+#region module sbourdeaud is used for facilitating Prism REST calls
+$required_version = "3.0.7"
+if (!(Get-Module -Name sbourdeaud)) {
+  Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
+  try
+  {
+      Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+      Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+  }#end try
+  catch #we couldn't import the module, so let's install it
+  {
+      Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
+      try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
+      catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
+
+      try
+      {
+          Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+          Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+      }#end try
+      catch #we couldn't import the module
+      {
+          Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+          Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
+          Exit
+      }#end catch
+  }#end catch
+}#endif module sbourdeaud
+$MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
+if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
+  Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+  Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+  Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+  try {
+    Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+    Import-Module -Name sbourdeaud -ErrorAction Stop
+  }
+  catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+}
+#endregion
+Set-PoSHSSLCerts
+Set-PoshTls
+
+#endregion
+
+#region variables
+#initialize variables
+#misc variables
+$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+$myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
+$myvarOutputLogFile += "OutputLog.log"
+
+############################################################################
+# command line arguments initialization
+############################################################################	
+#let's initialize parameters if they haven't been specified
+if ((!$get) -and !($acknowledge) -and !($resolve)) {throw "You must specify either get, acknowledge or resolve!"}
+if ($acknowledge -and $resolve) {throw "You must specify either acknowledge or resolve but not both!"}
+if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism Central"}
+if (!$prismCreds) 
+{#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+    if (!$username) 
+    {#if Prism username has not been specified ask for it
+        $username = Read-Host "Enter the Prism username"
+    } 
+
+    if (!$password) 
+    {#if password was not passed as an argument, let's prompt for it
+        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
+    }
+    else 
+    {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
+        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+        Remove-Variable password
+    }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+} 
+else 
+{ #we are using custom credentials, so let's grab the username and password from that
+    try 
+    {
+        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+    }
+    catch 
+    {
+        $credname = Read-Host "Enter the credentials name"
+        Set-CustomCredentials -credname $credname
+        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+    }
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+}
+
+$api_server = $prism
+$api_server_port = "9440"
+[System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
+#endregion
+
+#region processing
+
+    #! -get
+    #region -get
+    if ($get) {
+        try {
+            $myvarResults = GetAlerts
+            if ($csv) {
+              Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
+              $myvarResults | export-csv -NoTypeInformation $csv
+            } else {
+                $myvarResults | Sort-Object -Property latest_occurrence_time
             }
         }
         catch {
@@ -437,37 +332,42 @@ else { #we are using custom credentials, so let's grab the username and password
     #region -acknowledge
     if ($acknowledge) {
         #region prepare api call
-        $api_server = $prism
-        $api_server_port = "9440"
         $api_server_endpoint = "/api/nutanix/v3/alerts/action/ACKNOWLEDGE"
         $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
             $api_server_endpoint
         $method = "POST"
         $length = 500
-        $headers = @{
-            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
-            "Content-Type"="application/json";
-            "Accept"="application/json"
-        }
-        $filter = "resolved!=true"
-        if ($severity) {$filter += ";severity==$($severity)"}
-        $content = @{
+
+        if (!$uuid) {
+          #$filter = "resolved!=true"
+          #if ($severity) {$filter += ";severity==$($severity)"}
+          #*retrieve alerts (as if -get)
+          $myvarResults = GetAlerts
+          $uuid_list = @()
+          Foreach ($alert in $myvarResults) {
+            if ($severity) {
+              $uuid_list = ($myvarResults | Where-Object {$_.severity -eq $severity}).uuid
+            } else {
+              $uuid_list = ($myvarResults).uuid
+            }
+          }
+          $content = @{
+            alert_uuid_list= @($uuid_list)
+          }
+        } else {
+          $content = @{
             alert_uuid_list= @($uuid)
+          }
         }
+        
         $payload = (ConvertTo-Json $content -Depth 4)
         #endregion
 
         #region make the api call
         Write-Host "$(Get-Date) [INFO] Acknowledging alert $uuid in $prism..." -ForegroundColor Green
         try {
-            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-            if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
-            } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-            }
-            Write-Host "$(Get-Date) [SUCCESS] Successfully triggered acknowledgement of alert $uuid in $prism" -ForegroundColor Cyan
+            $ack_task_uuid = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            $task_status = Get-PrismCentralTaskStatus -task $ack_task_uuid.task_uuid -credential $prismCredentials -cluster $prism
         }
         catch {
             $saved_error = $_.Exception.Message
@@ -483,41 +383,47 @@ else { #we are using custom credentials, so let's grab the username and password
     #region -resolve
     if ($resolve) {
         #region prepare api call
-        $api_server = $prism
-        $api_server_port = "9440"
         $api_server_endpoint = "/api/nutanix/v3/alerts/action/RESOLVE"
         $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
             $api_server_endpoint
         $method = "POST"
         $length = 500
-        $headers = @{
-            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))));
-            "Content-Type"="application/json";
-            "Accept"="application/json"
-        }
-        $filter = "resolved!=true"
-        if ($severity) {$filter += ";severity==$($severity)"}
-        $content = @{
+        
+        #todo: add code here to process anything but $uuid
+        if (!$uuid) {
+          #$filter = "resolved!=true"
+          #if ($severity) {$filter += ";severity==$($severity)"}
+          #*retrieve alerts (as if -get)
+          $myvarResults = GetAlerts
+          $uuid_list = @()
+          Foreach ($alert in $myvarResults) {
+            if ($severity) {
+              $uuid_list = ($myvarResults | Where-Object {$_.severity -eq $severity}).uuid
+            } else {
+              $uuid_list = ($myvarResults).uuid
+            }
+          }
+          $content = @{
+            alert_uuid_list= @($uuid_list)
+          }
+        } else {
+          $content = @{
             alert_uuid_list= @($uuid)
+          }
         }
+
         $payload = (ConvertTo-Json $content -Depth 4)
         #endregion
 
         #region make the api call
         Write-Host "$(Get-Date) [INFO] Resolving alert $uuid in $prism..." -ForegroundColor Green
         try {
-            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12
-            if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Body $payload -ErrorAction Stop
-            } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-            }
-            Write-Host "$(Get-Date) [SUCCESS] Successfully triggered resolution of alert $uuid in $prism" -ForegroundColor Cyan
+          $resolve_task_uuid = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+          $task_status = Get-PrismCentralTaskStatus -task $resolve_task_uuid.task_uuid -credential $prismCredentials -cluster $prism
         }
         catch {
             $saved_error = $_.Exception.Message
-            throw "$(get-date) [ERROR] $saved_error"
+            Throw "$(get-date) [ERROR] $saved_error"
         }
         finally {
         }
