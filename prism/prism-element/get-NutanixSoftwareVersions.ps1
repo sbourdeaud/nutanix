@@ -122,7 +122,8 @@ Set-PoshTls
 #region variables
 
 $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-[System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null)
+[System.Collections.ArrayList]$myvar_generic_results = New-Object System.Collections.ArrayList($null)
+[System.Collections.ArrayList]$myvar_nodes_reference = New-Object System.Collections.ArrayList($null)
 #endregion
 
 #region parameters validation
@@ -195,6 +196,18 @@ else
             $method = "GET"
             $myvar_node_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved information for node uuid $($myvar_node)!" -ForegroundColor Cyan
+
+            #capturing node reference for lcm data cross-check
+            if (!$nolcm) {
+                $myvar_node_reference = [ordered]@{
+                    "node_name" = $myvar_node_info.name;
+                    "node_uuid" = $myvar_node_info.uuid;
+                    "node_hypervisor_ip_address" = $myvar_node_info.hypervisor_address
+                }
+                $myvar_nodes_reference.Add((New-Object PSObject -Property $myvar_node_reference)) | Out-Null
+            }
+
+            #capturing relevant data for generic report
             if ($myvar_cluster_hypervisors -notcontains $myvar_node_info.hypervisor_full_name) {
                 $myvar_cluster_hypervisors += $myvar_node_info.hypervisor_full_name
             }
@@ -207,6 +220,7 @@ else
             if ($myvar_cluster_bmc_versions -notcontains $myvar_node_info.bmc_version) {
                 $myvar_cluster_bmc_versions += $myvar_node_info.bmc_version
             }
+
             #processsing disks information
             ($myvar_node_info.disk_hardware_configs | Get-Member -MemberType NoteProperty).Name | ForEach-Object {
                 if ($myvar_cluster_disk_types -notcontains $myvar_node_info.disk_hardware_configs.$_.model) {
@@ -234,7 +248,88 @@ else
         }
     #endregion
 
-    #region process results
+    #region get lcm updates
+        if (!$nolcm) {
+            Write-Host "$(get-date) [INFO] Retrieving lcm updates..." -ForegroundColor Green
+            $url = "https://$($cluster):9440/api/nutanix/v3/groups"
+            $method = "POST"
+            $payload= @"
+{
+  "entity_type": "lcm_available_version_v2",
+  "group_member_count": 500,
+  "group_member_attributes": [{
+    "attribute": "uuid"
+  }, {
+    "attribute": "entity_uuid"
+  }, {
+    "attribute": "entity_class"
+  }, {
+    "attribute": "status"
+  }, {
+    "attribute": "version"
+  }, {
+    "attribute": "dependencies"
+  }, {
+    "attribute": "single_group_uuid"
+  }, {
+    "attribute": "_master_cluster_uuid_"
+  }, {
+    "attribute": "order"
+  }],
+  "query_name": "lcm:VersionModel",
+  "filter_criteria": "_master_cluster_uuid_==[no_val]"
+}
+"@ 
+            $myvar_lcm_updates = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved lcm updates!" -ForegroundColor Cyan
+        }
+    #endregion
+
+    #region get lcm entities
+        if (!$nolcm) {
+            Write-Host "$(get-date) [INFO] Retrieving lcm entities..." -ForegroundColor Green
+            $url = "https://$($cluster):9440/api/nutanix/v3/groups"
+            $method = "POST"
+            $payload= @"
+{
+  "entity_type": "lcm_entity_v2",
+  "group_member_count": 500,
+  "group_member_attributes": [{
+    "attribute": "id"
+  }, {
+    "attribute": "uuid"
+  }, {
+    "attribute": "entity_model"
+  }, {
+    "attribute": "version"
+  }, {
+    "attribute": "location_id"
+  }, {
+    "attribute": "entity_class"
+  }, {
+    "attribute": "description"
+  }, {
+    "attribute": "last_updated_time_usecs"
+  }, {
+    "attribute": "request_version"
+  }, {
+    "attribute": "_master_cluster_uuid_"
+  }, {
+    "attribute": "entity_type"
+  }, {
+    "attribute": "single_group_uuid"
+  }],
+  "query_name": "lcm:EntityGroupModel",
+  "grouping_attribute": "location_id",
+  "filter_criteria": ""
+}
+"@ 
+            $myvar_lcm_entities = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved lcm entities!" -ForegroundColor Cyan
+        }
+    #endregion
+
+    #region process generic results
         $myvar_software_versions = [ordered]@{
             #from cluster information
             "cluster_name" = $myvar_cluster_info.name;
@@ -253,10 +348,66 @@ else
         if (!$nolcm) {
             $myvar_software_versions.lcm_version = ($myvar_lcm_info.value | ConvertFrom-Json).".return".version
         }
-        $myvarResults.Add((New-Object PSObject -Property $myvar_software_versions)) | Out-Null
+        $myvar_generic_results.Add((New-Object PSObject -Property $myvar_software_versions)) | Out-Null
         $myvar_software_versions | ft
         Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$($myvar_cluster_info.name)_sw_versions.csv" -ForegroundColor Green
-        $myvarResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($myvar_cluster_info.name)+"_sw_versions.csv")
+        $myvar_generic_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($myvar_cluster_info.name)+"_sw_versions.csv")
+    #endregion
+
+    #region process lcm detailed results
+        if (!$nolcm) {
+            [System.Collections.ArrayList]$myvar_entity_results = New-Object System.Collections.ArrayList($null)
+            [System.Collections.ArrayList]$myvar_update_results = New-Object System.Collections.ArrayList($null)
+
+            Foreach ($group_result in $myvar_lcm_updates.group_results) {
+                Foreach ($entity_id in $group_result.entity_results) {
+                    $myvar_software_versions = [ordered]@{
+                        "entity_class" = ($entity_id.data | Where-Object {$_.name -eq "entity_class"} | Select-Object -Property values).values.values;
+                        "status" = ($entity_id.data | Where-Object {$_.name -eq "status"} | Select-Object -Property values).values.values;
+                        "version" = ($entity_id.data | Where-Object {$_.name -eq "version"} | Select-Object -Property values).values.values;
+                        "dependencies" = (($entity_id.data | Where-Object {$_.name -eq "dependencies"} | Select-Object -Property values).values.values) -join ',';
+                        "order" = ($entity_id.data | Where-Object {$_.name -eq "order"} | Select-Object -Property values).values.values;
+                        "entity_uuid" = ($entity_id.data | Where-Object {$_.name -eq "entity_uuid"} | Select-Object -Property values).values.values;
+                        "lcm_uuid" = ($entity_id.data | Where-Object {$_.name -eq "uuid"} | Select-Object -Property values).values.values;
+                    }
+                    $myvar_update_results.Add((New-Object PSObject -Property $myvar_software_versions)) | Out-Null
+                }
+            }
+            
+            Foreach ($group_result in $myvar_lcm_entities.group_results) {
+                Foreach ($entity_id in $group_result.entity_results) {
+                    $myvar_software_versions = [ordered]@{
+                        #from cluster information
+                        "component" = $group_result.group_by_column_value;
+                        "software" = ($entity_id.data | Where-Object {$_.name -eq "entity_model"} | Select-Object -Property values).values.values;
+                        "version" = $(($entity_id.data | Where-Object {$_.name -eq "version"} | Select-Object -Property values).values.values);
+                        #"description" = ($entity_id.data | Where-Object {$_.name -eq "description"} | Select-Object -Property values).values.values;
+                        "entity_class" = ($entity_id.data | Where-Object {$_.name -eq "entity_class"} | Select-Object -Property values).values.values;
+                        "entity_type" = ($entity_id.data | Where-Object {$_.name -eq "entity_type"} | Select-Object -Property values).values.values;
+                        #"request_version" = ($entity_id.data | Where-Object {$_.name -eq "request_version"} | Select-Object -Property values).values.values;
+                        "id" = ($entity_id.data | Where-Object {$_.name -eq "id"} | Select-Object -Property values).values.values;
+                        "lcm_entity_uuid" = ($entity_id.data | Where-Object {$_.name -eq "uuid"} | Select-Object -Property values).values.values
+                    }
+                    $myvar_software_versions.update_version = (($myvar_update_results | Where-Object {$_.entity_uuid -eq $myvar_software_versions.lcm_entity_uuid}).version) | Select-Object -Last 1
+                    $myvar_software_versions.update_status = (($myvar_update_results | Where-Object {$_.entity_uuid -eq $myvar_software_versions.lcm_entity_uuid}).status) | Select-Object -Last 1
+                    #$myvar_software_versions.update_dependencies = (($myvar_update_results | Where-Object {$_.entity_uuid -eq $myvar_software_versions.lcm_entity_uuid}).dependencies) -join ','
+
+                    if ($group_result.group_by_column_value -like "cluster:*") {
+                        $myvar_software_versions.component_name = $myvar_cluster_info.name;
+                        $myvar_software_versions.component_ip = $myvar_cluster_info.cluster_external_ipaddress
+                    } else {
+                        $myvar_software_versions.component_name = ($myvar_nodes_reference | Where-Object {$_.node_uuid -eq $group_result.group_by_column_value.split(':')[1]}).node_name
+                        $myvar_software_versions.component_ip = ($myvar_nodes_reference | Where-Object {$_.node_uuid -eq $group_result.group_by_column_value.split(':')[1]}).node_hypervisor_ip_address
+                    }
+                    
+                    $myvar_entity_results.Add((New-Object PSObject -Property $myvar_software_versions)) | Out-Null
+                }
+            }
+            
+            $myvar_entity_results | ft
+            Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$($myvar_cluster_info.name)_lcm_report.csv" -ForegroundColor Green
+            $myvar_entity_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($myvar_cluster_info.name)+"_lcm_report.csv")
+        }
     #endregion
 
 #endregion
