@@ -66,22 +66,23 @@ if ($History) {$HistoryText; exit}
 if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
 #region module sbourdeaud is used for facilitating Prism REST calls
+$required_version = "3.0.8"
 if (!(Get-Module -Name sbourdeaud)) {
   Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
   try
   {
-      Import-Module -Name sbourdeaud -ErrorAction Stop
+      Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
       Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
   }#end try
   catch #we couldn't import the module, so let's install it
   {
       Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-      try {Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+      try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
       catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
 
       try
       {
-          Import-Module -Name sbourdeaud -ErrorAction Stop
+          Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
           Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
       }#end try
       catch #we couldn't import the module
@@ -93,9 +94,14 @@ if (!(Get-Module -Name sbourdeaud)) {
   }#end catch
 }#endif module sbourdeaud
 $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-if (($MyVarModuleVersion.Version.Major -lt 3) -or (($MyVarModuleVersion.Version.Major -eq 3) -and ($MyVarModuleVersion.Version.Minor -eq 0) -and ($MyVarModuleVersion.Version.Build -lt 1))) {
+if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
   Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-  try {Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop}
+  Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+  Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+  try {
+    Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+    Import-Module -Name sbourdeaud -ErrorAction Stop
+  }
   catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
 }
 #endregion

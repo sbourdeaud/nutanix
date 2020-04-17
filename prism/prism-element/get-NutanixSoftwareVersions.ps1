@@ -72,10 +72,10 @@ if ($History) {$HistoryText; exit}
 if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
 #check if we have all the required PoSH modules
-Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
+Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
 
 #region module sbourdeaud is used for facilitating Prism REST calls
-$required_version = "3.0.7"
+$required_version = "3.0.8"
 if (!(Get-Module -Name sbourdeaud)) {
     Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
     try
