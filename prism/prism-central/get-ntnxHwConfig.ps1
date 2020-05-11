@@ -32,19 +32,19 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the hardware c
 #>
 
 #region parameters
-Param
-(
-    #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
-    [parameter(mandatory = $false)] [switch]$help,
-    [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$log,
-    [parameter(mandatory = $false)] [switch]$debugme,
-    [parameter(mandatory = $true)] [string]$prism,
-    [parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $false)] $prismCreds,
-    [parameter(mandatory = $false)] [string]$csv
-)
+    Param
+    (
+        #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
+        [parameter(mandatory = $false)] [switch]$help,
+        [parameter(mandatory = $false)] [switch]$history,
+        [parameter(mandatory = $false)] [switch]$log,
+        [parameter(mandatory = $false)] [switch]$debugme,
+        [parameter(mandatory = $true)] [string]$prism,
+        [parameter(mandatory = $false)] [string]$username,
+        [parameter(mandatory = $false)] [string]$password,
+        [parameter(mandatory = $false)] $prismCreds,
+        [parameter(mandatory = $false)] [string]$csv
+    )
 #endregion
 
 #region prepwork
@@ -458,17 +458,17 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region Cleanup	
-#let's figure out how much time this all took
-Write-Host "$(Get-Date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+    #let's figure out how much time this all took
+    Write-Host "$(Get-Date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
-#cleanup after ourselves and delete all custom variables
-Remove-Variable myvar* -ErrorAction SilentlyContinue
-Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
-Remove-Variable help -ErrorAction SilentlyContinue
-Remove-Variable history -ErrorAction SilentlyContinue
-Remove-Variable log -ErrorAction SilentlyContinue
-Remove-Variable username -ErrorAction SilentlyContinue
-Remove-Variable password -ErrorAction SilentlyContinue
-Remove-Variable cluster -ErrorAction SilentlyContinue
-Remove-Variable debugme -ErrorAction SilentlyContinue
+    #cleanup after ourselves and delete all custom variables
+    Remove-Variable myvar* -ErrorAction SilentlyContinue
+    Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+    Remove-Variable help -ErrorAction SilentlyContinue
+    Remove-Variable history -ErrorAction SilentlyContinue
+    Remove-Variable log -ErrorAction SilentlyContinue
+    Remove-Variable username -ErrorAction SilentlyContinue
+    Remove-Variable password -ErrorAction SilentlyContinue
+    Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
