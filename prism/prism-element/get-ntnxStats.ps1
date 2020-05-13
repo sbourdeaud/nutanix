@@ -264,9 +264,14 @@ Generate one csv file per overview metric for the last 7 days.
                 [System.Collections.ArrayList]$myvar_metrics_timestamped_results = New-Object System.Collections.ArrayList($null)
                 $timestamp = $startdate
                 ForEach ($metric_value in $myvar_metrics_results.$metric) {
+                    if ($metric -eq "hypervisor_cpu_usage_ppm") {
+                        $formatted_metric_value = [math]::round($metric_value/10000,2)
+                    } else {
+                        $formatted_metric_value = $metric_value
+                    }
                     $myvar_metric_timestamped_result = [ordered]@{
                         "timestamp" = $timestamp;
-                        $metric = $metric_value
+                        $metric = $formatted_metric_value
                     }
                     $myvar_metrics_timestamped_results.Add((New-Object PSObject -Property $myvar_metric_timestamped_result)) | Out-Null
                     $timestamp = $timestamp.AddSeconds($interval)
@@ -320,18 +325,22 @@ Generate one csv file per overview metric for the last 7 days.
                     $myvar_thinned_datapoints = @()
                     $myvar_thinned_timestamps = @()
 
-                    #for ($i=0;$i -lt $Datapoints.count; $i += [math]::Round($Datapoints.count /100)) {$Datasets += ,@($Datapoints[$i..($i+[math]::Round($Datapoints.count /100)-1)]);}
+                    #thinning datasets
                     For ($i=0;$i -lt $myvar_datapoints.count; $i += [math]::Round($myvar_datapoints.count /100)) {
                         $myvar_dataset = @($myvar_datapoints[$i..($i+[math]::Round($myvar_datapoints.count /100)-1)]);
                         $myvar_thinned_datapoints += ,[math]::Round(($myvar_dataset | Measure-Object -Average).Average)
                     }
-
                     For ($i=0;$i -lt $myvar_timestamps.count; $i += [math]::Round($myvar_timestamps.count /10)) {
                         $myvar_dataset = @($myvar_timestamps[$i..($i+[math]::Round($myvar_timestamps.count /10)-1)]);
                         $myvar_thinned_timestamps += ,($myvar_dataset | Measure-Object -Maximum).Maximum
                     }
 
                     Show-Graph -Datapoints $myvar_thinned_datapoints -GraphTitle $metric -Type Bar -XAxisTitle "TimeIntervals" -YAxisStep ([math]::Round((($myvar_thinned_datapoints | Measure-Object -Maximum).Maximum - ($myvar_thinned_datapoints | Measure-Object -Minimum).Minimum) / 10)).ToString()
+                    Write-Host "$(Get-Date) [WARNING] Graph is smoothed using averages to limit the number of datapoints to about 100." -ForegroundColor Yellow
+                    Write-Host "$(Get-Date) [SUM] Complete data set average: $([math]::Round(($myvar_datapoints | Measure-Object -Average).Average,2))" -ForegroundColor Magenta
+                    Write-Host "$(Get-Date) [SUM] Complete data set maximum: $([math]::Round(($myvar_datapoints | Measure-Object -Maximum).Maximum,2))" -ForegroundColor Magenta
+                    Write-Host "$(Get-Date) [SUM] Complete data set minimum: $([math]::Round(($myvar_datapoints | Measure-Object -Minimum).Minimum,2))" -ForegroundColor Magenta
+                    Write-Host "$(Get-Date) [SUM] Complete data set std dev: $([math]::Round(($myvar_datapoints | Measure-Object -StandardDeviation).StandardDeviation,2))" -ForegroundColor Magenta
                     Write-Host "$(Get-Date) [INFO] Where TimeIntervals are:" -ForegroundColor Green
                     $myvar_timeinterval = 0
                     ForEach ($timestamp in $myvar_thinned_timestamps) {
