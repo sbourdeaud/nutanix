@@ -20,6 +20,8 @@
   Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER hour
+  Will set the start time and end time to match the last 1 hour minus 5 minutes.
 .PARAMETER day
   Will set the start time and end time to match the last 24 hours minus 5 minutes.
 .PARAMETER week
@@ -66,6 +68,7 @@ Generate one csv file per overview metric for the last 7 days.
         [parameter(mandatory = $false)] [string]$username,
         [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds,
+        [parameter(mandatory = $false)] [switch]$hour,
         [parameter(mandatory = $false)] [switch]$day,
         [parameter(mandatory = $false)] [switch]$week,
         [parameter(mandatory = $false)] [switch]$month,
@@ -152,7 +155,7 @@ Generate one csv file per overview metric for the last 7 days.
 #region parameters validation
 
     #make sure we have a time period specified
-    if ((!$day) -and (!$week) -and (!$month) -and (!($startdate -and $enddate))) {
+    if ((!$hour) -and (!$day) -and (!$week) -and (!$month) -and (!($startdate -and $enddate))) {
         Throw "$(get-date) [ERROR] You must specify a time period with -day, -week, -month or with -startdate and -enddate!"
     }
 
@@ -206,7 +209,13 @@ Generate one csv file per overview metric for the last 7 days.
 #region processing	
     
     #region figure out startdate and enddate in epoch microseconds
-        if ($day) {
+        if ($hour) {
+            $startdate = ((Get-Date).AddMinutes(-5)).AddHours(-1)
+            $enddate = (Get-Date).AddMinutes(-5)
+
+            $starttime_epoch_usecs = (Get-Date -Date $startdate -UFormat %s) + "000000"
+            $endtime_epoch_usecs = (Get-Date -Date $enddate -UFormat %s) + "000000"
+        } elseif ($day) {
             $startdate = ((Get-Date).AddMinutes(-5)).AddDays(-1)
             $enddate = (Get-Date).AddMinutes(-5)
 
@@ -264,7 +273,7 @@ Generate one csv file per overview metric for the last 7 days.
                 [System.Collections.ArrayList]$myvar_metrics_timestamped_results = New-Object System.Collections.ArrayList($null)
                 $timestamp = $startdate
                 ForEach ($metric_value in $myvar_metrics_results.$metric) {
-                    if ($metric -eq "hypervisor_cpu_usage_ppm") {
+                    if (($metric -eq "hypervisor_cpu_usage_ppm") -or ($metric -eq "hypervisor_memory_usage_ppm")) {
                         $formatted_metric_value = [math]::round($metric_value/10000,2)
                     } else {
                         $formatted_metric_value = $metric_value
@@ -335,7 +344,13 @@ Generate one csv file per overview metric for the last 7 days.
                         $myvar_thinned_timestamps += ,($myvar_dataset | Measure-Object -Maximum).Maximum
                     }
 
-                    Show-Graph -Datapoints $myvar_thinned_datapoints -GraphTitle $metric -Type Bar -XAxisTitle "TimeIntervals" -YAxisStep ([math]::Round((($myvar_thinned_datapoints | Measure-Object -Maximum).Maximum - ($myvar_thinned_datapoints | Measure-Object -Minimum).Minimum) / 10)).ToString()
+                    $myvar_y_axis_step = ([math]::Round((($myvar_thinned_datapoints | Measure-Object -Maximum).Maximum - ($myvar_thinned_datapoints | Measure-Object -Minimum).Minimum) / 10)).ToString()
+                    if ($myvar_y_axis_step -eq 0) {
+                        Show-Graph -Datapoints $myvar_thinned_datapoints -GraphTitle $metric -Type Bar -XAxisTitle "TimeIntervals" -YAxisStep 1
+                    } else {
+                        Show-Graph -Datapoints $myvar_thinned_datapoints -GraphTitle $metric -Type Bar -XAxisTitle "TimeIntervals" -YAxisStep $myvar_y_axis_step
+                    }
+                    
                     Write-Host "$(Get-Date) [WARNING] Graph is smoothed using averages to limit the number of datapoints to about 100." -ForegroundColor Yellow
                     Write-Host "$(Get-Date) [SUM] Complete data set average: $([math]::Round(($myvar_datapoints | Measure-Object -Average).Average,2))" -ForegroundColor Magenta
                     Write-Host "$(Get-Date) [SUM] Complete data set maximum: $([math]::Round(($myvar_datapoints | Measure-Object -Maximum).Maximum,2))" -ForegroundColor Magenta
