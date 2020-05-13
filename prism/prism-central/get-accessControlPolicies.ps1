@@ -156,18 +156,21 @@ Date       By   Updates (newest updates at the top)
 
 #region processing
 
-    $api_server_endpoint = "/api/nutanix/v3/access_control_policies/list"
-    $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-    $method = "POST"
-    $kind = "access_control_policy"
+    #region prepare the api call
+        $api_server_endpoint = "/api/nutanix/v3/access_control_policies/list"
+        $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+        $method = "POST"
+        $kind = "access_control_policy"
 
-    # this is used to capture the content of the payload
-    $content = @{
-        kind=$kind;
-        offset=0;
-        length=$length
-    }
-    $payload = (ConvertTo-Json $content -Depth 4)
+        # this is used to capture the content of the payload
+        $content = @{
+            kind=$kind;
+            offset=0;
+            length=$length
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+    #endregion
+
     Write-Host "$(Get-Date) [INFO] Retrieving access control policies from Prism Central $($prismcentral)" -ForegroundColor Green
     Do {
         try {
@@ -192,53 +195,69 @@ Date       By   Updates (newest updates at the top)
             #grab the information we need in each entity
             ForEach ($entity in $resp.entities) {
 
-                #figure what objects the acl applies to
-                [System.Collections.ArrayList]$myvar_entities = New-Object System.Collections.ArrayList($null)
-                
-                ForEach ($context in $entity.status.resources.filter_list.context_list) {
-                    ForEach ($entity_object in $context.entity_filter_expression_list) {
-                        $entity_object_property_left = $entity_object.left_hand_side.psobject.properties.name
-                        $entity_object_property_right = $entity_object.right_hand_side.psobject.properties.name
-                        if ($entity_object_property_left) {
-                            $left = $entity_object.left_hand_side.$entity_object_property_left;
-                        } else {
-                            $left = $entity_object.left_hand_side
-                        }
-                        $myvar_entity_object = [ordered]@{
-                            "left" = $left;
-                            "right" = $entity_object.right_hand_side.$entity_object_property_right;
-                        }
-                        $myvar_entities.Add((New-Object PSObject -Property $myvar_entity_object)) | Out-Null
-                        Remove-Variable entity_object_property_left -ErrorAction SilentlyContinue
-                        Remove-Variable entity_object_property_right -ErrorAction SilentlyContinue
-                    }
-                    ForEach ($scope in $context.scope_filter_expression_list) {
-                        $scope_property_left = $scope.left_hand_side.psobject.properties.name
-                        $scope_property_right = $scope.right_hand_side.psobject.properties.name
-                        if ($scope_property_left -ne "Length") {
-                            $left = $scope.left_hand_side.$scope_property_left;
-                        } else {
-                            $left = $scope.left_hand_side
-                        }
-                        if ($left -eq "CATEGORY") {
-                            $myvar_categories = @()
-                            ForEach ($category_name in $scope.right_hand_side.$scope_property_right) {
-                                $category_pair = $category_name.psobject.properties.name+":"+$category_name.($category_name.psobject.properties.name)
-                                $myvar_categories += $category_pair
+                #region figure what objects the acl applies to
+                    #initialize the variable we will use to keep track of objects/entities this acl applies to
+                    [System.Collections.ArrayList]$myvar_entities = New-Object System.Collections.ArrayList($null)
+                    
+                    #each acl contains entity and scope filters to determine objects it applies to
+                    ForEach ($context in $entity.status.resources.filter_list.context_list) {
+                        #process entities
+                        ForEach ($entity_object in $context.entity_filter_expression_list) {
+                            $entity_object_property_left = $entity_object.left_hand_side.psobject.properties.name
+                            $entity_object_property_right = $entity_object.right_hand_side.psobject.properties.name
+                            if ($entity_object_property_left) {
+                                $left = $entity_object.left_hand_side.$entity_object_property_left;
+                            } else {
+                                $left = $entity_object.left_hand_side
                             }
-                            $right = $myvar_categories -join ";"
-                        } else {
-                            $right = $scope.right_hand_side.$scope_property_right
+                            $myvar_entity_object = [ordered]@{
+                                "left" = $left;
+                                "right" = $entity_object.right_hand_side.$entity_object_property_right;
+                            }
+                            $myvar_entities.Add((New-Object PSObject -Property $myvar_entity_object)) | Out-Null
+                            Remove-Variable entity_object_property_left -ErrorAction SilentlyContinue
+                            Remove-Variable entity_object_property_right -ErrorAction SilentlyContinue
                         }
-                        $myvar_scope_object = [ordered]@{
-                            "left" = $left;
-                            "right" = $right;
+                        #process objects
+                        ForEach ($scope in $context.scope_filter_expression_list) {
+                            $scope_property_left = $scope.left_hand_side.psobject.properties.name
+                            $scope_property_right = $scope.right_hand_side.psobject.properties.name
+                            if ($scope_property_left -ne "Length") {
+                                $left = $scope.left_hand_side.$scope_property_left;
+                            } else {
+                                $left = $scope.left_hand_side
+                            }
+                            if ($left -eq "CATEGORY") {
+                                $myvar_categories = @()
+                                ForEach ($category_name in $scope.right_hand_side.$scope_property_right) {
+                                    $category_pair = $category_name.psobject.properties.name+":"+$category_name.($category_name.psobject.properties.name)
+                                    $myvar_categories += $category_pair
+                                }
+                                $right = $myvar_categories -join ";"
+                            } else {
+                                $right = $scope.right_hand_side.$scope_property_right
+                            }
+                            $myvar_scope_object = [ordered]@{
+                                "left" = $left;
+                                "right" = $right;
+                            }
+                            $myvar_entities.Add((New-Object PSObject -Property $myvar_scope_object)) | Out-Null
+                            Remove-Variable entity_object_property_left -ErrorAction SilentlyContinue
+                            Remove-Variable entity_object_property_right -ErrorAction SilentlyContinue
                         }
-                        $myvar_entities.Add((New-Object PSObject -Property $myvar_scope_object)) | Out-Null
-                        Remove-Variable entity_object_property_left -ErrorAction SilentlyContinue
-                        Remove-Variable entity_object_property_right -ErrorAction SilentlyContinue
                     }
-                }
+
+                    #TODO: some object references will contain uuids instead of names. Figure out the names to make it more human readable.
+                    #process each object in our list (type:value). If value is a uuid, then determine which api call to make 
+                    #based on the type and replace the entry with type:name instead of type:uuid (remove and add or update?)
+                    ForEach ($acl_object in $myvar_entities) {
+                        #split based on ':' Left part is type, right is value (name or uuid)
+                        #determine if value is uuid using a regex
+                        #if it is a uuid, determine the api call to make based on the type
+                        #make the api call and store the name of the object
+                        #replace the entry type:uuid with type:name
+                    }
+                #endregion
 
                 #grab other information about the acl and who it applies to
                 $myvar_entity_info = [ordered]@{
