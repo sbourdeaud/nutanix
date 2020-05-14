@@ -33,9 +33,9 @@
 .PARAMETER enddate
   Specifies the end date in the "DD/MM/YYYY" format (depending on your locale; this will actually accept any date time format).
 .PARAMETER interval
-  Specifies the stats interval in seconds (default is 60 seconds).
+  Specifies the stats interval in seconds (default is 60 seconds; depending on the time period, this can usually be no smaller than 30 seconds).
 .PARAMETER metric
-  Specify the name of the performance metric (for a full list of available metrics, use the API explorer documentation; some popular examples are: controller_avg_io_latency_usecs, controller_io_bandwidth_kBps, num_iops, hypervisor_cpu_usage_ppm, hypervisor_memory_usage_ppm).
+  Specify the name of the performance metric (for a full list of available metrics, use the API explorer documentation; some popular examples are: controller_avg_io_latency_usecs, controller_io_bandwidth_kBps, num_iops, hypervisor_cpu_usage_ppm, hypervisor_memory_usage_ppm).  You can TAB a couple times to see which metrics are available.
 .PARAMETER overview
   Will generate csvs for each of the following metrics: controller_avg_io_latency_usecs, controller_io_bandwidth_kBps, num_iops, hypervisor_cpu_usage_ppm, hypervisor_memory_usage_ppm.
 .PARAMETER graph
@@ -54,7 +54,7 @@ Generate one csv file per overview metric for the last 7 days.
   Revision: May 12th 2020
 #>
 
-#TODO: graphs - convert some data units
+#TODO: graphs - deal with unplotted values (because single linear value or below first y axis step)
 
 #region parameters
     Param
@@ -76,7 +76,141 @@ Generate one csv file per overview metric for the last 7 days.
         [parameter(mandatory = $false)] [int]$interval,
         [parameter(mandatory = $false)] [Datetime]$startdate,
         [parameter(mandatory = $false)] [Datetime]$enddate,
-        [parameter(mandatory = $false)] [string]$metric,
+        
+        [parameter(mandatory = $false)]
+        [ValidateSet(
+            "hypervisor_avg_io_latency_usecs",
+            "num_read_iops",
+            "hypervisor_write_io_bandwidth_kBps",
+            "timespan_usecs",
+            "controller_num_read_iops",
+            "read_io_ppm",
+            "controller_num_iops",
+            "total_read_io_time_usecs",
+            "controller_total_read_io_time_usecs",
+            "replication_transmitted_bandwidth_kBps",
+            "hypervisor_num_io",
+            "controller_total_transformed_usage_bytes",
+            "hypervisor_cpu_usage_ppm",
+            "controller_num_write_io",
+            "avg_read_io_latency_usecs",
+            "content_cache_logical_ssd_usage_bytes",
+            "controller_total_io_time_usecs",
+            "controller_total_read_io_size_kbytes",
+            "controller_num_seq_io",
+            "controller_read_io_ppm",
+            "content_cache_num_lookups",
+            "controller_total_io_size_kbytes",
+            "content_cache_hit_ppm",
+            "controller_num_io",
+            "hypervisor_avg_read_io_latency_usecs",
+            "content_cache_num_dedup_ref_count_pph",
+            "num_write_iops",
+            "controller_num_random_io",
+            "num_iops",
+            "replication_received_bandwidth_kBps",
+            "hypervisor_num_read_io",
+            "hypervisor_total_read_io_time_usecs",
+            "controller_avg_io_latency_usecs",
+            "hypervisor_hyperv_cpu_usage_ppm",
+            "num_io",
+            "controller_num_read_io",
+            "hypervisor_num_write_io",
+            "controller_seq_io_ppm",
+            "controller_read_io_bandwidth_kBps",
+            "controller_io_bandwidth_kBps",
+            "hypervisor_hyperv_memory_usage_ppm",
+            "hypervisor_timespan_usecs",
+            "hypervisor_num_write_iops",
+            "replication_num_transmitted_bytes",
+            "total_read_io_size_kbytes",
+            "hypervisor_total_io_size_kbytes",
+            "avg_io_latency_usecs",
+            "hypervisor_num_read_iops",
+            "content_cache_saved_ssd_usage_bytes",
+            "controller_write_io_bandwidth_kBps",
+            "controller_write_io_ppm",
+            "hypervisor_avg_write_io_latency_usecs",
+            "hypervisor_total_read_io_size_kbytes",
+            "read_io_bandwidth_kBps",
+            "hypervisor_esx_memory_usage_ppm",
+            "hypervisor_memory_usage_ppm",
+            "hypervisor_num_iops",
+            "hypervisor_io_bandwidth_kBps",
+            "controller_num_write_iops",
+            "total_io_time_usecs",
+            "hypervisor_kvm_cpu_usage_ppm",
+            "content_cache_physical_ssd_usage_bytes",
+            "controller_random_io_ppm",
+            "controller_avg_read_io_size_kbytes",
+            "total_transformed_usage_bytes",
+            "avg_write_io_latency_usecs",
+            "num_read_io",
+            "write_io_bandwidth_kBps",
+            "hypervisor_read_io_bandwidth_kBps",
+            "random_io_ppm",
+            "content_cache_num_hits",
+            "total_untransformed_usage_bytes",
+            "hypervisor_total_io_time_usecs",
+            "num_random_io",
+            "hypervisor_kvm_memory_usage_ppm",
+            "controller_avg_write_io_size_kbytes",
+            "controller_avg_read_io_latency_usecs",
+            "num_write_io",
+            "hypervisor_esx_cpu_usage_ppm",
+            "total_io_size_kbytes",
+            "io_bandwidth_kBps",
+            "content_cache_physical_memory_usage_bytes",
+            "replication_num_received_bytes",
+            "controller_timespan_usecs",
+            "num_seq_io",
+            "content_cache_saved_memory_usage_bytes",
+            "seq_io_ppm",
+            "write_io_ppm",
+            "controller_avg_write_io_latency_usecs",
+            "content_cache_logical_memory_usage_bytes",
+            "data_reduction.overall.saving_ratio_ppm",
+            "storage.reserved_free_bytes",
+            "storage_tier.das-sata.usage_bytes",
+            "data_reduction.compression.saved_bytes",
+            "data_reduction.saving_ratio_ppm",
+            "data_reduction.erasure_coding.post_reduction_bytes",
+            "storage_tier.ssd.pinned_usage_bytes",
+            "storage.reserved_usage_bytes",
+            "data_reduction.erasure_coding.saving_ratio_ppm",
+            "data_reduction.thin_provision.saved_bytes",
+            "storage_tier.das-sata.capacity_bytes",
+            "storage_tier.das-sata.free_bytes",
+            "storage.usage_bytes",
+            "data_reduction.erasure_coding.saved_bytes",
+            "data_reduction.compression.pre_reduction_bytes",
+            "storage_tier.das-sata.pinned_bytes",
+            "storage_tier.das-sata.pinned_usage_bytes",
+            "data_reduction.pre_reduction_bytes",
+            "storage_tier.ssd.capacity_bytes",
+            "data_reduction.clone.saved_bytes",
+            "storage_tier.ssd.free_bytes",
+            "data_reduction.dedup.pre_reduction_bytes",
+            "data_reduction.erasure_coding.pre_reduction_bytes",
+            "storage.capacity_bytes",
+            "data_reduction.dedup.post_reduction_bytes",
+            "data_reduction.clone.saving_ratio_ppm",
+            "storage.logical_usage_bytes",
+            "data_reduction.saved_bytes",
+            "storage.free_bytes",
+            "storage_tier.ssd.usage_bytes",
+            "data_reduction.compression.post_reduction_bytes",
+            "data_reduction.post_reduction_bytes",
+            "data_reduction.dedup.saved_bytes",
+            "data_reduction.overall.saved_bytes",
+            "data_reduction.thin_provision.saving_ratio_ppm",
+            "data_reduction.compression.saving_ratio_ppm",
+            "data_reduction.dedup.saving_ratio_ppm",
+            "storage_tier.ssd.pinned_bytes",
+            "storage.reserved_capacity_bytes"
+        )]
+        [string]$metric,
+        
         [parameter(mandatory = $false)] [switch]$graph
     )
 #endregion
@@ -278,6 +412,7 @@ Generate one csv file per overview metric for the last 7 days.
                     } else {
                         $formatted_metric_value = $metric_value
                     }
+                    if ($formatted_metric_value -lt 0) {$formatted_metric_value=0}
                     $myvar_metric_timestamped_result = [ordered]@{
                         "timestamp" = $timestamp;
                         $metric = $formatted_metric_value
