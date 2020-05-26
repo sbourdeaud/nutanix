@@ -263,7 +263,7 @@ Do {
         ForEach ($entity in $resp.entities) {
           if ($ngt) {
             $myvarClusterIp = ($myvarClusterResults | Where-Object {$_.uuid -eq $entity.spec.cluster_reference.uuid}).external_ip
-            if (!$myvarClusterIp) {throw "$(get-date) [ERROR] COuld not find external ip address of cluster $($entity.spec.cluster_reference.name)"}
+            if (!$myvarClusterIp) {throw "$(get-date) [ERROR] Could not find external ip address of cluster $($entity.spec.cluster_reference.name)"}
             $api_server_endpoint = "/PrismGateway/services/rest/v1/vms/?filterCriteria=vm_uuid%3D%3D{0}" -f $entity.metadata.uuid
             $url = "https://{0}:{1}{2}" -f $myvarClusterIp,$api_server_port, $api_server_endpoint
             $method = "GET"
