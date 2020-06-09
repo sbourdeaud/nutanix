@@ -87,12 +87,10 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
         Asynchronous protection domain name.
         .PARAMETER cluster
         FQDN or IP of Nutanix cluster.
-        .PARAMETER username
-        Nutanix cluster API username.
-        .PARAMETER password
-        Nutanix cluster API password (passed as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
         .EXAMPLE
-        Invoke-NtnxPdMigration -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        Invoke-NtnxPdMigration -pd <pd_name> -cluster ntnx1.local -credential $credential
         #>
         [CmdletBinding()]
         param
@@ -110,18 +108,18 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
 
         begin
         {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+            
         }
 
         process
         { 
             #region get data
                 #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+                Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+                $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
 
                 #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
                 if (!$pd) 
@@ -135,7 +133,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
 
                 if (!$pd) 
                 {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
+                    Write-Host "$(get-date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
                     Exit
                 }
             #endregion
@@ -148,32 +146,32 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
                     $remoteSite = $PdList.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
                     if (!$remoteSite.remote_site_names) 
                     {#no remote site defined or no schedule on the pd with a remote site
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $pd2migrate"
+                        Write-Host "$(get-date) [ERROR] There is no remote site defined for protection domain $pd2migrate" -ForegroundColor Red
                         Exit
                     }
                     if ($remoteSite -is [array]) 
                     {#more than 1 remote site target defined on the pd schedule
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $pd2migrate"
+                        Write-Host "$(get-date) [ERROR] There is more than one remote site for protection domain $pd2migrate" -ForegroundColor Red
                         Exit
                     }
 
                     #region migrate the protection domain
                         Write-Host ""
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Migrating $pd2migrate to $($remoteSite.remote_site_names) ..."
+                        Write-Host "$(get-date) [INFO] Migrating $pd2migrate to $($remoteSite.remote_site_names) ..." -ForegroundColor Green
                         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2migrate/migrate"
                         $method = "POST"
                         $content = @{
                                         value = $($remoteSite.remote_site_names)
                                     }
                         $body = (ConvertTo-Json $content -Depth 4)
-                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
+                        $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
                         if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
                         if ($response.metadata.count -ne 0)
                         {#something went wrong with our migration request
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused ny NGT being disabled on some VMs, or by delta disks due to old snapshots)."
+                            Write-Host "$(get-date) [ERROR] Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused ny NGT being disabled on some VMs, or by delta disks due to old snapshots)." -ForegroundColor Red
                             Exit
                         }
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)"
+                        Write-Host "$(get-date) [SUCCESS] Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)" -ForegroundColor Cyan
                     #endregion
 
                 }
@@ -199,12 +197,10 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
         Asynchronous protection domain name.
         .PARAMETER cluster
         FQDN or IP of Nutanix cluster.
-        .PARAMETER username
-        Nutanix cluster API username.
-        .PARAMETER password
-        Nutanix cluster API password (passed as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
         .EXAMPLE
-        Invoke-NtnxPdActivation -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        Invoke-NtnxPdActivation -pd <pd_name> -cluster ntnx1.local -credential $prism_credential
         #>
         [CmdletBinding()]
         param
@@ -226,18 +222,18 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
 
         begin
         {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+            
         }
 
         process
         {            
             #region get data
                 #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+                Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+                $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
 
                 #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
                 if (!$pd) 
@@ -251,7 +247,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
 
                 if (!$pd) 
                 {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
+                    Write-Host "$(get-date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
                     Exit
                 }
             #endregion
@@ -261,13 +257,13 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
             {#activate each pd
                 #region activate the protection domain
                     Write-Host ""
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Activating protection domain $($pd2activate) on $cluster ..."
+                    Write-Host "$(get-date) [INFO] Activating protection domain $($pd2activate) on $cluster ..." -ForegroundColor Green
                     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pd2activate)/activate"
                     $method = "POST"
                     $content = @{}
                     $body = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully activated protection domain $($pd2activate) on $cluster"
+                    $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
+                    Write-Host "$(get-date) [SUCCESS] Successfully activated protection domain $($pd2activate) on $cluster" -ForegroundColor Cyan
                 #endregion    
             }
         }
@@ -275,6 +271,116 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
         end
         {
             return $pd #list of protection domains which were processed
+        }
+    }
+
+    function Get-PrismPdTaskStatus
+    {
+        <#
+        .SYNOPSIS
+        Retrieves the status of all protection domain deactivation tasks created after a specific time.
+
+        .DESCRIPTION
+        Retrieves the status of all protection domain deactivation tasks created after a specific time.
+
+        .PARAMETER time
+        Time in epoch seconds.
+        .PARAMETER cluster
+        Prism IP or fqdn.
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Get-PrismTaskStatus -Task $task -Cluster $cluster -credential $prism_credential
+        Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param
+        (
+            [Parameter(Mandatory)]
+            $time,
+            
+            [Parameter(Mandatory)]
+            [String]
+            [ValidateSet('activate','deactivate')]
+            $operation,
+
+            [Parameter(Mandatory)]
+            [String]
+            $cluster,
+            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential   
+        )
+
+        begin
+        {
+            
+        }
+
+        process 
+        {
+            Write-Host ""
+            Write-Host "$(get-date) [INFO] Retrieving list of tasks on the cluster $cluster ..." -ForegroundColor Green
+            Start-Sleep 10
+            
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+            $method = "GET"
+            $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+            Write-Host "$(get-date) [SUCCESS] Retrieved list of tasks on the cluster $cluster" -ForegroundColor Cyan
+            
+            Do
+            {
+                $pdTasks = $response.entities | Where-Object {$_.operation -eq $operation} | Where-Object {($_.createTimeUsecs / 1000000) -ge $time}
+            }
+            While (!$pdTasks)
+
+            #let's loop now until the task status is completed and successfull. If a task fails, we'll throw an exception.
+            ForEach ($pdTask in $pdTasks) 
+            {
+                if ($pdTask.percentageCompleted -ne "100") 
+                {
+                    Do 
+                    {
+                        Write-Host "$(get-date) [WARNING] Waiting 5 seconds for task $($pdTask.taskName) to complete : $($pdTask.percentageCompleted)%" -ForegroundColor Yellow
+                        Start-Sleep 5
+                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+                        $method = "GET"
+                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                        $task = $response.entities | Where-Object {$_.taskName -eq $pdTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
+                        if ($task.status -ne "running") 
+                        {#task is no longer running
+                            if ($task.status -ne "succeeded") 
+                            {#task failed
+                                Write-Host "$(get-date) [ERROR] Task $($pdTask.taskName) failed with the following status and error code : $($task.status) : $($task.errorCode)" -ForegroundColor Red
+                                Exit
+                            }
+                        }
+                    }
+                    While ($task.percentageCompleted -ne "100")
+                    
+                    Write-Host "$(get-date) [SUCCESS] Protection domain migration task $($pdTask.taskName) completed on the cluster $cluster" -ForegroundColor Cyan
+                    Write-Host ""
+                } 
+                else 
+                {
+                    Write-Host "$(get-date) [SUCCESS] Protection domain migration task $($pdTask.taskName) completed on the cluster $cluster" -ForegroundColor Cyan
+                    Write-Host ""
+                }
+            }
+        }
+        
+        end
+        {
+
         }
     }
 #endregion
@@ -352,11 +458,11 @@ Date       By   Updates (newest updates at the top)
     if (!$reference) {
         if (!$fsname) {$fsname = Read-Host "Enter the name of the file server you want to failover"}
         #check if there is a default reference file for this file server in the current directory
-        if (Test-Path ./$($fsname)-reference.csv -PathType Leaf) {
+        if ((Test-Path ./$($fsname)-reference.csv -PathType Leaf) -and !$prism) {
             Write-Host "$(get-date) [INFO] Found a reference file called $($fsname)-reference.csv in the current directory." -ForegroundColor Green
             $reference_data = Import-Csv -Path ./$($fsname)-reference.csv
         } else {
-            Write-Host "$(get-date) [WARN] Could not find a reference file for file server $($fsname) in the current directory." -ForegroundColor Yellow
+            Write-Host "$(get-date) [WARN] Could not find a reference file for file server $($fsname) in the current directory or you specified a Prism cluster." -ForegroundColor Yellow
             if (!$prism) {$prism = Read-Host "Enter the FQDN or IP address of a Nutanix cluster"}
             if (!$prismCreds) 
             {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
@@ -483,6 +589,8 @@ Date       By   Updates (newest updates at the top)
     #endregion
     
     #region check prism connectivity
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] --Verifying Connectivity to Prism(s)--" -ForegroundColor Magenta
         if ($reference_data) {
             if ($failover -eq "planned") {
                 #TODO check if primary site is available (IF yes and unplanned, then error out)
@@ -507,27 +615,55 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $($prism) ..." -ForegroundColor Green
             $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/cluster/"
             $method = "GET"
-            $primary_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $prism_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $($prism)" -ForegroundColor Cyan
         
-            Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $($prism) is of type $($primary_cluster_details.hypervisor_types)." -ForegroundColor Green
+            Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $($prism) is of type $($prism_cluster_details.hypervisor_types)." -ForegroundColor Green
         }
     #endregion
-    
-    #region additional checks before proceeding with failover
-        #TODO check protection domain exists, figure out remote site
-            #* code reuse
-        #TODO check remote site exists
-            #* code reuse
-        #TODO figure out which way the replication is occuring and build the reference_data we need if it does not exist
-        #TODO if MAIL, send notification email
-    #endregion
-    
+  
     #region failover pd
-        #TODO migrate or activate protection domain
-            #* code reuse
-        #TODO check status of pd migration/activation
-            #* code reuse
+        if ($failover -eq "planned") {
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Triggering Protection Domain Migration--" -ForegroundColor Magenta
+
+            if ($reference_data) {
+                $cluster = $reference_data.{prism-primary}              
+                if ($reference_data.pd) {
+                    $pd = $reference_data.pd
+                } else {
+                    $pd = "NTNX-$($reference_data.fsname)"
+                }
+            } else {
+                $cluster = $prism
+            }
+
+            $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -credential $prismCredentials
+            if ($debugme) {Write-Host "$(get-date) [DEBUG] Processed pds: $processed_pds" -ForegroundColor White}
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "deactivate"
+
+            #TODO check status of activation on remote site
+        }
+
+        if ($failover -eq "unplanned") {
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Triggering Protection Domain Activation--" -ForegroundColor Magenta
+
+            if ($reference_data) {
+                $cluster = $reference_data.{prism-dr}              
+                if ($reference_data.pd) {
+                    $pd = $reference_data.pd
+                } else {
+                    $pd = "NTNX-$($reference_data.fsname)"
+                }
+            } else {
+                $cluster = $prism
+            }
+
+            $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
+            if ($debugme) {Write-Host "$(get-date) [DEBUG] Processed pds: $processed_pds" -ForegroundColor White}
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "activate"
+        }
         #TODO if MAIL, send notification email
     #endregion
     

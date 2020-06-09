@@ -469,16 +469,14 @@ Param
         Time in epoch seconds.
         .PARAMETER cluster
         Prism IP or fqdn.
-        .PARAMETER username
-        Prism username.
-        .PARAMETER password
-        Prism password (as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
 
         .NOTES
         Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
 
         .EXAMPLE
-        .\Get-PrismTaskStatus -Task $task -Cluster $cluster -Username $username -Password $SecureString
+        .\Get-PrismTaskStatus -Task $task -Cluster $cluster -credential $prism_credential
         Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
 
         .LINK
