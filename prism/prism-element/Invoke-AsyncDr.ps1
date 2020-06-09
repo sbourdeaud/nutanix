@@ -55,8 +55,8 @@ Disable the specified protection domain and delete VMs.
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 5th 2018
-  Version: 0.1
+  Revision: June 9th 2020
+  Version: 0.2
 #>
 
 #region parameters
@@ -1000,6 +1000,7 @@ $HistoryText = @'
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  10/08/2018 sb   Initial release.
+ 06/09/2020 sb   Do over with new sbourdeaud module
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-AsyncDr.ps1"

@@ -433,13 +433,85 @@ Date       By   Updates (newest updates at the top)
 
 #region processing
     #region check we have the data we need
-        #TODO check reference_data (if it exists) and validate entries
-        #TODO ELSE prompt prism to see if we are the primary or dr site
+        #check reference_data (if it exists) and validate entries
+        if ($reference_data) {
+            if (!$reference_data.fsname) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute fsname" -ForegroundColor Error; exit 1}
+            if (!$reference_data.{prism-primary}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-primary" -ForegroundColor Error; exit 1}
+            if (!$reference_data.{prism-dr}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-dr" -ForegroundColor Error; exit 1}
+            if (!$reference_data.{primary-client-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute primary-client-network-name" -ForegroundColor Error; exit 1}
+            if (!$reference_data.{primary-storage-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute primary-storage-network-name" -ForegroundColor Error; exit 1}
+            if (!$reference_data.{dr-client-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute dr-client-network-name" -ForegroundColor Error; exit 1}
+            if (!$reference_data.{dr-storage-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute dr-storage-network-name" -ForegroundColor Error; exit 1}
+            if (!$reference_data.prismcreds) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prismcreds" -ForegroundColor Error; exit 1}
+            if ($dns -and !$reference_data.adcreds) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute adcreds" -ForegroundColor Error; exit 1}
+            if ($mail -and (!$smtp -or !$email)) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute smtp and/or email" -ForegroundColor Error; exit 1}
+
+            #import prismcrendentials
+            try {
+                $prismCredentials = Get-CustomCredentials -credname $reference_data.prismcreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            catch 
+            {
+                $credname = Read-Host "Enter the Prism credentials name"
+                Set-CustomCredentials -credname $credname
+                $prismCredentials = Get-CustomCredentials -credname $reference_data.prismcreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+            
+            #import adcredentials
+            if ($dns -and $reference_data.adcreds) {
+                try {
+                    $ad_credentials = Get-CustomCredentials -credname $reference_data.adcreds -ErrorAction Stop
+                    $ad_username = $ad_credentials.UserName
+                    $ad_secure_password = $ad_credentials.Password
+                }
+                catch 
+                {
+                    $credname = Read-Host "Enter the AD credentials name"
+                    Set-CustomCredentials -credname $credname
+                    $ad_credentials = Get-CustomCredentials -credname $reference_data.adcreds -ErrorAction Stop
+                    $ad_username = $ad_credentials.UserName
+                    $ad_secure_password = $ad_credentials.Password
+                }
+                $ad_credentials = New-Object PSCredential $ad_username, $PrismSecurePassword
+            }
+        }
     #endregion
     
     #region check prism connectivity
-        #TODO check if primary site is available (IF yes and unplanned, then error out)
-        #TODO check if dr site is available (IF not, error out)
+        if ($reference_data) {
+            if ($failover -eq "planned") {
+                #TODO check if primary site is available (IF yes and unplanned, then error out)
+                Write-Host "$(get-date) [INFO] Retrieving details of PRIMARY Nutanix cluster $($reference_data.{prism-primary}) ..." -ForegroundColor Green
+                $url = "https://$($reference_data.{prism-primary}):9440/PrismGateway/services/rest/v2.0/cluster/"
+                $method = "GET"
+                $primary_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
+            
+                Write-Host "$(get-date) [INFO] Hypervisor on PRIMARY Nutanix cluster $($reference_data.{prism-primary}) is of type $($primary_cluster_details.hypervisor_types)." -ForegroundColor Green
+            }
+            #TODO check if dr site is available (IF not, error out)
+            Write-Host "$(get-date) [INFO] Retrieving details of DR Nutanix cluster $($reference_data.{prism-dr}) ..." -ForegroundColor Green
+            $url = "https://$($reference_data.{prism-dr}):9440/PrismGateway/services/rest/v2.0/cluster/"
+            $method = "GET"
+            $dr_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
+
+            Write-Host "$(get-date) [INFO] Hypervisor on DR Nutanix cluster $($reference_data.{prism-dr}) is of type $($dr_cluster_details.hypervisor_types)." -ForegroundColor Green
+        } else {
+            #TODO check connectivity to prism
+            Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $($prism) ..." -ForegroundColor Green
+            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/cluster/"
+            $method = "GET"
+            $primary_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $($prism)" -ForegroundColor Cyan
+        
+            Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $($prism) is of type $($primary_cluster_details.hypervisor_types)." -ForegroundColor Green
+        }
     #endregion
     
     #region additional checks before proceeding with failover
@@ -447,6 +519,7 @@ Date       By   Updates (newest updates at the top)
             #* code reuse
         #TODO check remote site exists
             #* code reuse
+        #TODO figure out which way the replication is occuring and build the reference_data we need if it does not exist
         #TODO if MAIL, send notification email
     #endregion
     
