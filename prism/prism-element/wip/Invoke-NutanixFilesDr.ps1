@@ -211,13 +211,9 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
             [String]
             $cluster,
             
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential  
         )
 
         begin
@@ -642,7 +638,59 @@ Date       By   Updates (newest updates at the top)
             if ($debugme) {Write-Host "$(get-date) [DEBUG] Processed pds: $processed_pds" -ForegroundColor White}
             Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "deactivate"
 
-            #TODO check status of activation on remote site
+            #check status of activation on remote site
+            #region check remote
+                #let's retrieve the list of protection domains
+                Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                $method = "GET"
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
+
+                ForEach ($protection_domain in $processed_pds)
+                {#figure out the remote site ips
+                    #region figure out the remote site
+                        #figure out if there is more than one remote site defined for the protection domain
+                        $remoteSite = $PdList.entities | Where-Object {$_.name -eq $protection_domain} | Select-Object -Property remote_site_names
+                        if (!$remoteSite.remote_site_names) 
+                        {#no remote site defined or no schedule on the pd with a remote site
+                            Write-Host "$(get-date) [ERROR] There is no remote site defined for protection domain $protection_domain" -ForegroundColor Red
+                            Exit
+                        }
+                        if ($remoteSite -is [array]) 
+                        {#more than 1 remote site target defined on the pd schedule
+                            Write-Host "$(get-date) [ERROR] There is more than one remote site for protection domain $protection_domain" -ForegroundColor Red
+                            Exit
+                        }
+
+                        #get the remote site IP address
+                        Write-Host "$(get-date) [INFO] Retrieving details about remote site $($remoteSite.remote_site_names) ..." -ForegroundColor Green
+                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
+                        $method = "GET"
+                        $remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved details about remote site $($remoteSite.remote_site_names)" -ForegroundColor Cyan
+
+                        if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
+                        {#there are multiple IPs defined for the remote site
+                            Write-Host "$(get-date) [ERROR] There is more than 1 IP configured for the remote site $remoteSite" -ForegroundColor Red
+                            Exit
+                        }
+                    #endregion
+                    
+                    if ($remote_site_ips -notcontains $remote_site.remote_ip_ports.psobject.properties.name)
+                    {#we haven't had that remote site yet
+                        $remote_site_ips += $remote_site.remote_ip_ports.psobject.properties.name #add remote site ip to an array here
+                    }
+                    
+                }
+
+                ForEach ($remote_site_ip in $remote_site_ips)
+                {#check the protection domains have been successfully activated on each remote site
+                    Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $remote_site_ip -credential $prismCredentials -operation "activate"
+                }
+            #endregion
+
+            #TODO check remote site configured on PD matches dr site in reference file
         }
 
         if ($failover -eq "unplanned") {
@@ -656,8 +704,21 @@ Date       By   Updates (newest updates at the top)
                 } else {
                     $pd = "NTNX-$($reference_data.fsname)"
                 }
+
+                #safeguard here to check if primary cluster is responding to ping before triggering activation
+                Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
+                if ((Test-Connection $reference_data.{prism-primary} -Count 5))
+                {#ping was successfull
+                    Write-Host "$(get-date) [ERROR] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Aborting protection domain activation!" -ForegroundColor Red
+                    Exit 1
+                } 
+                else 
+                {#ping failed
+                    Write-Host "$(get-date) [SUCCESS] Cannot ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Proceeding with protection domain activation on DR."
+                }                
             } else {
                 $cluster = $prism
+                #TODO: add safeguard here to check if primary cluster is responding to ping before triggering activation
             }
 
             $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
