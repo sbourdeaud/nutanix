@@ -74,7 +74,209 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
 #endregion
 
 #region functions
+    function Invoke-NtnxPdMigration
+    {
+        <#
+        .SYNOPSIS
+        Triggers an asynchronous protection domain migration.
+        .DESCRIPTION
+        Triggers an asynchronous protection domain migration which (1)shuts down VMs, (2)syncs data with the remote site defined in its schedule, (3)unregisters VMs at the source and (4)registers VM on the remote site.
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER pd
+        Asynchronous protection domain name.
+        .PARAMETER cluster
+        FQDN or IP of Nutanix cluster.
+        .PARAMETER username
+        Nutanix cluster API username.
+        .PARAMETER password
+        Nutanix cluster API password (passed as a secure string).
+        .EXAMPLE
+        Invoke-NtnxPdMigration -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        #>
+        [CmdletBinding()]
+        param
+        (
+            $pd,
 
+            [Parameter(Mandatory)]
+            [String]
+            $cluster,
+            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential            
+        )
+
+        begin
+        {
+            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+        }
+
+        process
+        { 
+            #region get data
+                #let's retrieve the list of protection domains
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                $method = "GET"
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+
+                #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+                if (!$pd) 
+                {#no pd specified
+                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
+                } 
+                else 
+                {#fetch specified pd
+                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+                }
+
+                if (!$pd) 
+                {
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
+                    Exit
+                }
+            #endregion
+
+            #region process
+                #now let's call the migrate workflow
+                ForEach ($pd2migrate in $pd) 
+                {
+                    #figure out if there is more than one remote site defined for the protection domain
+                    $remoteSite = $PdList.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
+                    if (!$remoteSite.remote_site_names) 
+                    {#no remote site defined or no schedule on the pd with a remote site
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $pd2migrate"
+                        Exit
+                    }
+                    if ($remoteSite -is [array]) 
+                    {#more than 1 remote site target defined on the pd schedule
+                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $pd2migrate"
+                        Exit
+                    }
+
+                    #region migrate the protection domain
+                        Write-Host ""
+                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Migrating $pd2migrate to $($remoteSite.remote_site_names) ..."
+                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2migrate/migrate"
+                        $method = "POST"
+                        $content = @{
+                                        value = $($remoteSite.remote_site_names)
+                                    }
+                        $body = (ConvertTo-Json $content -Depth 4)
+                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
+                        if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
+                        if ($response.metadata.count -ne 0)
+                        {#something went wrong with our migration request
+                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused ny NGT being disabled on some VMs, or by delta disks due to old snapshots)."
+                            Exit
+                        }
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)"
+                    #endregion
+
+                }
+            #endregion
+        }
+
+        end
+        {
+        return $pd #list of protection domains which were processed 
+        }
+    }
+
+    function Invoke-NtnxPdActivation
+    {
+        <#
+        .SYNOPSIS
+        Activates a Nutanix asynchronous protection domain (as part of an unplanned failover).
+        .DESCRIPTION
+        Activates a Nutanix asynchronous protection domain (as part of an unplanned failover), which will register VMs on the Nutanix cluster.
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER pd
+        Asynchronous protection domain name.
+        .PARAMETER cluster
+        FQDN or IP of Nutanix cluster.
+        .PARAMETER username
+        Nutanix cluster API username.
+        .PARAMETER password
+        Nutanix cluster API password (passed as a secure string).
+        .EXAMPLE
+        Invoke-NtnxPdActivation -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        #>
+        [CmdletBinding()]
+        param
+        (
+            $pd,
+
+            [Parameter(Mandatory)]
+            [String]
+            $cluster,
+            
+            [Parameter(Mandatory)]
+            [String]
+            $username,
+            
+            [Parameter(Mandatory)]
+            [SecureString]
+            $password
+        )
+
+        begin
+        {
+            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+        }
+
+        process
+        {            
+            #region get data
+                #let's retrieve the list of protection domains
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                $method = "GET"
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+
+                #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+                if (!$pd) 
+                {#no pd specified
+                    $pd = ($PdList.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name
+                } 
+                else 
+                {#fetch specified pd
+                    $pd = ($PdList.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+                }
+
+                if (!$pd) 
+                {
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
+                    Exit
+                }
+            #endregion
+
+            #now let's call the activate workflow
+            ForEach ($pd2activate in $pd) 
+            {#activate each pd
+                #region activate the protection domain
+                    Write-Host ""
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Activating protection domain $($pd2activate) on $cluster ..."
+                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pd2activate)/activate"
+                    $method = "POST"
+                    $content = @{}
+                    $body = (ConvertTo-Json $content -Depth 4)
+                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully activated protection domain $($pd2activate) on $cluster"
+                #endregion    
+            }
+        }
+
+        end
+        {
+            return $pd #list of protection domains which were processed
+        }
+    }
 #endregion
 
 #region prepwork

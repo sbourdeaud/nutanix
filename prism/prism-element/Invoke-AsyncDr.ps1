@@ -383,18 +383,14 @@ Param
             [String]
             $cluster,
             
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential   
         )
 
         begin
         {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+            
         }
 
         process 
@@ -403,7 +399,7 @@ Param
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of task $task..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
                 $method = "GET"
-                $taskDetails = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved details of task $task"
             #endregion
 
@@ -415,7 +411,7 @@ Param
                     Start-Sleep 5
                     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
                     $method = "GET"
-                    $taskDetails = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                    $taskDetails = Invoke-PrismRESTCall -method $method -url $url -crdential $credential
                     
                     if ($taskDetails.progress_status -ne "Running") 
                     {
@@ -504,18 +500,14 @@ Param
             [String]
             $cluster,
             
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential   
         )
 
         begin
         {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+            
         }
 
         process 
@@ -526,7 +518,7 @@ Param
             
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
             $method = "GET"
-            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+            $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the cluster $cluster"
             
             Do
@@ -546,7 +538,7 @@ Param
                         Start-Sleep 5
                         $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
                         $method = "GET"
-                        $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
                         $task = $response.entities | Where-Object {$_.taskName -eq $pdTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
                         if ($task.status -ne "running") 
                         {#task is no longer running
@@ -605,13 +597,9 @@ Param
             [String]
             $cluster,
             
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential            
         )
 
         begin
@@ -626,7 +614,7 @@ Param
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
@@ -672,7 +660,7 @@ Param
                                         value = $($remoteSite.remote_site_names)
                                     }
                         $body = (ConvertTo-Json $content -Depth 4)
-                        $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
                         if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
                         if ($response.metadata.count -ne 0)
                         {#something went wrong with our migration request
@@ -742,7 +730,7 @@ Param
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
@@ -772,7 +760,7 @@ Param
                     $method = "POST"
                     $content = @{}
                     $body = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully activated protection domain $($pd2activate) on $cluster"
                 #endregion    
             }
@@ -813,18 +801,14 @@ Param
             [String]
             $cluster,
             
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential   
         )
 
         begin
         {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+            
         }
 
         process
@@ -834,7 +818,7 @@ Param
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 #first, we need to figure out which protection domains need to be deactivated. If none have been specified, we'll assume all of them which are active.
@@ -865,7 +849,7 @@ Param
                     $method = "POST"
                     $content = @{}
                     $body = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started deactivation of protection domain $pd2deactivate on $cluster"
                 }
             #endregion
@@ -906,18 +890,14 @@ Param
             [String]
             $cluster,
             
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential   
         )
 
         begin
         {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
+            
         }
 
         process
@@ -927,7 +907,7 @@ Param
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
@@ -957,7 +937,7 @@ Param
                     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of VMs on $cluster ..."
                     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
                     $method = "GET"
-                    $vms_info = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                    $vms_info = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of VMs on $cluster"
                 #endregion
 
@@ -983,10 +963,10 @@ Param
                                 uuid = $vm_uuid
                             }
                             $body = (ConvertTo-Json $content -Depth 4)
-                            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) -body $body
+                            $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully created task to power on VM $($vm.vm_name) on $cluster"
                             
-                            Get-PrismTaskStatus -task $response.task_uuid -cluster $cluster -username $username -password $PrismSecurePassword
+                            Get-PrismTaskStatus -task $response.task_uuid -cluster $cluster -credential $prismCredentials
                         #endregion
                     }
                 }
@@ -1055,35 +1035,40 @@ $HistoryText = @'
         }
 
         if (!$prismCreds) 
-        {#no stored creds
+        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
             if (!$username) 
-            {#no username specified
-                $username = Read-Host "Enter the Prism user"
+            {#if Prism username has not been specified ask for it
+                $username = Read-Host "Enter the Prism username"
             } 
 
-            if (!$password) #if it was not passed as an argument, let's prompt for it
-            {#no password specified
+            if (!$password) 
+            {#if password was not passed as an argument, let's prompt for it
                 $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
             }
             else 
-            {#if it was passed as an argument, let's convert the string to a secure string and flush the memory
-                try
-                {#convert password to secure
-                    $PrismSecurePassword = ConvertTo-SecureString $password –AsPlainText –Force
-                }
-                catch
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not convert password to secure string: $($_.Exception.Message)"
-                    Exit
-                }
+            {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
+                $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
                 Remove-Variable password
             }
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
         } 
         else 
-        {#stored creds were used
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
+        { #we are using custom credentials, so let's grab the username and password from that
+            try 
+            {
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            catch 
+            {
+                $credname = Read-Host "Enter the credentials name"
+                Set-CustomCredentials -credname $credname
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
         }
 
     #endregion
@@ -1101,60 +1086,48 @@ $HistoryText = @'
 
         #TODO: review this code region for errors
         #region module sbourdeaud is used for facilitating Prism REST calls
-            if (!(Get-Module -Name sbourdeaud)) 
-            {#module is not loaded
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing module 'sbourdeaud'..."
-                try
-                {#try loading the module
-                    Import-Module -Name sbourdeaud -ErrorAction Stop
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-                }
-                catch 
-                {#we couldn't import the module, so let's install it
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Installing module 'sbourdeaud' from the Powershell Gallery..."
-                    try 
-                    {#install
-                        Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-                    }
-                    catch 
-                    {#couldn't install
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not install module 'sbourdeaud': $($_.Exception.Message)"
-                        Exit
-                    }
-
-                    try
-                    {#import
-                        Import-Module -Name sbourdeaud -ErrorAction Stop
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-                    }
-                    catch 
-                    {#we couldn't import the module
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)"
-                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1"
-                        Exit
-                    }
-                }
-            }#endif module sbourdeaud
-            if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 2)) 
+            $required_version = "3.0.8"
+            if (!(Get-Module -Name sbourdeaud)) {
+            Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
+            try
             {
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating module 'sbourdeaud'..."
-                try 
-                {#update the module
-                    Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-                }
-                catch 
-                {#couldn't update
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
+                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+            }#end try
+            catch #we couldn't import the module, so let's install it
+            {
+                Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
+                try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
+                catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
+
+                try
+                {
+                    Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+                }#end try
+                catch #we couldn't import the module
+                {
+                    Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
                     Exit
-                }
+                }#end catch
+            }#end catch
+            }#endif module sbourdeaud
+            $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
+            if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
+            Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+            Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+            Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+            try {
+                Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop
+                Import-Module -Name sbourdeaud -ErrorAction Stop
             }
+            catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+            }
+            Set-PoSHSSLCerts
+            Set-PoshTls
         #endregion
-
-        #region module BetterTls
-            $result = Set-PoshTls
-        #endregion
-
-#endregion
+    #endregion
 
 #endregion
 
@@ -1166,7 +1139,7 @@ $HistoryText = @'
         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $cluster ..."
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
         $method = "GET"
-        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $cluster"
 
         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)."
@@ -1187,26 +1160,26 @@ $HistoryText = @'
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Vm details on Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
                 $method = "GET"
-                $cluster_vms = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $cluster_vms = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved VM details on Nutanix cluster $cluster"
 
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving networks on Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
                 $method = "GET"
-                $cluster_networks = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved networks on Nutanix cluster $cluster"
             }
 
-            $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
+            $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -credential $prismCredentials
             if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "deactivate"
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "deactivate"
             
             #region check remote
                 #let's retrieve the list of protection domains
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 ForEach ($protection_domain in $processed_pds)
@@ -1229,7 +1202,7 @@ $HistoryText = @'
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about remote site $($remoteSite.remote_site_names) ..."
                         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
                         $method = "GET"
-                        $remote_site = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                        $remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about remote site $($remoteSite.remote_site_names)"
 
                         if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
@@ -1248,7 +1221,7 @@ $HistoryText = @'
 
                 ForEach ($remote_site_ip in $remote_site_ips)
                 {#check the protection domains have been successfully activated on each remote site
-                    Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $remote_site_ip -username $username -password $PrismSecurePassword -operation "activate"
+                    Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $remote_site_ip -credential $prismCredentials -operation "activate"
                 }
             #endregion
         }
@@ -1259,9 +1232,9 @@ $HistoryText = @'
         {
             Write-Host ""
             Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain activation workflow--"
-            $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
+            $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
             if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "activate"
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "activate"
         }
     #endregion
 
@@ -1285,7 +1258,7 @@ $HistoryText = @'
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $prism ..."
                 $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/cluster/"
                 $method = "GET"
-                $prism_details = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $prism_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $prism"
 
                 if ($prism_details.hypervisor_types -contains "kVMware")
@@ -1346,7 +1319,7 @@ $HistoryText = @'
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $prism ..."
                             $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                             $method = "GET"
-                            $prism_PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            $prism_PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $prism"
                             
                             #step 2: compare list of active protection domains on this remote site with the list of processed protection domains returned by the activate or migrate workflow in $processed_pds
@@ -1403,7 +1376,7 @@ $HistoryText = @'
                                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving network mappings for remote site $($cluster_details.name) on $prism ..."
                                         $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$($cluster_details.name)"
                                         $method = "GET"
-                                        $cluster_remote_site = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                                        $cluster_remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                                         Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved network mappings for remote site $($cluster_details.name) on $prism"
                                         
                                         #step 5: foreach vm vnic defined at the source, figure out if the vnic already exists on the target. if not, add it and connect it to the right dvportgroup
@@ -1519,7 +1492,7 @@ $HistoryText = @'
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 #region process
@@ -1543,7 +1516,7 @@ $HistoryText = @'
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about remote site $($remoteSite.remote_site_names) ..."
                             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
                             $method = "GET"
-                            $remote_site = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            $remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about remote site $($remoteSite.remote_site_names)"
 
                             if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
@@ -1567,7 +1540,7 @@ $HistoryText = @'
                             Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about protection domain $($protection_domain) on cluster $powerOn_cluster ..."
                             $url = "https://$($powerOn_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/?names=$($protection_domain)"
                             $method = "GET"
-                            $response = Invoke-PrismRESTCall -method $method -url $url -username $username -password ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword)))
+                            $response = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                             Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about protection domain $($protection_domain) on cluster $powerOn_cluster"
 
                             if ($response.entities.active -ne "true")
@@ -1579,7 +1552,7 @@ $HistoryText = @'
 
                         Write-Host ""
                         Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VMs in protection domain $($protection_domain) on cluster $powerOn_cluster ..."
-                        Set-NtnxPdVmPowerOn -pd $protection_domain -cluster $powerOn_cluster -username $username -password $PrismSecurePassword
+                        Set-NtnxPdVmPowerOn -pd $protection_domain -cluster $powerOn_cluster -credential $prismCredentials
                     }
                 #endregion
             }
@@ -1591,8 +1564,8 @@ $HistoryText = @'
         {
             Write-Host ""
             Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain deactivation workflow--"
-            $response = Invoke-NtnxPdDeactivation -pd $pd -cluster $cluster -username $username -password $PrismSecurePassword
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -username $username -password $PrismSecurePassword -operation "deactivate"
+            $response = Invoke-NtnxPdDeactivation -pd $pd -cluster $cluster -credential $prismCredentials
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "deactivate"
         }
     #endregion
 
