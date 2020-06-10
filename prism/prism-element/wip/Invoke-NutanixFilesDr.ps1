@@ -61,7 +61,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
         [parameter(mandatory = $false)] [string]$username,
         [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds,
-        [parameter(mandatory = $true)] [ValidateSet("planned","unplanned")] [string]$failover,
+        [parameter(mandatory = $true)] [ValidateSet("planned","unplanned","deactivate")] [string]$failover,
         [parameter(mandatory = $false)] [string]$fsname,
         [parameter(mandatory = $false)] [string]$reference,
         [parameter(mandatory = $false)] [string]$pd,
@@ -69,7 +69,8 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
         [parameter(mandatory = $false)] $adCreds,
         [parameter(mandatory = $false)] [switch]$mail,
         [parameter(mandatory = $false)] [string]$smtp,
-        [parameter(mandatory = $false)] [string]$email
+        [parameter(mandatory = $false)] [string]$email,
+        [parameter(mandatory = $false)] [switch]$force
     )
 #endregion
 
@@ -534,6 +535,8 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region processing
+#TODO add workflow for deactivate
+#TODO enhancement idea: get vfiler details to figure out pd name
     #region check we have the data we need
         #check reference_data (if it exists) and validate entries
         if ($reference_data) {
@@ -581,6 +584,8 @@ Date       By   Updates (newest updates at the top)
                 }
                 $ad_credentials = New-Object PSCredential $ad_username, $PrismSecurePassword
             }
+
+            $fsname = $reference_data.fsname
         }
     #endregion
     
@@ -595,8 +600,16 @@ Date       By   Updates (newest updates at the top)
                 $method = "GET"
                 $primary_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
-            
                 Write-Host "$(get-date) [INFO] Hypervisor on PRIMARY Nutanix cluster $($reference_data.{prism-primary}) is of type $($primary_cluster_details.hypervisor_types)." -ForegroundColor Green
+
+                Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from PRIMARY Nutanix cluster $($reference_data.{prism-primary})..." -ForegroundColor Green
+                $url = "https://$($reference_data.{prism-primary}):9440/PrismGateway/services/rest/v1/vfilers/"
+                $method = "GET"
+                $primary_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $primary_cluster_vfiler = $primary_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
+                if (!$primary_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on PRIMARY Nutanix cluster $($reference_data.{prism-primary})!" -ForegroundColor Red; Exit 1}
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
+                Write-Host "$(get-date) [INFO] File server $fsname on PRIMARY Nutanix cluster $($reference_data.{prism-primary}) has the following status: $($primary_cluster_vfiler.fileServerState)" -ForegroundColor Green
             }
             #TODO check if dr site is available (IF not, error out)
             Write-Host "$(get-date) [INFO] Retrieving details of DR Nutanix cluster $($reference_data.{prism-dr}) ..." -ForegroundColor Green
@@ -604,8 +617,16 @@ Date       By   Updates (newest updates at the top)
             $method = "GET"
             $dr_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
-
             Write-Host "$(get-date) [INFO] Hypervisor on DR Nutanix cluster $($reference_data.{prism-dr}) is of type $($dr_cluster_details.hypervisor_types)." -ForegroundColor Green
+
+            Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from DR Nutanix cluster $($reference_data.{prism-dr})..." -ForegroundColor Green
+            $url = "https://$($reference_data.{prism-dr}):9440/PrismGateway/services/rest/v1/vfilers/"
+            $method = "GET"
+            $dr_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $dr_cluster_vfiler = $dr_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
+            if (!$dr_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
+            Write-Host "$(get-date) [INFO] File server $fsname on DR Nutanix cluster $($reference_data.{prism-dr}) has the following status: $($dr_cluster_vfiler.fileServerState)" -ForegroundColor Green
         } else {
             #TODO check connectivity to prism
             Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $($prism) ..." -ForegroundColor Green
@@ -617,7 +638,10 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $($prism) is of type $($prism_cluster_details.hypervisor_types)." -ForegroundColor Green
         }
     #endregion
-  
+
+    #region deactivate
+    #endregion
+
     #region failover pd
         if ($failover -eq "planned") {
             Write-Host ""
@@ -704,13 +728,18 @@ Date       By   Updates (newest updates at the top)
                 } else {
                     $pd = "NTNX-$($reference_data.fsname)"
                 }
-
+                
                 #safeguard here to check if primary cluster is responding to ping before triggering activation
                 Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
                 if ((Test-Connection $reference_data.{prism-primary} -Count 5))
                 {#ping was successfull
-                    Write-Host "$(get-date) [ERROR] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Aborting protection domain activation!" -ForegroundColor Red
-                    Exit 1
+                    if ($force) {
+                        Write-Host "$(get-date) [WARN] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Continuing with protection domain activation since you used -force..." -ForegroundColor Yellow
+                        #TODO add prompt here to continue and enhance warning text
+                    } else {
+                        Write-Host "$(get-date) [ERROR] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Aborting protection domain activation!" -ForegroundColor Red
+                        Exit 1
+                    }
                 } 
                 else 
                 {#ping failed
@@ -727,9 +756,12 @@ Date       By   Updates (newest updates at the top)
         }
         #TODO if MAIL, send notification email
     #endregion
-    
+
     #region activate file server
         #TODO activate file server (prompting for info if no reference)
+        #* get file servers (to figure out uuid of fsname) (GET /v1 /vfilers)
+        #* get networks (to figure out uuid of the networks we'll use for client & storage)
+        #* activte (POST /v1 /vfilers/{uuid}/activate): response is a taskUuid
         #TODO check on file server activation task status
         #TODO if MAIL, send notification email
     #endregion
