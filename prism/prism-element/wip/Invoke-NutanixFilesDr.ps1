@@ -861,8 +861,8 @@ Date       By   Updates (newest updates at the top)
     #endregion
 
     #region activate file server
-        #TODO activate file server
-        #get file servers uuids
+        #TODO figure out the DNS servers and NTP thingy (use clusters' if not in reference data or not specified?)
+        #get file servers uuids and other network configuration details required for activation
         if ($reference_data) {
             $fsname = "$($reference_data.fsname)"
             if ($filer_activation_cluster -eq $reference_data.{prism-primary}) {
@@ -911,7 +911,7 @@ Date       By   Updates (newest updates at the top)
                 defaultGateway = $internalNetwork_defaultGateway;
                 uuid = $internalNetwork_uuid;
                 pool = @(
-                    $internalNetwork_pool
+                    $(if ($internalNetwork_pool) {$internalNetwork_pool})
                 )
             };
             externalNetworks = @(
@@ -920,7 +920,7 @@ Date       By   Updates (newest updates at the top)
                     defaultGateway = $externalNetwork_defaultGateway;
                     uuid = $externalNetwork_uuid;
                     pool = @(
-                        $externalNetwork_pool
+                        $(if ($externalNetwork_pool) {$externalNetwork_pool})
                     )
                 }
             );
