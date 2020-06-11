@@ -380,311 +380,6 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
 
         }
     }
-
-    function New-PercentageBar
-    {
-        
-    <#
-    .SYNOPSIS
-        Create percentage bar.
-    .DESCRIPTION
-        This cmdlet creates percentage bar.
-    .PARAMETER Percent
-        Value in percents (%).
-    .PARAMETER Value
-        Value in arbitrary units.
-    .PARAMETER MaxValue
-        100% value.
-    .PARAMETER BarLength
-        Bar length in chars.
-    .PARAMETER BarView
-        Different char sets to build the bar.
-    .PARAMETER GreenBorder
-        Percent value to change bar color from green to yellow (relevant with -DrawBar parameter only).
-    .PARAMETER YellowBorder
-        Percent value to change bar color from yellow to red (relevant with -DrawBar parameter only).
-    .PARAMETER NoPercent
-        Exclude percentage number from the bar.
-    .PARAMETER DrawBar
-        Directly draw the colored bar onto the PowerShell console (unsuitable for calculated properties).
-    .EXAMPLE
-        PS C:\> New-PercentageBar -Percent 90 -DrawBar
-        Draw single bar with all default settings.
-    .EXAMPLE
-        PS C:\> New-PercentageBar -Percent 95 -DrawBar -GreenBorder 70 -YellowBorder 90
-        Draw the bar and move the both color change borders.
-    .EXAMPLE
-        PS C:\> 85 |New-PercentageBar -DrawBar -NoPercent
-        Pipeline the percent value to the function and exclude percent number from the bar.
-    .EXAMPLE
-        PS C:\> For ($i=0; $i -le 100; $i+=10) {New-PercentageBar -Percent $i -DrawBar -Length 100 -BarView AdvancedThin2; "`r"}
-        Demonstrates advanced bar view with custom bar length and different percent values.
-    .EXAMPLE
-        PS C:\> $Folder = 'C:\reports\'
-        PS C:\> $FolderSize = (Get-ChildItem -Path $Folder |measure -Property Length -Sum).Sum
-        PS C:\> Get-ChildItem -Path $Folder -File |sort Length -Descending |select -First 10 |select Name,Length,@{N='SizeBar';E={New-PercentageBar -Value $_.Length -MaxValue $FolderSize}} |ft -au
-        Get file size report and add calculated property 'SizeBar' that contains the percent of each file size from the folder size.
-    .EXAMPLE
-        PS C:\> $VolumeC = gwmi Win32_LogicalDisk |? {$_.DeviceID -eq 'c:'}
-        PS C:\> Write-Host -NoNewline "Volume C Usage:" -ForegroundColor Yellow; `
-        PS C:\> New-PercentageBar -Value ($VolumeC.Size-$VolumeC.Freespace) -MaxValue $VolumeC.Size -DrawBar; "`r"
-        Get system volume usage report.
-    .NOTES
-        Author      :: Roman Gelman @rgelman75
-        Version 1.0 :: 04-Jul-2016 :: [Release] :: Publicly available
-    .LINK
-        https://ps1code.com/2016/07/16/percentage-bar-powershell
-    #>
-        
-        [CmdletBinding(DefaultParameterSetName = 'PERCENT')]
-        Param (
-            [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'PERCENT')]
-            [ValidateRange(0, 100)]
-            [int]$Percent
-            ,
-            [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'VALUE')]
-            [ValidateRange(0, [double]::MaxValue)]
-            [double]$Value
-            ,
-            [Parameter(Mandatory, Position = 2, ParameterSetName = 'VALUE')]
-            [ValidateRange(1, [double]::MaxValue)]
-            [double]$MaxValue
-            ,
-            [Parameter(Mandatory = $false, Position = 3)]
-            [Alias("BarSize", "Length")]
-            [ValidateRange(10, 100)]
-            [int]$BarLength = 20
-            ,
-            [Parameter(Mandatory = $false, Position = 4)]
-            [ValidateSet("SimpleThin", "SimpleThick1", "SimpleThick2", "AdvancedThin1", "AdvancedThin2", "AdvancedThick")]
-            [string]$BarView = "SimpleThin"
-            ,
-            [Parameter(Mandatory = $false, Position = 5)]
-            [ValidateRange(50, 80)]
-            [int]$GreenBorder = 60
-            ,
-            [Parameter(Mandatory = $false, Position = 6)]
-            [ValidateRange(80, 90)]
-            [int]$YellowBorder = 80
-            ,
-            [Parameter(Mandatory = $false)]
-            [switch]$NoPercent
-            ,
-            [Parameter(Mandatory = $false)]
-            [switch]$DrawBar
-        )
-        
-        Begin
-        {
-            
-            If ($PSBoundParameters.ContainsKey('VALUE'))
-            {
-                
-                If ($Value -gt $MaxValue)
-                {
-                    Throw "The [-Value] parameter cannot be greater than [-MaxValue]!"
-                }
-                Else
-                {
-                    $Percent = $Value/$MaxValue * 100 -as [int]
-                }
-            }
-            
-            If ($YellowBorder -le $GreenBorder) { Throw "The [-YellowBorder] value must be greater than [-GreenBorder]!" }
-            
-            Function Set-BarView ($View)
-            {
-                Switch -exact ($View)
-                {
-                    "SimpleThin"	{ $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = "-"; Break }
-                    "SimpleThick1"	{ $GreenChar = [char]9608; $YellowChar = [char]9608; $RedChar = [char]9608; $EmptyChar = "-"; Break }
-                    "SimpleThick2"	{ $GreenChar = [char]9612; $YellowChar = [char]9612; $RedChar = [char]9612; $EmptyChar = "-"; Break }
-                    "AdvancedThin1"	{ $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = [char]9476; Break }
-                    "AdvancedThin2"	{ $GreenChar = [char]9642; $YellowChar = [char]9642; $RedChar = [char]9642; $EmptyChar = [char]9643; Break }
-                    "AdvancedThick"	{ $GreenChar = [char]9617; $YellowChar = [char]9618; $RedChar = [char]9619; $EmptyChar = [char]9482; Break }
-                }
-                $Properties = [ordered]@{
-                    Char1 = $GreenChar
-                    Char2 = $YellowChar
-                    Char3 = $RedChar
-                    Char4 = $EmptyChar
-                }
-                $Object = New-Object PSObject -Property $Properties
-                $Object
-            } #End Function Set-BarView
-            
-            $BarChars = Set-BarView -View $BarView
-            $Bar = $null
-            
-            Function Draw-Bar
-            {
-                
-                Param (
-                    [Parameter(Mandatory)]
-                    [string]$Char
-                    ,
-                    [Parameter(Mandatory = $false)]
-                    [string]$Color = 'White'
-                    ,
-                    [Parameter(Mandatory = $false)]
-                    [boolean]$Draw
-                )
-                
-                If ($Draw)
-                {
-                    Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char
-                }
-                Else
-                {
-                    return $Char
-                }
-                
-            } #End Function Draw-Bar
-            
-        } #End Begin
-        
-        Process
-        {
-            
-            If ($NoPercent)
-            {
-                $Bar += Draw-Bar -Char "[ " -Draw $DrawBar
-            }
-            Else
-            {
-                If ($Percent -eq 100) { $Bar += Draw-Bar -Char "$Percent% [ " -Draw $DrawBar }
-                ElseIf ($Percent -ge 10) { $Bar += Draw-Bar -Char " $Percent% [ " -Draw $DrawBar }
-                Else { $Bar += Draw-Bar -Char "  $Percent% [ " -Draw $DrawBar }
-            }
-            
-            For ($i = 1; $i -le ($BarValue = ([Math]::Round($Percent * $BarLength / 100))); $i++)
-            {
-                
-                If ($i -le ($GreenBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char1) -Color 'DarkGreen' -Draw $DrawBar }
-                ElseIf ($i -le ($YellowBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char2) -Color 'Yellow' -Draw $DrawBar }
-                Else { $Bar += Draw-Bar -Char ($BarChars.Char3) -Color 'Red' -Draw $DrawBar }
-            }
-            For ($i = 1; $i -le ($EmptyValue = $BarLength - $BarValue); $i++) { $Bar += Draw-Bar -Char ($BarChars.Char4) -Draw $DrawBar }
-            $Bar += Draw-Bar -Char " ]" -Draw $DrawBar
-            
-        } #End Process
-        
-        End
-        {
-            If (!$DrawBar) { return $Bar }
-        } #End End
-        
-    } #EndFunction New-PercentageBar
-    function Get-PrismTaskStatus
-    {
-        <#
-        .SYNOPSIS
-        Retrieves the status of a given task uuid from Prism and loops until it is completed.
-
-        .DESCRIPTION
-        Retrieves the status of a given task uuid from Prism and loops until it is completed.
-
-        .PARAMETER task
-        Prism task uuid.
-        .PARAMETER cluster
-        Prism IP or fqdn.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-
-        .NOTES
-        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-        .EXAMPLE
-        .\Get-PrismTaskStatus -Task $task -Cluster $cluster -credential $prism_credential
-        Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
-
-        .LINK
-        https://github.com/sbourdeaud
-        #>
-        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-        param
-        (
-            [Parameter(Mandatory)]
-            [String]
-            $task,
-            
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential   
-        )
-
-        begin
-        {
-            
-        }
-
-        process 
-        {
-            #region get initial task details
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of task $task..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-                $method = "GET"
-                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved details of task $task"
-            #endregion
-
-            if ($taskDetails.percentage_complete -ne "100") 
-            {
-                Do 
-                {
-                    New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                    Start-Sleep 5
-                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-                    $method = "GET"
-                    $taskDetails = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                    
-                    if ($taskDetails.progress_status -ne "Running") 
-                    {
-                        if ($taskDetails.progress_status -ne "Succeeded")
-                        {
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
-                            $userChoice = Write-CustomPrompt
-                            if ($userChoice -eq "n")
-                            {
-                                Exit
-                            }
-                        }
-                    }
-                }
-                While ($taskDetails.percentage_complete -ne "100")
-                
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"
-            } 
-            else 
-            {
-                if ($taskDetails.progress_status -ne "Succeeded")
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
-                    $userChoice = Write-CustomPrompt
-                    if ($userChoice -eq "n")
-                    {
-                        Exit
-                    }
-                }
-                else 
-                {
-                    New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"   
-                }
-            }
-        }
-        
-        end
-        {
-
-        }
-    }
 #endregion
 
 #region prepwork
@@ -808,29 +503,31 @@ Date       By   Updates (newest updates at the top)
         $reference_data = Import-Csv -Path ./$($reference)
     }
     if ($dns) {
-        if (!$adCreds) 
-        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-            $ad_username = Read-Host "Enter the Active Directory username for DNS updates"
-            $ad_secure_password = Read-Host "Enter the Active Directory user $ad_username password" -AsSecureString
-            $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
-        } 
-        else 
-        { #we are using custom credentials, so let's grab the username and password from that
-            try 
-            {
-                $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
-                $ad_username = $ad_credentials.UserName
-                $ad_secure_password = $ad_credentials.Password
+        if (!$reference_data) {
+            if (!$adCreds) 
+            {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+                $ad_username = Read-Host "Enter the Active Directory username for DNS updates"
+                $ad_secure_password = Read-Host "Enter the Active Directory user $ad_username password" -AsSecureString
+                $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
+            } 
+            else 
+            { #we are using custom credentials, so let's grab the username and password from that
+                try 
+                {
+                    $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
+                    $ad_username = $ad_credentials.UserName
+                    $ad_secure_password = $ad_credentials.Password
+                }
+                catch 
+                {
+                    $credname = Read-Host "Enter the credentials name"
+                    Set-CustomCredentials -credname $credname
+                    $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
+                    $ad_username = $ad_credentials.UserName
+                    $ad_secure_password = $ad_credentials.Password
+                }
+                $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
             }
-            catch 
-            {
-                $credname = Read-Host "Enter the credentials name"
-                Set-CustomCredentials -credname $credname
-                $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
-                $ad_username = $ad_credentials.UserName
-                $ad_secure_password = $ad_credentials.Password
-            }
-            $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
         }
     }
     if ($mail) {
@@ -841,7 +538,6 @@ Date       By   Updates (newest updates at the top)
 
 #region processing
 #TODO add workflow for deactivate
-#TODO enhancement idea: use vfiler details to figure out pd name
     #region check we have the data we need
         #check reference_data (if it exists) and validate entries
         if ($reference_data) {
@@ -1026,7 +722,8 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Client network uuid on dr cluster is $($dr_client_network_uuid)" -ForegroundColor Green
                 Write-Host "$(get-date) [INFO] Storage network uuid on dr cluster is $($dr_storage_network_uuid)" -ForegroundColor Green
             #endregion
-
+            
+            #* figuring out here source and target for failover operations
             #if planned failover, based on pd status, determine the direction of the failover and set variable accordingly
             if ($failover -eq "planned") {
                 if ($primary_vfiler_pd.active -and $dr_vfiler_pd.active) {
@@ -1036,10 +733,12 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Protection domain $pd is active on PRIMARY cluster, so migrating from PRIMARY to DR and doing file server activation on DR." -ForegroundColor Green
                     $migrate_from_cluster = $reference_data.{prism-primary}
                     $filer_activation_cluster = $reference_data.{prism-dr}
+                    $filer_activation_cluster_name = $primary_cluster_details.name
                 } elseif ($dr_vfiler_pd.active) {
                     Write-Host "$(get-date) [INFO] Protection domain $pd is active on DR cluster, so migrating from DR to PRIMARY and doing file server activation on PRIMARY." -ForegroundColor Green
                     $migrate_from_cluster = $reference_data.{prism-dr}
                     $filer_activation_cluster = $reference_data.{prism-primary}
+                    $filer_activation_cluster_name = $dr_cluster_details.name
                 } else {
 
                 }
@@ -1211,8 +910,9 @@ Date       By   Updates (newest updates at the top)
     #endregion
 
     #region activate file server
-        #TODO figure out the DNS servers and NTP thingy (use clusters' if not in reference data or not specified?)
         #TODO sort things out when not using a reference data file
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] --Activating vFiler $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
         #get file servers uuids and other network configuration details required for activation
         if ($reference_data) {
             $fsname = "$($reference_data.fsname)"
@@ -1291,11 +991,11 @@ Date       By   Updates (newest updates at the top)
         $payload = (ConvertTo-Json $content -Depth 4)
 
         #* activate (POST /v1/vfilers/{$vfiler_uuid}/activate): response is a taskUuid
-        Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ..." -ForegroundColor Green
+        Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
         $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/activate"
         $method = "POST"
         $vfiler_activation_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
-        Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
+        Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
         #check on file server activation task status
         Get-PrismTaskStatus -task $vfiler_activation_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
@@ -1304,14 +1004,44 @@ Date       By   Updates (newest updates at the top)
     #endregion
     
     #region update DNS
-        #TODO if DNS, send API call to update DNS
-        #https://$($cluster):9440/PrismGateway/services/rest/v1/vfilers/$($file_server_uuid)/addDns : returns a taskUuid
-        #TODO check on DNS update task status
-        #TODO if MAIL, send notification email
+        if ($dns) {
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Updating DNS records for vFiler $($fsname)--" -ForegroundColor Magenta
+            #if DNS, send API call to update DNS            
+            $content = @{
+                dnsOpType = "MS_DNS";
+                dnsServer= "";
+                dnsUserName= $ad_credentials.UserName;
+                dnsPassword= $ad_credentials.GetNetworkCredential().password
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+    
+            #* activate (POST /v1/vfilers/$($file_server_uuid)/addDns): response is a taskUuid
+            Write-Host "$(get-date) [INFO] Updating DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/addDns"
+            $method = "POST"
+            $vfiler_dns_update_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
+            Write-Host "$(get-date) [SUCCESS] Successfully triggered update of DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
+
+            #check on DNS update task status
+            Get-PrismTaskStatus -task $vfiler_dns_update_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
+
+            #TODO if MAIL, send notification email
+        }
     #endregion
 
     #region print final file server status
-        #TODO get file server status
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] --Getting final status for vFiler $($fsname)--" -ForegroundColor Magenta
+        #check status of file server
+        Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+        $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
+        $method = "GET"
+        $vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+        $vfiler = $vfilers.entities | Where-Object {$_.Name -eq $fsname}
+        if (!$vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
+        Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($filer_activation_cluster) has the following status: $($primary_cluster_vfiler.fileServerState) ($($filer_activation_cluster_name))" -ForegroundColor Green
         #TODO if MAIL, send notification email
     #endregion
 
