@@ -271,6 +271,93 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
         }
     }
 
+    function Invoke-NtnxPdDeactivation
+    {
+        <#
+        .SYNOPSIS
+        Deactivates a Nutanix asynchronous protection domain (and !!!DELETES ALL VMS IN THAT PROTECTION DOMAIN!!!).
+        .DESCRIPTION
+        Deactivates a Nutanix asynchronous protection domain which will (1)change the status of the protection domain to inactive and (2)!!!DELETE ALL VMS IN THAT PD!!!
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER pd
+        Asynchronous protection domain name.
+        .PARAMETER cluster
+        FQDN or IP of Nutanix cluster.
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
+        .EXAMPLE
+        Invoke-NtnxPdDeactivation -pd <pd_name> -cluster ntnx1.local -credential $credential
+        #>
+        [CmdletBinding()]
+        param
+        (
+            $pd,
+
+            [Parameter(Mandatory)]
+            [String]
+            $cluster,
+            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential   
+        )
+
+        begin
+        {
+            
+        }
+
+        process
+        {
+            #region get data
+                #let's retrieve the list of protection domains
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                $method = "GET"
+                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+
+                #first, we need to figure out which protection domains need to be deactivated. If none have been specified, we'll assume all of them which are active.
+                if (!$pd) 
+                {#no pd specified
+                    $pd = Read-Host "Enter the name of the protection domain(s) you want to deactivate on $cluster. !!!WARNING!!! All VMs in that protection domain will be deleted!"
+                    $pd = $pd.Split(",") #make sure we process protection_domains as an array
+                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+                } 
+                else 
+                {#fetch specified pd
+                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+                }
+
+                if (!$pd) 
+                {
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
+                    Exit
+                }
+            #endregion
+
+            #region process
+                ForEach ($pd2deactivate in $pd) 
+                {#now let's call the deactivate workflow for each pd
+                    Write-Host ""
+                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Deactivating protection domain $pd2deactivate on $cluster ..."
+                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
+                    $method = "POST"
+                    $content = @{}
+                    $body = (ConvertTo-Json $content -Depth 4)
+                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started deactivation of protection domain $pd2deactivate on $cluster"
+                }
+            #endregion
+        }
+
+        end
+        {
+            return $response #this is the task uuid as sent back from the API
+        }
+    }
+
     function Get-PrismPdTaskStatus
     {
         <#
@@ -758,92 +845,133 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region parameters validation
-    if (!$reference) {
-        if (!$fsname) {$fsname = Read-Host "Enter the name of the file server you want to failover"}
-        #check if there is a default reference file for this file server in the current directory
-        if ((Test-Path ./$($fsname)-reference.csv -PathType Leaf) -and !$prism) {
-            Write-Host "$(get-date) [INFO] Found a reference file called $($fsname)-reference.csv in the current directory." -ForegroundColor Green
-            $reference_data = Import-Csv -Path ./$($fsname)-reference.csv
-        } else {
-            Write-Host "$(get-date) [WARN] Could not find a reference file for file server $($fsname) in the current directory or you specified a Prism cluster." -ForegroundColor Yellow
-            if (!$prism) {$prism = Read-Host "Enter the FQDN or IP address of a Nutanix cluster"}
-            if (!$prismCreds) 
-            {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-                if (!$username) 
-                {#if Prism username has not been specified ask for it
-                    $username = Read-Host "Enter the Prism username"
-                } 
+    if ($failover -eq "deactivate") {
+        if (!$prism) {$prism = Read-Host "Enter the FQDN or IP address of a Nutanix cluster"}
+        if (!$prismCreds) 
+        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+            if (!$username) 
+            {#if Prism username has not been specified ask for it
+                $username = Read-Host "Enter the Prism username"
+            } 
 
-                if (!$password) 
-                {#if password was not passed as an argument, let's prompt for it
-                    $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-                }
-                else 
-                {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-                    $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-                    Remove-Variable password
-                }
-                $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-            } 
-            else 
-            { #we are using custom credentials, so let's grab the username and password from that
-                try 
-                {
-                    $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-                    $username = $prismCredentials.UserName
-                    $PrismSecurePassword = $prismCredentials.Password
-                }
-                catch 
-                {
-                    $credname = Read-Host "Enter the credentials name"
-                    Set-CustomCredentials -credname $credname
-                    $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-                    $username = $prismCredentials.UserName
-                    $PrismSecurePassword = $prismCredentials.Password
-                }
-                $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+            if (!$password) 
+            {#if password was not passed as an argument, let's prompt for it
+                $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
             }
-            if (!$pd) {$pd = "NTNX-$($fsname)"}
+            else 
+            {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
+                $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+                Remove-Variable password
+            }
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+        } 
+        else 
+        { #we are using custom credentials, so let's grab the username and password from that
+            try 
+            {
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            catch 
+            {
+                $credname = Read-Host "Enter the credentials name"
+                Set-CustomCredentials -credname $credname
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
         }
+        if (!$pd) {$pd = Read-Host "Enter the name of the protection domain you want to deactivate (WARNING! This will delete VMs and destroy data!"}
     } else {
-        $reference_data = Import-Csv -Path ./$($reference)
-    }
-    if ($dns) {
-        if (!$reference_data) {
-            if (!$adCreds) 
-            {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-                $ad_username = Read-Host "Enter the Active Directory username for DNS updates"
-                $ad_secure_password = Read-Host "Enter the Active Directory user $ad_username password" -AsSecureString
-                $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
-            } 
-            else 
-            { #we are using custom credentials, so let's grab the username and password from that
-                try 
-                {
-                    $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
-                    $ad_username = $ad_credentials.UserName
-                    $ad_secure_password = $ad_credentials.Password
+        if (!$reference) {
+            if (!$fsname) {$fsname = Read-Host "Enter the name of the file server you want to failover"}
+            #check if there is a default reference file for this file server in the current directory
+            if ((Test-Path ./$($fsname)-reference.csv -PathType Leaf) -and !$prism) {
+                Write-Host "$(get-date) [INFO] Found a reference file called $($fsname)-reference.csv in the current directory." -ForegroundColor Green
+                $reference_data = Import-Csv -Path ./$($fsname)-reference.csv
+            } else {
+                Write-Host "$(get-date) [WARN] Could not find a reference file for file server $($fsname) in the current directory or you specified a Prism cluster." -ForegroundColor Yellow
+                if (!$prism) {$prism = Read-Host "Enter the FQDN or IP address of a Nutanix cluster"}
+                if (!$prismCreds) 
+                {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+                    if (!$username) 
+                    {#if Prism username has not been specified ask for it
+                        $username = Read-Host "Enter the Prism username"
+                    } 
+    
+                    if (!$password) 
+                    {#if password was not passed as an argument, let's prompt for it
+                        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
+                    }
+                    else 
+                    {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
+                        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
+                        Remove-Variable password
+                    }
+                    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+                } 
+                else 
+                { #we are using custom credentials, so let's grab the username and password from that
+                    try 
+                    {
+                        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                        $username = $prismCredentials.UserName
+                        $PrismSecurePassword = $prismCredentials.Password
+                    }
+                    catch 
+                    {
+                        $credname = Read-Host "Enter the credentials name"
+                        Set-CustomCredentials -credname $credname
+                        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                        $username = $prismCredentials.UserName
+                        $PrismSecurePassword = $prismCredentials.Password
+                    }
+                    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
                 }
-                catch 
-                {
-                    $credname = Read-Host "Enter the credentials name"
-                    Set-CustomCredentials -credname $credname
-                    $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
-                    $ad_username = $ad_credentials.UserName
-                    $ad_secure_password = $ad_credentials.Password
+                if (!$pd) {$pd = "NTNX-$($fsname)"}
+            }
+        } else {
+            $reference_data = Import-Csv -Path ./$($reference)
+        }
+        if ($dns) {
+            if (!$reference_data) {
+                if (!$adCreds) 
+                {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+                    $ad_username = Read-Host "Enter the Active Directory username for DNS updates"
+                    $ad_secure_password = Read-Host "Enter the Active Directory user $ad_username password" -AsSecureString
+                    $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
+                } 
+                else 
+                { #we are using custom credentials, so let's grab the username and password from that
+                    try 
+                    {
+                        $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
+                        $ad_username = $ad_credentials.UserName
+                        $ad_secure_password = $ad_credentials.Password
+                    }
+                    catch 
+                    {
+                        $credname = Read-Host "Enter the credentials name"
+                        Set-CustomCredentials -credname $credname
+                        $ad_credentials = Get-CustomCredentials -credname $adCreds -ErrorAction Stop
+                        $ad_username = $ad_credentials.UserName
+                        $ad_secure_password = $ad_credentials.Password
+                    }
+                    $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
                 }
-                $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
             }
         }
-    }
-    if ($mail) {
-        if (!$smtp) {$smtp = Read-Host "Enter the FQDN or IP address of an SMTP server"}
-        if (!$email) {$email = Read-Host "Enter a comma separated list of email addresses to notify"}
+        if ($mail) {
+            if (!$smtp) {$smtp = Read-Host "Enter the FQDN or IP address of an SMTP server"}
+            if (!$email) {$email = Read-Host "Enter a comma separated list of email addresses to notify"}
+        }
     }
 #endregion
 
 #region processing
-#TODO add workflow for deactivate
+#TODO enhance deactivate workflow to require fsname instead of pd
     #region check we have the data we need
         #check reference_data (if it exists) and validate entries
         if ($reference_data) {
@@ -904,7 +1032,6 @@ Date       By   Updates (newest updates at the top)
     #region check prism connectivity and get additional data
         Write-Host ""
         Write-Host "$(get-date) [STEP] --Verifying Connectivity to Prism(s)--" -ForegroundColor Magenta
-        #TODO error out based on file server status and requested operation
         if ($reference_data) {
             if ($failover -eq "planned") {
                 #region GET cluster (PRIMARY)
@@ -1069,16 +1196,18 @@ Date       By   Updates (newest updates at the top)
             #endregion
 
             #region GET vfiler (-prism)
-                #check status of file server on prism
-                Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($prism) ($($prism_cluster_details.name))..." -ForegroundColor Green
-                $url = "https://$($prism):9440/PrismGateway/services/rest/v1/vfilers/"
-                $method = "GET"
-                $prism_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                $prism_cluster_vfiler = $prism_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
-                if (!$prism_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($prism) ($($prism_cluster_details.name))!" -ForegroundColor Red; Exit 1}
-                Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($prism) ($($prism_cluster_details.name))" -ForegroundColor Cyan
-                Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($prism) ($($prism_cluster_details.name)) has the following status: $($prism_cluster_vfiler.fileServerState)" -ForegroundColor Green
-                $pd = $prism_cluster_vfiler.protectionDomainName
+                if ($failover -ne "deactivate") {
+                    #check status of file server on prism
+                    Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($prism) ($($prism_cluster_details.name))..." -ForegroundColor Green
+                    $url = "https://$($prism):9440/PrismGateway/services/rest/v1/vfilers/"
+                    $method = "GET"
+                    $prism_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $prism_cluster_vfiler = $prism_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
+                    if (!$prism_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($prism) ($($prism_cluster_details.name))!" -ForegroundColor Red; Exit 1}
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($prism) ($($prism_cluster_details.name))" -ForegroundColor Cyan
+                    Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($prism) ($($prism_cluster_details.name)) has the following status: $($prism_cluster_vfiler.fileServerState)" -ForegroundColor Green
+                    $pd = $prism_cluster_vfiler.protectionDomainName
+                }
             #endregion
 
             #region GET protection domains (PRISM)
@@ -1106,34 +1235,37 @@ Date       By   Updates (newest updates at the top)
             #endregion
 
             #region GET networks (-prism)
-                #get available networks from primary (/PrismGateway/services/rest/v2.0/networks/)
-                #TODO check this works the same with esxi (testing on ahv for now)
-                Write-Host "$(get-date) [INFO] Retrieving available networks from Nutanix cluster $($prism)..." -ForegroundColor Green
-                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/networks/"
-                $method = "GET"
-                $prism_cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks from Nutanix cluster $($prism)" -ForegroundColor Cyan
+                if ($failover -ne "deactivate") {
+                    #get available networks from primary (/PrismGateway/services/rest/v2.0/networks/)
+                    Write-Host "$(get-date) [INFO] Retrieving available networks from Nutanix cluster $($prism)..." -ForegroundColor Green
+                    $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/networks/"
+                    $method = "GET"
+                    $prism_cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks from Nutanix cluster $($prism)" -ForegroundColor Cyan
 
-                #TODO enhance this to show list of networks available + capture other network details (gateway, pool, subnet mask)  Also this should be asking/checking on target cluster, not prism
-                $prism_client_network_name = Read-Host "Enter the name of the client network to use for the file server"
-                $prism_storage_network_name = Read-Host "Enter the name of the storage network to use for the file server"
+                    #TODO enhance this to show list of networks available + capture other network details (gateway, pool, subnet mask)  Also this should be asking/checking on target cluster, not prism
+                    $prism_client_network_name = Read-Host "Enter the name of the client network to use for the file server"
+                    $prism_storage_network_name = Read-Host "Enter the name of the storage network to use for the file server"
+                }
             #endregion
             
             #region GET remote site details (PRISM)
-                #get the remote site IP address
-                Write-Host "$(get-date) [INFO] Retrieving details about remote site $($remoteSite.remote_site_names) ..." -ForegroundColor Green
-                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
-                $method = "GET"
-                $remote_site_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-Host "$(get-date) [SUCCESS] Successfully retrieved details about remote site $($remoteSite.remote_site_names)" -ForegroundColor Cyan
+                if ($failover -ne "deactivate") {
+                    #get the remote site IP address
+                    Write-Host "$(get-date) [INFO] Retrieving details about remote site $($remoteSite.remote_site_names) ..." -ForegroundColor Green
+                    $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
+                    $method = "GET"
+                    $remote_site_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved details about remote site $($remoteSite.remote_site_names)" -ForegroundColor Cyan
 
-                if ($remote_site_details.remote_ip_ports.psobject.properties.count -gt 1)
-                {#there are multiple IPs defined for the remote site
-                    Write-Host "$(get-date) [ERROR] There is more than 1 IP configured for the remote site $remoteSite" -ForegroundColor Red
-                    Exit 1
-                }
+                    if ($remote_site_details.remote_ip_ports.psobject.properties.count -gt 1)
+                    {#there are multiple IPs defined for the remote site
+                        Write-Host "$(get-date) [ERROR] There is more than 1 IP configured for the remote site $remoteSite" -ForegroundColor Red
+                        Exit 1
+                    }
 
-                $remote_site_ip = $remote_site_details.remote_ip_ports.psobject.properties.name
+                    $remote_site_ip = $remote_site_details.remote_ip_ports.psobject.properties.name
+                }    
             #endregion
 
             if ($failover -eq "planned") {
@@ -1213,6 +1345,20 @@ Date       By   Updates (newest updates at the top)
     #endregion
 
     #region deactivate
+        if ($failover -eq "deactivate") {
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Deactivating Protection Domain Migration $($pd) on Nutanix cluster $($prism) ($($prism_cluster_details.name))--" -ForegroundColor Magenta
+
+            Write-Host "$(get-date) [WARN] You are about to deactivate the protection domain $($pd) on Nutanix cluster $($prism_cluster_details.name). This will delete all the virtual machines and volume groups listed below and their associated data." -ForegroundColor Yellow
+            Write-Host "$($prism_vfiler_pd.vms.vm_name)"
+            Write-Host "$($prism_vfiler_pd.volume_groups.name)"
+            $user_choice = Write-CustomPrompt
+
+            if ($user_choice -eq "y") {
+                $response = Invoke-NtnxPdDeactivation -pd $pd -cluster $prism -credential $prismCredentials
+                Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $prism -credential $prismCredentials -operation "deactivate"
+            }
+        }
     #endregion
 
     #region failover pd
@@ -1337,177 +1483,179 @@ Date       By   Updates (newest updates at the top)
         #TODO if MAIL, send notification email
     #endregion
 
-    #region activate file server
-        Write-Host ""
-        Write-Host "$(get-date) [STEP] --Activating vFiler $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
-        #get file servers uuids and other network configuration details required for activation
-        if ($reference_data) {
-            $fsname = "$($reference_data.fsname)"
-            if ($filer_activation_cluster -eq $reference_data.{prism-primary}) {
-                $vfiler_uuid = $primary_cluster_vfiler.uuid
-
-                $internalNetwork_subnetMask = "$($reference_data.{primary-storage-network-subnet})"
-                $internalNetwork_defaultGateway = "$($reference_data.{primary-storage-network-gateway})"
-                $internalNetwork_uuid = "$($primary_storage_network_uuid)"
-                if ($reference_data.{primary-storage-network-startip} -and $reference_data.{primary-storage-network-endip}) {
-                    $internalNetwork_pool = "$($reference_data.{primary-storage-network-startip}) $($reference_data.{primary-storage-network-endip})"
-                } else {
-                    $internalNetwork_pool = $null
-                }
-
-                $externalNetwork_subnetMask = "$($reference_data.{primary-client-network-subnet})"
-                $externalNetwork_defaultGateway = "$($reference_data.{primary-client-network-gateway})"
-                $externalNetwork_uuid = "$($primary_client_network_uuid)"
-                if ($reference_data.{primary-client-network-startip} -and $reference_data.{primary-client-network-endip}) {
-                    $externalNetwork_pool = "$($reference_data.{primary-client-network-startip}) $($reference_data.{primary-client-network-endip})"
-                } else {
-                    $externalNetwork_pool = $null
-                }
-
-                $dns_servers = $primary_dns_servers
-                $ntp_servers = $primary_ntp_servers
-            } elseif ($filer_activation_cluster -eq $reference_data.{prism-dr}) {
-                $vfiler_uuid = $dr_cluster_vfiler.uuid
-
-                $internalNetwork_subnetMask = "$($reference_data.{dr-storage-network-subnet})"
-                $internalNetwork_defaultGateway = "$($reference_data.{dr-storage-network-gateway})"
-                $internalNetwork_uuid = "$($dr_storage_network_uuid)"
-                $internalNetwork_pool = "$($reference_data.{dr-storage-network-startip}) $($reference_data.{dr-storage-network-endip})"
-
-                $externalNetwork_subnetMask = "$($reference_data.{dr-client-network-subnet})"
-                $externalNetwork_defaultGateway = "$($reference_data.{dr-client-network-gateway})"
-                $externalNetwork_uuid = "$($dr_client_network_uuid)"
-                $externalNetwork_pool = "$($reference_data.{dr-client-network-startip}) $($reference_data.{dr-client-network-endip})"
-
-                $dns_servers = $dr_dns_servers
-                $ntp_servers = $dr_ntp_servers
-            }
-        } else {
-            #figure out which cluster we are activating this on and what the filer uuid is (this will vary based on planned or unplanned)
-            if ($failover -eq "planned") {
-                $vfiler_uuid = $remote_cluster_vfiler.uuid
-                $dns_servers = $remote_dns_servers
-                $ntp_servers = $remote_ntp_servers
-
-                $internalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the storage network (leave blank if the network is managed)"
-                $internalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the storage network (leave blank if the network is managed)"
-                $internalNetwork_uuid = "$($remote_storage_network_uuid)"
-                $internalNetworkStartIp = Read-Host "Enter the start ip for the storage network (leave blank if the network is managed)"
-                $internalNetworkEndIp = Read-Host "Enter the last ip for the storage network (leave blank if the network is managed)"
-                $internalNetwork_pool = "$($internalNetworkStartIp) $($internalNetworkEndIp)"
-
-                $externalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the client network (leave blank if the network is managed)"
-                $externalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the client network (leave blank if the network is managed)"
-                $externalNetwork_uuid = "$($remote_client_network_uuid)"
-                $externalNetworkStartIp = Read-Host "Enter the start ip for the client network (leave blank if the network is managed)"
-                $externalNetworkEndIp = Read-Host "Enter the last ip for the client network (leave blank if the network is managed)"
-                $externalNetwork_pool = "$($externalNetworkStartIp) $($externalNetworkEndIp)"
-            }
-            if ($failover -eq "unplanned") {
-                $vfiler_uuid = $prism_cluster_vfiler.uuid
-                $dns_servers = $prism_dns_servers
-                $ntp_servers = $prism_ntp_servers
-
-                $internalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the storage network (leave blank if the network is managed)"
-                $internalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the storage network (leave blank if the network is managed)"
-                $internalNetwork_uuid = "$($prism_storage_network_uuid)"
-                $internalNetworkStartIp = Read-Host "Enter the start ip for the storage network (leave blank if the network is managed)"
-                $internalNetworkEndIp = Read-Host "Enter the last ip for the storage network (leave blank if the network is managed)"
-                $internalNetwork_pool = "$($internalNetworkStartIp) $($internalNetworkEndIp)"
-
-                $externalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the client network (leave blank if the network is managed)"
-                $externalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the client network (leave blank if the network is managed)"
-                $externalNetwork_uuid = "$($prism_client_network_uuid)"
-                $externalNetworkStartIp = Read-Host "Enter the start ip for the client network (leave blank if the network is managed)"
-                $externalNetworkEndIp = Read-Host "Enter the last ip for the client network (leave blank if the network is managed)"
-                $externalNetwork_pool = "$($externalNetworkStartIp) $($externalNetworkEndIp)"
-            }
-        }
-        
-        #build the json payload here
-        $content = @{
-            name = $fsname;
-            internalNetwork = @{
-                subnetMask = $internalNetwork_subnetMask;
-                defaultGateway = $internalNetwork_defaultGateway;
-                uuid = $internalNetwork_uuid;
-                pool = @(
-                    $(if ($internalNetwork_pool) {$internalNetwork_pool})
-                )
-            };
-            externalNetworks = @(
-                @{
-                    subnetMask = $externalNetwork_subnetMask;
-                    defaultGateway = $externalNetwork_defaultGateway;
-                    uuid = $externalNetwork_uuid;
-                    pool = @(
-                        $(if ($externalNetwork_pool) {$externalNetwork_pool})
-                    )
-                }
-            );
-            dnsServerIpAddresses = @(
-                $dns_servers
-            );
-            ntpServers = @(
-                $ntp_servers
-            )
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
-
-        #* activate (POST /v1/vfilers/{$vfiler_uuid}/activate): response is a taskUuid
-        Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
-        $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/activate"
-        $method = "POST"
-        $vfiler_activation_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
-        Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
-
-        #check on file server activation task status
-        Get-PrismTaskStatus -task $vfiler_activation_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
-        
-        #TODO if MAIL, send notification email
-    #endregion
-    
-    #region update DNS
-        if ($dns) {
+    if ($failover -ne "deactivate") {
+        #region activate file server
             Write-Host ""
-            Write-Host "$(get-date) [STEP] --Updating DNS records for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
-            #if DNS, send API call to update DNS            
+            Write-Host "$(get-date) [STEP] --Activating vFiler $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
+            #get file servers uuids and other network configuration details required for activation
+            if ($reference_data) {
+                $fsname = "$($reference_data.fsname)"
+                if ($filer_activation_cluster -eq $reference_data.{prism-primary}) {
+                    $vfiler_uuid = $primary_cluster_vfiler.uuid
+
+                    $internalNetwork_subnetMask = "$($reference_data.{primary-storage-network-subnet})"
+                    $internalNetwork_defaultGateway = "$($reference_data.{primary-storage-network-gateway})"
+                    $internalNetwork_uuid = "$($primary_storage_network_uuid)"
+                    if ($reference_data.{primary-storage-network-startip} -and $reference_data.{primary-storage-network-endip}) {
+                        $internalNetwork_pool = "$($reference_data.{primary-storage-network-startip}) $($reference_data.{primary-storage-network-endip})"
+                    } else {
+                        $internalNetwork_pool = $null
+                    }
+
+                    $externalNetwork_subnetMask = "$($reference_data.{primary-client-network-subnet})"
+                    $externalNetwork_defaultGateway = "$($reference_data.{primary-client-network-gateway})"
+                    $externalNetwork_uuid = "$($primary_client_network_uuid)"
+                    if ($reference_data.{primary-client-network-startip} -and $reference_data.{primary-client-network-endip}) {
+                        $externalNetwork_pool = "$($reference_data.{primary-client-network-startip}) $($reference_data.{primary-client-network-endip})"
+                    } else {
+                        $externalNetwork_pool = $null
+                    }
+
+                    $dns_servers = $primary_dns_servers
+                    $ntp_servers = $primary_ntp_servers
+                } elseif ($filer_activation_cluster -eq $reference_data.{prism-dr}) {
+                    $vfiler_uuid = $dr_cluster_vfiler.uuid
+
+                    $internalNetwork_subnetMask = "$($reference_data.{dr-storage-network-subnet})"
+                    $internalNetwork_defaultGateway = "$($reference_data.{dr-storage-network-gateway})"
+                    $internalNetwork_uuid = "$($dr_storage_network_uuid)"
+                    $internalNetwork_pool = "$($reference_data.{dr-storage-network-startip}) $($reference_data.{dr-storage-network-endip})"
+
+                    $externalNetwork_subnetMask = "$($reference_data.{dr-client-network-subnet})"
+                    $externalNetwork_defaultGateway = "$($reference_data.{dr-client-network-gateway})"
+                    $externalNetwork_uuid = "$($dr_client_network_uuid)"
+                    $externalNetwork_pool = "$($reference_data.{dr-client-network-startip}) $($reference_data.{dr-client-network-endip})"
+
+                    $dns_servers = $dr_dns_servers
+                    $ntp_servers = $dr_ntp_servers
+                }
+            } else {
+                #figure out which cluster we are activating this on and what the filer uuid is (this will vary based on planned or unplanned)
+                if ($failover -eq "planned") {
+                    $vfiler_uuid = $remote_cluster_vfiler.uuid
+                    $dns_servers = $remote_dns_servers
+                    $ntp_servers = $remote_ntp_servers
+
+                    $internalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the storage network (leave blank if the network is managed)"
+                    $internalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the storage network (leave blank if the network is managed)"
+                    $internalNetwork_uuid = "$($remote_storage_network_uuid)"
+                    $internalNetworkStartIp = Read-Host "Enter the start ip for the storage network (leave blank if the network is managed)"
+                    $internalNetworkEndIp = Read-Host "Enter the last ip for the storage network (leave blank if the network is managed)"
+                    $internalNetwork_pool = "$($internalNetworkStartIp) $($internalNetworkEndIp)"
+
+                    $externalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the client network (leave blank if the network is managed)"
+                    $externalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the client network (leave blank if the network is managed)"
+                    $externalNetwork_uuid = "$($remote_client_network_uuid)"
+                    $externalNetworkStartIp = Read-Host "Enter the start ip for the client network (leave blank if the network is managed)"
+                    $externalNetworkEndIp = Read-Host "Enter the last ip for the client network (leave blank if the network is managed)"
+                    $externalNetwork_pool = "$($externalNetworkStartIp) $($externalNetworkEndIp)"
+                }
+                if ($failover -eq "unplanned") {
+                    $vfiler_uuid = $prism_cluster_vfiler.uuid
+                    $dns_servers = $prism_dns_servers
+                    $ntp_servers = $prism_ntp_servers
+
+                    $internalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the storage network (leave blank if the network is managed)"
+                    $internalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the storage network (leave blank if the network is managed)"
+                    $internalNetwork_uuid = "$($prism_storage_network_uuid)"
+                    $internalNetworkStartIp = Read-Host "Enter the start ip for the storage network (leave blank if the network is managed)"
+                    $internalNetworkEndIp = Read-Host "Enter the last ip for the storage network (leave blank if the network is managed)"
+                    $internalNetwork_pool = "$($internalNetworkStartIp) $($internalNetworkEndIp)"
+
+                    $externalNetwork_subnetMask = Read-Host "Enter the subnet mask (exp:255.255.255.0) for the client network (leave blank if the network is managed)"
+                    $externalNetwork_defaultGateway = Read-Host "Enter the gateway ip for the client network (leave blank if the network is managed)"
+                    $externalNetwork_uuid = "$($prism_client_network_uuid)"
+                    $externalNetworkStartIp = Read-Host "Enter the start ip for the client network (leave blank if the network is managed)"
+                    $externalNetworkEndIp = Read-Host "Enter the last ip for the client network (leave blank if the network is managed)"
+                    $externalNetwork_pool = "$($externalNetworkStartIp) $($externalNetworkEndIp)"
+                }
+            }
+            
+            #build the json payload here
             $content = @{
-                dnsOpType = "MS_DNS";
-                dnsServer= "";
-                dnsUserName= $ad_credentials.UserName;
-                dnsPassword= $ad_credentials.GetNetworkCredential().password
+                name = $fsname;
+                internalNetwork = @{
+                    subnetMask = $internalNetwork_subnetMask;
+                    defaultGateway = $internalNetwork_defaultGateway;
+                    uuid = $internalNetwork_uuid;
+                    pool = @(
+                        $(if ($internalNetwork_pool) {$internalNetwork_pool})
+                    )
+                };
+                externalNetworks = @(
+                    @{
+                        subnetMask = $externalNetwork_subnetMask;
+                        defaultGateway = $externalNetwork_defaultGateway;
+                        uuid = $externalNetwork_uuid;
+                        pool = @(
+                            $(if ($externalNetwork_pool) {$externalNetwork_pool})
+                        )
+                    }
+                );
+                dnsServerIpAddresses = @(
+                    $dns_servers
+                );
+                ntpServers = @(
+                    $ntp_servers
+                )
             }
             $payload = (ConvertTo-Json $content -Depth 4)
-    
-            #* activate (POST /v1/vfilers/$($file_server_uuid)/addDns): response is a taskUuid
-            Write-Host "$(get-date) [INFO] Updating DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
-            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/addDns"
+
+            #* activate (POST /v1/vfilers/{$vfiler_uuid}/activate): response is a taskUuid
+            Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/activate"
             $method = "POST"
-            $vfiler_dns_update_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
-            Write-Host "$(get-date) [SUCCESS] Successfully triggered update of DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
+            $vfiler_activation_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
+            Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
-            #check on DNS update task status
-            Get-PrismTaskStatus -task $vfiler_dns_update_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
-
+            #check on file server activation task status
+            Get-PrismTaskStatus -task $vfiler_activation_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
+            
             #TODO if MAIL, send notification email
-        }
-    #endregion
+        #endregion
+        
+        #region update DNS
+            if ($dns) {
+                Write-Host ""
+                Write-Host "$(get-date) [STEP] --Updating DNS records for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
+                #if DNS, send API call to update DNS            
+                $content = @{
+                    dnsOpType = "MS_DNS";
+                    dnsServer= "";
+                    dnsUserName= $ad_credentials.UserName;
+                    dnsPassword= $ad_credentials.GetNetworkCredential().password
+                }
+                $payload = (ConvertTo-Json $content -Depth 4)
+        
+                #* activate (POST /v1/vfilers/$($file_server_uuid)/addDns): response is a taskUuid
+                Write-Host "$(get-date) [INFO] Updating DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+                $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/addDns"
+                $method = "POST"
+                $vfiler_dns_update_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
+                Write-Host "$(get-date) [SUCCESS] Successfully triggered update of DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
-    #region print final file server status
-        Write-Host ""
-        Write-Host "$(get-date) [STEP] --Getting final status for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
-        #check status of file server
-        Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
-        $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
-        $method = "GET"
-        $vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-        $vfiler = $vfilers.entities | Where-Object {$_.Name -eq $fsname}
-        if (!$vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
-        Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
-        Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) has the following status: $($vfiler.fileServerState)" -ForegroundColor Green
-        #TODO if MAIL, send notification email
-    #endregion
+                #check on DNS update task status
+                Get-PrismTaskStatus -task $vfiler_dns_update_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
+
+                #TODO if MAIL, send notification email
+            }
+        #endregion
+
+        #region print final file server status
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Getting final status for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
+            #check status of file server
+            Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
+            $method = "GET"
+            $vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $vfiler = $vfilers.entities | Where-Object {$_.Name -eq $fsname}
+            if (!$vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
+            Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) has the following status: $($vfiler.fileServerState)" -ForegroundColor Green
+            #TODO if MAIL, send notification email
+        #endregion
+    }
 
 #endregion
 

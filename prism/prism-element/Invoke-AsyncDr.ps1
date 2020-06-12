@@ -577,12 +577,10 @@ Param
         Asynchronous protection domain name.
         .PARAMETER cluster
         FQDN or IP of Nutanix cluster.
-        .PARAMETER username
-        Nutanix cluster API username.
-        .PARAMETER password
-        Nutanix cluster API password (passed as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
         .EXAMPLE
-        Invoke-NtnxPdMigration -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        Invoke-NtnxPdMigration -pd <pd_name> -cluster ntnx1.local -credential $prism_credential
         #>
         [CmdletBinding()]
         param
@@ -689,12 +687,10 @@ Param
         Asynchronous protection domain name.
         .PARAMETER cluster
         FQDN or IP of Nutanix cluster.
-        .PARAMETER username
-        Nutanix cluster API username.
-        .PARAMETER password
-        Nutanix cluster API password (passed as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
         .EXAMPLE
-        Invoke-NtnxPdActivation -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        Invoke-NtnxPdActivation -pd <pd_name> -cluster ntnx1.local -credential $credential
         #>
         [CmdletBinding()]
         param
@@ -781,12 +777,10 @@ Param
         Asynchronous protection domain name.
         .PARAMETER cluster
         FQDN or IP of Nutanix cluster.
-        .PARAMETER username
-        Nutanix cluster API username.
-        .PARAMETER password
-        Nutanix cluster API password (passed as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
         .EXAMPLE
-        Invoke-NtnxPdDeactivation -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        Invoke-NtnxPdDeactivation -pd <pd_name> -cluster ntnx1.local -credential $credential
         #>
         [CmdletBinding()]
         param
@@ -870,12 +864,10 @@ Param
         Asynchronous protection domain name.
         .PARAMETER cluster
         FQDN or IP of Nutanix cluster.
-        .PARAMETER username
-        Nutanix cluster API username.
-        .PARAMETER password
-        Nutanix cluster API password (passed as a secure string).
+        .PARAMETER credential
+        PowerShell credential object for Nutanix cluster API user.
         .EXAMPLE
-        Set-NtnxPdVmPowerOn -pd <pd_name> -cluster ntnx1.local -username api-user -password $secret
+        Set-NtnxPdVmPowerOn -pd <pd_name> -cluster ntnx1.local -credential $credential
         #>
         [CmdletBinding()]
         param
