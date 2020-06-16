@@ -377,8 +377,14 @@ Generate one csv file per overview metric for the last 7 days.
         if ($overview) {
             $myvar_metrics_list = (
                 "controller_avg_io_latency_usecs",
+                "controller_avg_read_io_latency_usecs",
+                "controller_avg_write_io_latency_usecs",
                 "controller_io_bandwidth_kBps",
-                "num_iops",
+                "controller_avg_read_io_size_kbytes",
+                "controller_avg_write_io_size_kbytes",
+                "controller_num_iops",
+                "controller_num_read_iops",
+                "controller_num_write_iops",
                 "hypervisor_cpu_usage_ppm",
                 "hypervisor_memory_usage_ppm"
             )
@@ -407,7 +413,7 @@ Generate one csv file per overview metric for the last 7 days.
                 [System.Collections.ArrayList]$myvar_metrics_timestamped_results = New-Object System.Collections.ArrayList($null)
                 $timestamp = $startdate
                 ForEach ($metric_value in $myvar_metrics_results.$metric) {
-                    if (($metric -eq "hypervisor_cpu_usage_ppm") -or ($metric -eq "hypervisor_memory_usage_ppm")) {
+                    if (($metric -eq "hypervisor_cpu_usage_ppm") -or ($metric -eq "hypervisor_memory_usage_ppm") -or ($metric -eq "content_cache_hit_ppm")) {
                         $formatted_metric_value = [math]::round($metric_value/10000,2)
                     } else {
                         $formatted_metric_value = $metric_value
