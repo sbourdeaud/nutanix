@@ -45,6 +45,10 @@
   )
 #endregion
 
+#TODO: add cluster name to csv file
+#TODO: add ability to point to PC and get all clusters from there
+#TODO: add ability to read clusters list from csv file
+
 #region prep-work
   #check if we need to display help and/or history
   $HistoryText = @'

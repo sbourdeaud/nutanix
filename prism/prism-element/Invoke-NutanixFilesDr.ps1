@@ -315,7 +315,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
                 Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
 
                 #first, we need to figure out which protection domains need to be deactivated. If none have been specified, we'll assume all of them which are active.
@@ -346,7 +346,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
                     $method = "POST"
                     $content = @{}
                     $body = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
+                    $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
                     Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started deactivation of protection domain $pd2deactivate on $cluster"
                 }
             #endregion
@@ -418,7 +418,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
             
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
             $method = "GET"
-            $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+            $response = Invoke-PrismAPICall -method $method -url $url -credential $credential
             Write-Host "$(get-date) [SUCCESS] Retrieved list of tasks on the cluster $cluster" -ForegroundColor Cyan
             
             Do
@@ -438,7 +438,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
                         Start-Sleep 5
                         $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
                         $method = "GET"
-                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                        $response = Invoke-PrismAPICall -method $method -url $url -credential $credential
                         $task = $response.entities | Where-Object {$_.taskName -eq $pdTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
                         if ($task.status -ne "running") 
                         {#task is no longer running
@@ -729,7 +729,7 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
                     Start-Sleep 5
                     $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
                     $method = "GET"
-                    $taskDetails = Invoke-PrismRESTCall -method $method -url $url -credential $credential
+                    $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
                     
                     if ($taskDetails.progress_status -ne "Running") 
                     {
@@ -1017,7 +1017,7 @@ Date       By   Updates (newest updates at the top)
                     $ad_username = $ad_credentials.UserName
                     $ad_secure_password = $ad_credentials.Password
                 }
-                $ad_credentials = New-Object PSCredential $ad_username, $PrismSecurePassword
+                $ad_credentials = New-Object PSCredential $ad_username, $ad_secure_password
             }
 
             $fsname = $reference_data.fsname
@@ -1039,7 +1039,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving details of PRIMARY Nutanix cluster $($reference_data.{prism-primary}) ..." -ForegroundColor Green
                     $url = "https://$($reference_data.{prism-primary}):9440/PrismGateway/services/rest/v2.0/cluster/"
                     $method = "GET"
-                    $primary_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $primary_cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
                     Write-Host "$(get-date) [INFO] Hypervisor on PRIMARY Nutanix cluster $($reference_data.{prism-primary}) is of type $($primary_cluster_details.hypervisor_types)." -ForegroundColor Green
 
@@ -1061,7 +1061,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from PRIMARY Nutanix cluster $($reference_data.{prism-primary})..." -ForegroundColor Green
                     $url = "https://$($reference_data.{prism-primary}):9440/PrismGateway/services/rest/v1/vfilers/"
                     $method = "GET"
-                    $primary_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $primary_cluster_vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     $primary_cluster_vfiler = $primary_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
                     if (!$primary_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on PRIMARY Nutanix cluster $($reference_data.{prism-primary})!" -ForegroundColor Red; Exit 1}
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
@@ -1073,7 +1073,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from PRIMARY Nutanix cluster $($reference_data.{prism-primary})..." -ForegroundColor Green
                     $url = "https://$($reference_data.{prism-primary}):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                     $method = "GET"
-                    $primary_pd_list = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $primary_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
                     $primary_vfiler_pd = $primary_pd_list.entities | Where-Object {$_.name -eq $pd}
                     if (!$primary_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on PRIMARY Nutanix cluster $($reference_data.{prism-primary})!" -ForegroundColor Red; Exit 1}
@@ -1085,7 +1085,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving available networks from PRIMARY Nutanix cluster $($reference_data.{prism-primary})..." -ForegroundColor Green
                     $url = "https://$($reference_data.{prism-primary}):9440/PrismGateway/services/rest/v2.0/networks/"
                     $method = "GET"
-                    $primary_cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $primary_cluster_networks = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks from PRIMARY Nutanix cluster $($reference_data.{prism-primary})" -ForegroundColor Cyan
                     $primary_client_network_uuid = ($primary_cluster_networks.entities | Where-Object {$_.name -eq $reference_data.{primary-client-network-name}}).uuid
                     $primary_storage_network_uuid = ($primary_cluster_networks.entities | Where-Object {$_.name -eq $reference_data.{primary-storage-network-name}}).uuid
@@ -1100,7 +1100,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving details of DR Nutanix cluster $($reference_data.{prism-dr}) ..." -ForegroundColor Green
                 $url = "https://$($reference_data.{prism-dr}):9440/PrismGateway/services/rest/v2.0/cluster/"
                 $method = "GET"
-                $dr_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $dr_cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
                 Write-Host "$(get-date) [INFO] Hypervisor on DR Nutanix cluster $($reference_data.{prism-dr}) is of type $($dr_cluster_details.hypervisor_types)." -ForegroundColor Green
 
@@ -1122,7 +1122,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from DR Nutanix cluster $($reference_data.{prism-dr})..." -ForegroundColor Green
                 $url = "https://$($reference_data.{prism-dr}):9440/PrismGateway/services/rest/v1/vfilers/"
                 $method = "GET"
-                $dr_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $dr_cluster_vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 $dr_cluster_vfiler = $dr_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
                 if (!$dr_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
@@ -1134,7 +1134,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving protection domains from DR Nutanix cluster $($reference_data.{prism-dr})..." -ForegroundColor Green
                 $url = "https://$($reference_data.{prism-dr}):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $dr_pd_list = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $dr_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
                 $dr_vfiler_pd = $dr_pd_list.entities | Where-Object {$_.name -eq $pd}
                 if (!$dr_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
@@ -1146,7 +1146,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving available networks from DR Nutanix cluster $($reference_data.{prism-dr})..." -ForegroundColor Green
                 $url = "https://$($reference_data.{prism-dr}):9440/PrismGateway/services/rest/v2.0/networks/"
                 $method = "GET"
-                $dr_cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $dr_cluster_networks = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks from DR Nutanix cluster $($reference_data.{prism-dr})" -ForegroundColor Cyan
                 $dr_client_network_uuid = ($dr_cluster_networks.entities | Where-Object {$_.name -eq $reference_data.{dr-client-network-name}}).uuid
                 $dr_storage_network_uuid = ($dr_cluster_networks.entities | Where-Object {$_.name -eq $reference_data.{dr-storage-network-name}}).uuid
@@ -1190,7 +1190,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $($prism) ..." -ForegroundColor Green
                 $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/cluster/"
                 $method = "GET"
-                $prism_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $prism_cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $($prism) ($($prism_cluster_details.name))" -ForegroundColor Cyan
                 Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $($prism) ($($prism_cluster_details.name)) is of type $($prism_cluster_details.hypervisor_types)." -ForegroundColor Green
             #endregion
@@ -1201,7 +1201,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($prism) ($($prism_cluster_details.name))..." -ForegroundColor Green
                     $url = "https://$($prism):9440/PrismGateway/services/rest/v1/vfilers/"
                     $method = "GET"
-                    $prism_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $prism_cluster_vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     $prism_cluster_vfiler = $prism_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
                     if (!$prism_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($prism) ($($prism_cluster_details.name))!" -ForegroundColor Red; Exit 1}
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($prism) ($($prism_cluster_details.name))" -ForegroundColor Cyan
@@ -1215,7 +1215,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($prism) ($($prism_cluster_details.name))..." -ForegroundColor Green
                 $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $prism_pd_list = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $prism_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($prism) ($($prism_cluster_details.name))" -ForegroundColor Cyan
                 
                 $prism_vfiler_pd = $prism_pd_list.entities | Where-Object {$_.name -eq $pd}
@@ -1240,7 +1240,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving available networks from Nutanix cluster $($prism)..." -ForegroundColor Green
                     $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/networks/"
                     $method = "GET"
-                    $prism_cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $prism_cluster_networks = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks from Nutanix cluster $($prism)" -ForegroundColor Cyan
 
                     #TODO enhance this to show list of networks available + capture other network details (gateway, pool, subnet mask)  Also this should be asking/checking on target cluster, not prism
@@ -1255,7 +1255,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving details about remote site $($remoteSite.remote_site_names) ..." -ForegroundColor Green
                     $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
                     $method = "GET"
-                    $remote_site_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $remote_site_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details about remote site $($remoteSite.remote_site_names)" -ForegroundColor Cyan
 
                     if ($remote_site_details.remote_ip_ports.psobject.properties.count -gt 1)
@@ -1279,7 +1279,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving details of remote Nutanix cluster $($filer_activation_cluster) ..." -ForegroundColor Green
                     $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
                     $method = "GET"
-                    $remote_cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $remote_cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of remote Nutanix cluster $($filer_activation_cluster)" -ForegroundColor Cyan
                     Write-Host "$(get-date) [INFO] Hypervisor on remote Nutanix cluster $($filer_activation_cluster) is of type $($remote_cluster_details.hypervisor_types)." -ForegroundColor Green
 
@@ -1294,7 +1294,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving available networks from remote Nutanix cluster $($filer_activation_cluster)..." -ForegroundColor Green
                     $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v2.0/networks/"
                     $method = "GET"
-                    $remote_cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $remote_cluster_networks = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks from remote Nutanix cluster $($filer_activation_cluster)" -ForegroundColor Cyan
                     $remote_client_network_uuid = ($remote_cluster_networks.entities | Where-Object {$_.name -eq $prism_client_network_name}).uuid
                     $remote_storage_network_uuid = ($remote_cluster_networks.entities | Where-Object {$_.name -eq $prism_storage_network_name}).uuid
@@ -1309,7 +1309,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from remote Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
                     $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
                     $method = "GET"
-                    $remote_cluster_vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $remote_cluster_vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     $remote_cluster_vfiler = $remote_cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
                     if (!$remote_cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on remote Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from remote Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
@@ -1321,7 +1321,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from remote Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
                     $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                     $method = "GET"
-                    $remote_pd_list = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $remote_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from remote Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
                     
                     $remote_vfiler_pd = $remote_pd_list.entities | Where-Object {$_.name -eq $pd}
@@ -1377,7 +1377,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $migrate_from_cluster ..." -ForegroundColor Green
                 $url = "https://$($migrate_from_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
                 $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $PdList = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $migrate_from_cluster" -ForegroundColor Cyan
 
                 ForEach ($protection_domain in $processed_pds)
@@ -1400,7 +1400,7 @@ Date       By   Updates (newest updates at the top)
                         Write-Host "$(get-date) [INFO] Retrieving details about remote site $($remoteSite.remote_site_names) ..." -ForegroundColor Green
                         $url = "https://$($migrate_from_cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
                         $method = "GET"
-                        $remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        $remote_site = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details about remote site $($remoteSite.remote_site_names)" -ForegroundColor Cyan
 
                         if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
@@ -1605,7 +1605,7 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
             $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/activate"
             $method = "POST"
-            $vfiler_activation_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
+            $vfiler_activation_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
             Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
             #check on file server activation task status
@@ -1631,7 +1631,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Updating DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
                 $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/addDns"
                 $method = "POST"
-                $vfiler_dns_update_task_uuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $payload
+                $vfiler_dns_update_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                 Write-Host "$(get-date) [SUCCESS] Successfully triggered update of DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
                 #check on DNS update task status
@@ -1648,7 +1648,7 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
             $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
             $method = "GET"
-            $vfilers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             $vfiler = $vfilers.entities | Where-Object {$_.Name -eq $fsname}
             if (!$vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
