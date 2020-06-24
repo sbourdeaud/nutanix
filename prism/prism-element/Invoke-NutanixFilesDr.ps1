@@ -1153,6 +1153,59 @@ public static void Ignore()
 
     }#endend
 }#end function Set-PoSHSSLCerts
+
+#this function is used to prompt the user for a yes/no/skip response in order to control the workflow of a script
+function Write-CustomPrompt 
+{
+<#
+.SYNOPSIS
+Creates a user prompt with a yes/no/skip response. Returns the response.
+
+.DESCRIPTION
+Creates a user prompt with a yes/no/skip response. Returns the response in lowercase. Valid responses are "y" for yes, "n" for no, "s" for skip.
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Write-CustomPrompt
+Creates the prompt.
+
+.LINK
+https://github.com/sbourdeaud
+#>
+[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+param 
+(
+    [Switch]$skip
+)
+
+begin 
+{
+    [String]$userChoice = "" #initialize our returned variable
+}
+process 
+{
+    if ($skip)
+    {
+        do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o]/S[kip])"} #display the user prompt
+        while ($userChoice -notmatch '[ynsYNS]') #loop until the user input is valid
+    }
+    else 
+    {
+        do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o])"} #display the user prompt
+        while ($userChoice -notmatch '[ynYN]') #loop until the user input is valid
+    }
+    $userChoice = $userChoice.ToLower() #change to lowercase
+}
+end 
+{
+    return $userChoice
+}
+
+} #end Write-CustomPrompt function
+
 #endregion
 
 #region prepwork
@@ -2040,10 +2093,33 @@ if ($failover -ne "deactivate") {
                     $cluster_vfiler_pd = $cluster_pd_list.entities | Where-Object {$_.name -eq $pd}
                     if (!$cluster_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
                     $filer_pd_vms = $cluster_vfiler_pd.vms.vm_name
-                #endregion 
+                #endregion
             }
 
             foreach ($filer_vm in $filer_pd_vms) {
+
+                #region check if there are duplicate names for vms (will happen in metro clusters or if the same vcenter is used)
+                    $filer_vm_duplicate = Get-VM -Name "$($filer_vm) (1)"
+                    if ($filer_vm_duplicate) {#we have a duplicate vm object in vcenter that we need to remove and rename
+                        try
+                        {
+                            Write-Host "$(get-date) [WARN] We have duplicate file server VMs in the vCenter inventory. Removing the duplicate and renaming the FSVM $($filer_vm)..." -ForegroundColor Yellow
+                            Write-Host "$(get-date) [INFO] Removing FSVM $($filer_vm) from the vCenter inventory..." -ForegroundColor Green
+                            $result = Remove-Vm -Name $filer_vm -Confirm:$false -ErrorAction Stop
+                            Write-Host "$(get-date) [SUCCESS] Successfully removed FSVM $($filer_vm) from the vCenter inventory..." -ForegroundColor Cyan
+
+                            Write-Host "$(get-date) [INFO] Renaming FSVM $($filer_vm_duplicate.Name) to $($filer_vm)..." -ForegroundColor Green
+                            $result = Set-VM -VM $filer_vm_duplicate -Name $filer_vm -Confirm:$false -ErrorAction Stop
+                            Write-Host "$(get-date) [SUCCESS] Successfully renamed FSVM $($filer_vm_duplicate.Name) to $($filer_vm)..." -ForegroundColor Cyan
+                        }
+                        catch
+                        {
+                            Write-Host "$(get-date) [ERROR] Could not clean up duplicate VM entries for FSVM $($filer_vm)" -ForegroundColor Red
+                            Exit 1
+                        }
+                    }
+                #endregion
+
                 #region check vm and vmnics
                     Write-Host "$(get-date) [INFO] Processing VM $($prism_processed_pd_vm.vm_name) ..." -ForegroundColor Green
                     try
