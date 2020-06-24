@@ -169,7 +169,7 @@ function Invoke-NtnxPdMigration
                                 }
                     $body = (ConvertTo-Json $content -Depth 4)
                     $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
-                    if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
+                    if ($debugme) {Write-Host "$(get-date) [DEBUG] Migration request response is: $($response.metadata)" -ForegroundColor White}
                     if ($response.metadata.count -ne 0)
                     {#something went wrong with our migration request
                         Write-Host "$(get-date) [ERROR] Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused ny NGT being disabled on some VMs, or by delta disks due to old snapshots)." -ForegroundColor Red
@@ -315,11 +315,11 @@ function Invoke-NtnxPdDeactivation
     {
         #region get data
             #let's retrieve the list of protection domains
-            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
+            Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
             $method = "GET"
             $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
 
             #first, we need to figure out which protection domains need to be deactivated. If none have been specified, we'll assume all of them which are active.
             if (!$pd) 
@@ -335,8 +335,8 @@ function Invoke-NtnxPdDeactivation
 
             if (!$pd) 
             {
-                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
-                Exit
+                Write-Host "$(get-date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
+                Exit 1
             }
         #endregion
 
@@ -344,13 +344,13 @@ function Invoke-NtnxPdDeactivation
             ForEach ($pd2deactivate in $pd) 
             {#now let's call the deactivate workflow for each pd
                 Write-Host ""
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Deactivating protection domain $pd2deactivate on $cluster ..."
+                Write-Host "$(get-date) [INFO] Deactivating protection domain $pd2deactivate on $cluster ..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
                 $method = "POST"
                 $content = @{}
                 $body = (ConvertTo-Json $content -Depth 4)
                 $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started deactivation of protection domain $pd2deactivate on $cluster"
+                Write-Host "$(get-date) [SUCCESS] Successfully started deactivation of protection domain $pd2deactivate on $cluster" -ForegroundColor Cyan
             }
         #endregion
     }
@@ -717,11 +717,11 @@ function Get-PrismTaskStatus
     process 
     {
         #region get initial task details
-            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of task $task..."
+            Write-Host "$(get-date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
             $method = "GET"
             $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved details of task $task"
+            Write-Host "$(get-date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
         #endregion
 
         if ($taskDetails.percentage_complete -ne "100") 
@@ -738,7 +738,7 @@ function Get-PrismTaskStatus
                 {
                     if ($taskDetails.progress_status -ne "Succeeded")
                     {
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
+                        Write-Host "$(get-date) [ERROR] Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)" -ForegroundColor Red
                         $userChoice = Write-CustomPrompt
                         if ($userChoice -eq "n")
                         {
@@ -750,13 +750,13 @@ function Get-PrismTaskStatus
             While ($taskDetails.percentage_complete -ne "100")
             
             New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"
+            Write-Host "$(get-date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
         } 
         else 
         {
             if ($taskDetails.progress_status -ne "Succeeded")
             {
-                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
+                Write-Host "$(get-date) [ERROR] Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)" -ForegroundColor Red
                 $userChoice = Write-CustomPrompt
                 if ($userChoice -eq "n")
                 {
@@ -766,7 +766,7 @@ function Get-PrismTaskStatus
             else 
             {
                 New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"   
+                Write-Host "$(get-date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
             }
         }
     }
