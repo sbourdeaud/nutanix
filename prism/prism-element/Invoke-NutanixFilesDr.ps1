@@ -1319,17 +1319,17 @@ if ($failover -eq "deactivate") {
 #region check we have the data we need
     #check reference_data (if it exists) and validate entries
     if ($reference_data) {
-        if (!$reference_data.fsname) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute fsname" -ForegroundColor Error; exit 1}
-        if (!$reference_data.{prism-primary}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-primary" -ForegroundColor Error; exit 1}
-        if (!$reference_data.{prism-dr}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-dr" -ForegroundColor Error; exit 1}
-        if (!$reference_data.{primary-client-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute primary-client-network-name" -ForegroundColor Error; exit 1}
-        if (!$reference_data.{primary-storage-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute primary-storage-network-name" -ForegroundColor Error; exit 1}
-        if (!$reference_data.{dr-client-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute dr-client-network-name" -ForegroundColor Error; exit 1}
-        if (!$reference_data.{dr-storage-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute dr-storage-network-name" -ForegroundColor Error; exit 1}
-        if (!$reference_data.prismcreds) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prismcreds" -ForegroundColor Error; exit 1}
-        if ($dns -and !$reference_data.adcreds) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute adcreds" -ForegroundColor Error; exit 1}
-        if ($mail -and (!$smtp -or !$email)) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute smtp and/or email" -ForegroundColor Error; exit 1}
-        if ($dvswitch -and !$reference_data.vcentercreds) {{Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute vcentercreds" -ForegroundColor Error; exit 1}}
+        if (!$reference_data.fsname) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute fsname" -ForegroundColor Red; exit 1}
+        if (!$reference_data.{prism-primary}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-primary" -ForegroundColor Red; exit 1}
+        if (!$reference_data.{prism-dr}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-dr" -ForegroundColor Red; exit 1}
+        if (!$reference_data.{primary-client-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute primary-client-network-name" -ForegroundColor Red; exit 1}
+        if (!$reference_data.{primary-storage-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute primary-storage-network-name" -ForegroundColor Red; exit 1}
+        if (!$reference_data.{dr-client-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute dr-client-network-name" -ForegroundColor Red; exit 1}
+        if (!$reference_data.{dr-storage-network-name}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute dr-storage-network-name" -ForegroundColor Red; exit 1}
+        if (!$reference_data.prismcreds) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prismcreds" -ForegroundColor Red; exit 1}
+        if ($dns -and !$reference_data.adcreds) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute adcreds" -ForegroundColor Red; exit 1}
+        if ($mail -and (!$smtp -or !$email)) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute smtp and/or email" -ForegroundColor Red; exit 1}
+        if ($dvswitch -and !$reference_data.vcentercreds) {{Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute vcentercreds" -ForegroundColor Red; exit 1}}
 
         #import prismcredentials
         try {
@@ -1369,8 +1369,8 @@ if ($failover -eq "deactivate") {
         if ($dvswitch -and $reference_data.vcentercreds) {
             try {
                 $vcenter_credentials = Get-CustomCredentials -credname $reference_data.vcentercreds -ErrorAction Stop
-                $vcenter_username = $ad_credentials.UserName
-                $vcenter_secure_password = $ad_credentials.Password
+                $vcenter_username = $vcenter_credentials.UserName
+                $vcenter_secure_password = $vcenter_credentials.Password
             }
             catch 
             {
@@ -1535,7 +1535,7 @@ if ($failover -eq "deactivate") {
                 $migrate_from_cluster_name = $primary_cluster_details.name
                 $filer_activation_cluster = $reference_data.{prism-dr}
                 $filer_activation_cluster_name = $dr_cluster_details.name
-                $filer_pd_vms = $dr_vfiler_pd.vms.vm_name
+                $filer_pd_vms = $primary_vfiler_pd.vms.vm_name
                 $myvarvCenter = ($dr_cluster_details.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
             } elseif ($dr_vfiler_pd.active) {
                 Write-Host "$(get-date) [INFO] Protection domain $pd is active on DR cluster, so migrating from DR to PRIMARY and doing file server activation on PRIMARY." -ForegroundColor Green
@@ -1543,13 +1543,14 @@ if ($failover -eq "deactivate") {
                 $migrate_from_cluster_name = $dr_cluster_details.name
                 $filer_activation_cluster = $reference_data.{prism-primary}
                 $filer_activation_cluster_name = $primary_cluster_details.name
-                $filer_pd_vms = $primary_vfiler_pd.vms.vm_name
+                $filer_pd_vms = $dr_vfiler_pd.vms.vm_name
                 $myvarvCenter = ($primary_cluster_details.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
             }
         } elseif ($failover -eq "unplanned") {
             Write-Host "$(get-date) [INFO] We are doing an unplanned failover, so protection domain $pd will be activated on DR. File server activation will also be done on DR." -ForegroundColor Green
             $filer_activation_cluster = $reference_data.{prism-dr}
             $filer_activation_cluster_name = $dr_cluster_details.name
+            #! move this to after pd migration otherwise I won't get the vm list
             $filer_pd_vms = $dr_vfiler_pd.vms.vm_name
             $myvarvCenter = ($dr_cluster_details.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
             if ($dr_vfiler_pd.active) {
@@ -1703,7 +1704,7 @@ if ($failover -eq "deactivate") {
                 if (!$remote_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on remote Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
             #endregion
 
-            $filer_pd_vms = $remote_vfiler_pd.vms.vm_name
+            $filer_pd_vms = $prism_vfiler_pd.vms.vm_name
         }
 
         if ($failover -eq "unplanned") {
@@ -1711,6 +1712,7 @@ if ($failover -eq "deactivate") {
             $prism_ntp_servers = $prism_cluster_details.ntp_servers
             $filer_activation_cluster = $prism
             $filer_activation_cluster_name = $prism_cluster_details.name
+            #! move this to after pd migration otherwise I won't get the vm list
             $filer_pd_vms = $prism_vfiler_pd.vms.vm_name
             $myvarvCenter = ($prism_cluster_details.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
             $prism_client_network_uuid = ($prism_cluster_networks.entities | Where-Object {$_.name -eq $prism_client_network_name}).uuid
@@ -2027,6 +2029,20 @@ if ($failover -eq "deactivate") {
 if ($failover -ne "deactivate") {
     #region dvswitch
         if ($dvswitch) {
+            if ($failover -eq "unplanned") {
+                #region GET protection domains (DR)
+                    #get protection domains from dr
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($cluster)..." -ForegroundColor Green
+                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                    $method = "GET"
+                    $cluster_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($cluster)" -ForegroundColor Cyan
+                    $cluster_vfiler_pd = $cluster_pd_list.entities | Where-Object {$_.name -eq $pd}
+                    if (!$cluster_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
+                    $filer_pd_vms = $cluster_vfiler_pd.vms.vm_name
+                #endregion 
+            }
+
             foreach ($filer_vm in $filer_pd_vms) {
                 #region check vm and vmnics
                     Write-Host "$(get-date) [INFO] Processing VM $($prism_processed_pd_vm.vm_name) ..." -ForegroundColor Green
@@ -2070,7 +2086,7 @@ if ($failover -ne "deactivate") {
                         {#reconnect vnic
                             Write-Host "$(get-date) [INFO] Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
                             $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -PortGroup $vdportgroup -ErrorAction Stop -Confirm:$false
-                            $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -Connected:$true -ErrorAction Stop -Confirm:$false
+                            $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -ErrorAction Stop -Confirm:$false
                             Write-Host "$(get-date) [SUCCESS] Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Cyan
                         }
                         catch 
