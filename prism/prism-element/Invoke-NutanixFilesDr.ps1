@@ -2048,7 +2048,7 @@ if ($failover -eq "deactivate") {
             } 
             else 
             {#ping failed
-                Write-Host "$(get-date) [SUCCESS] Cannot ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Proceeding with protection domain activation on DR."
+                Write-Host "$(get-date) [SUCCESS] Cannot ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Proceeding with protection domain activation on DR." -ForegroundColor Cyan
             }                
         } else {
             $cluster = $prism
@@ -2099,7 +2099,8 @@ if ($failover -ne "deactivate") {
             foreach ($filer_vm in $filer_pd_vms) {
 
                 #region check if there are duplicate names for vms (will happen in metro clusters or if the same vcenter is used)
-                    $filer_vm_duplicate = Get-VM -Name "$($filer_vm) (1)"
+                    #! this region does not work as the FSVM names will already contain the (1) after the PD activation...
+                    $filer_vm_duplicate = Get-VM -Name "$($filer_vm) (1)" -ErrorAction SilentlyContinue
                     if ($filer_vm_duplicate) {#we have a duplicate vm object in vcenter that we need to remove and rename
                         try
                         {
@@ -2121,7 +2122,7 @@ if ($failover -ne "deactivate") {
                 #endregion
 
                 #region check vm and vmnics
-                    Write-Host "$(get-date) [INFO] Processing VM $($prism_processed_pd_vm.vm_name) ..." -ForegroundColor Green
+                    Write-Host "$(get-date) [INFO] Processing VM $($filer_vm) ..." -ForegroundColor Green
                     try
                     {#get vm object from vCenter
                         $vm_vCenter_object = Get-VM -Name $filer_vm -ErrorAction Stop
@@ -2145,10 +2146,22 @@ if ($failover -ne "deactivate") {
                 #region reconnect vnics
                 ForEach ($vm_vCenter_vnic in $vm_vCenter_vnics)
                 {
+                    #! this is a workaround for the bug where vdportgroups are not correctly mapped after the pd activation
+                    if ($failover -eq "unplanned") {
+                        if ($vm_vCenter_vnic -eq $vm_vCenter_vnics[0]) {
+                            $target_vdportgroup = $reference_data.{dr-storage-network-name}
+                        }
+                        if ($vm_vCenter_vnic -eq $vm_vCenter_vnics[1]) {
+                            $target_vdportgroup = $reference_data.{dr-client-network-name}
+                        }
+                    } else {
+                        $target_vdportgroup = $vm_vCenter_vnic.NetworkName
+                    }
+
                     try 
                     {#get vdportgroup
                         Write-Host "$(get-date) [INFO] Searching for $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
-                        $vdportgroup = Get-VDPortgroup -Name $vm_vCenter_vnic.NetworkName -ErrorAction Stop
+                        $vdportgroup = Get-VDPortgroup -Name $target_vdportgroup -ErrorAction Stop
                         Write-Host "$(get-date) [SUCCESS] $($vm_vCenter_vnic.NetworkName) is a VDPortGroup." -ForegroundColor Cyan
                     }
                     catch 
