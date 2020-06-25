@@ -347,29 +347,29 @@ Generate one csv file per overview metric for the last 7 days.
             $startdate = ((Get-Date).AddMinutes(-5)).AddHours(-1)
             $enddate = (Get-Date).AddMinutes(-5)
 
-            $starttime_epoch_usecs = [int][double]::Parse((Get-Date -Date $startdate -UFormat %s)) * 1000000
-            $endtime_epoch_usecs = [int][double]::Parse((Get-Date -Date $enddate -UFormat %s)) * 1000000
+            $starttime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $startdate -UFormat %s))).ToString() + "000000"
+            $endtime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $enddate -UFormat %s))).ToString() + "000000"
         } elseif ($day) {
             $startdate = ((Get-Date).AddMinutes(-5)).AddDays(-1)
             $enddate = (Get-Date).AddMinutes(-5)
 
-            $starttime_epoch_usecs = [int][double]::Parse((Get-Date -Date $startdate -UFormat %s)) * 1000000
-            $endtime_epoch_usecs = [int][double]::Parse((Get-Date -Date $enddate -UFormat %s)) * 1000000
+            $starttime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $startdate -UFormat %s))).ToString() + "000000"
+            $endtime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $enddate -UFormat %s))).ToString() + "000000"
         } elseif ($week) {
             $startdate = ((Get-Date).AddMinutes(-5)).AddDays(-7)
             $enddate = (Get-Date).AddMinutes(-5)
 
-            $starttime_epoch_usecs = [int][double]::Parse((Get-Date -Date $startdate -UFormat %s)) * 1000000
-            $endtime_epoch_usecs = [int][double]::Parse((Get-Date -Date $enddate -UFormat %s)) * 1000000
+            $starttime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $startdate -UFormat %s))).ToString() + "000000"
+            $endtime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $enddate -UFormat %s))).ToString() + "000000"
         } elseif ($month) {
             $startdate = ((Get-Date).AddMinutes(-5)).AddDays(-28)
             $enddate = (Get-Date).AddMinutes(-5)
 
-            $starttime_epoch_usecs = [int][double]::Parse((Get-Date -Date $startdate -UFormat %s)) * 1000000
-            $endtime_epoch_usecs = [int][double]::Parse((Get-Date -Date $enddate -UFormat %s)) * 1000000
+            $starttime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $startdate -UFormat %s))).ToString() + "000000"
+            $endtime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $enddate -UFormat %s))).ToString() + "000000"
         } else {
-            $starttime_epoch_usecs = [int][double]::Parse((Get-Date -Date $startdate -UFormat %s)) * 1000000
-            $endtime_epoch_usecs = [int][double]::Parse((Get-Date -Date $enddate -UFormat %s)) * 1000000
+            $starttime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $startdate -UFormat %s))).ToString() + "000000"
+            $endtime_epoch_usecs = ([int][double]::Parse((Get-Date -Date $enddate -UFormat %s))).ToString() + "000000"
         }
     #endregion
 
