@@ -25,6 +25,8 @@
   Specifies you want to export results to a csv file in the current directory.
 .PARAMETER startinventory
   Triggers an lcm inventory on the specified Nutanix cluster.
+.PARAMETER nowait
+  Don't wait for the inventory task triggered to complete.
 .EXAMPLE
 .\get-NutanixSoftwareVersions.ps1 -cluster ntnxc1.local -username admin -password admin
 Connect to a Nutanix cluster of your choice and collect software information:
@@ -49,7 +51,8 @@ Connect to a Nutanix cluster of your choice and collect software information:
       [parameter(mandatory = $false)] $prismCreds,
       [parameter(mandatory = $false)] [switch]$nolcm,
       [parameter(mandatory = $false)] [switch]$csv,
-      [parameter(mandatory = $false)] [switch]$startinventory
+      [parameter(mandatory = $false)] [switch]$startinventory,
+      [parameter(mandatory = $false)] [switch]$nowait
   )
 #endregion
 
@@ -63,6 +66,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 04/16/2020 sb   Initial release.
+06/25/2020 sb   Added the -startinventory and -nowait parameters.
 ################################################################################
 '@
   $myvarScriptName = ".\get-NutanixSoftwareVersions.ps1"
@@ -174,7 +178,9 @@ Date       By   Updates (newest updates at the top)
       $myvar_inventory_task = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
       Write-Host "$(get-date) [SUCCESS] Successfully triggered LCM inventory on Nutanix cluster $($cluster): task $($myvar_inventory_task.data.task_uuid)!" -ForegroundColor Cyan
 
-      Get-PrismTaskStatus -task $myvar_inventory_task.data.task_uuid -cluster $cluster -credential $prismCredentials
+      if (!$nowait) {
+        Get-PrismTaskStatus -task $myvar_inventory_task.data.task_uuid -cluster $cluster -credential $prismCredentials
+      }
     } else {
 
       #region get cluster information
