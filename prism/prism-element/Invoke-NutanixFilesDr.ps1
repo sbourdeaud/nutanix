@@ -51,6 +51,8 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
   Revision: June 25th 2020
 #>
 
+#! when you run an unplanned failover on an esx cluster with metro availability using a dvswitch, things may not work as expected during file server activation.
+
 #region parameters
 Param
 (
