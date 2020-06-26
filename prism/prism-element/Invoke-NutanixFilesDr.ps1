@@ -1371,8 +1371,7 @@ if ($failover -eq "deactivate") {
 
 #region processing
 #TODO enhance deactivate workflow to require fsname instead of pd
-#region check we have the data we need
-    #check reference_data (if it exists) and validate entries
+#region check reference_data and validate entries
     if ($reference_data) {
         if (!$reference_data.fsname) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute fsname" -ForegroundColor Red; exit 1}
         if (!$reference_data.{prism-primary}) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute prism-primary" -ForegroundColor Red; exit 1}
@@ -1450,7 +1449,7 @@ if ($failover -eq "deactivate") {
 #region check prism connectivity and get additional data
     Write-Host ""
     Write-Host "$(get-date) [STEP] --Verifying Connectivity to Prism(s)--" -ForegroundColor Magenta
-    if ($reference_data) {
+    if ($reference_data) {#we have a reference data file with all the info we need
         if ($failover -eq "planned") {
             #region GET cluster (PRIMARY)
                 #check if primary site is available
@@ -1613,7 +1612,7 @@ if ($failover -eq "deactivate") {
                 Exit 1
             }
         }
-    } else {
+    } else {#we don't have a reference data file and thus we must rely on user input
         #region GET cluster (-prism)
             #check connectivity to prism
             Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $($prism) ..." -ForegroundColor Green
@@ -1781,7 +1780,7 @@ if ($failover -eq "deactivate") {
 
     #* Figuring out vfiler uuid and networks
     #get file servers uuids and other network configuration details required for activation
-    if ($reference_data) {
+    if ($reference_data) {#we have a reference data file with all the info we need
         $fsname = "$($reference_data.fsname)"
         if ($filer_activation_cluster -eq $reference_data.{prism-primary}) {
             $vfiler_uuid = $primary_cluster_vfiler.uuid
@@ -1828,7 +1827,7 @@ if ($failover -eq "deactivate") {
             $dns_servers = $dr_dns_servers
             $ntp_servers = $dr_ntp_servers
         }
-    } else {
+    } else {#we don't have a reference data file and thus we must rely on user input
         #figure out which cluster we are activating this on and what the filer uuid is (this will vary based on planned or unplanned)
         if ($failover -eq "planned") {
             $vfiler_uuid = $remote_cluster_vfiler.uuid
@@ -1875,8 +1874,7 @@ if ($failover -eq "deactivate") {
 #endregion
 
 #region check vcenter connectivity (if dvswitch)
-    if ($dvSwitch) {
-        #TODO add code here
+    if ($dvSwitch) {#user has specified dvswitch, so wee need to check connectivity to vcenter
         #region Load/Install VMware.PowerCLI
             if (!(Get-Module VMware.PowerCLI)) 
             {#module VMware.PowerCLI is not loaded
@@ -1936,9 +1934,6 @@ if ($failover -eq "deactivate") {
             }
             catch {throw "$(get-date) [ERROR] Could not connect to vCenter server $myvarvCenter : $($_.Exception.Message)"}
         #endregion
-
-        #check dvPortGroups
-            
     }
 #endregion
 
@@ -1960,7 +1955,7 @@ if ($failover -eq "deactivate") {
 #endregion
 
 #region failover pd
-    if ($failover -eq "planned") {
+    if ($failover -eq "planned") {#doing a planned failover
 
         Write-Host ""
         Write-Host "$(get-date) [STEP] --Triggering Protection Domain Migration from $($migrate_from_cluster_name)--" -ForegroundColor Magenta 
@@ -2024,266 +2019,275 @@ if ($failover -eq "deactivate") {
         #TODO check remote site configured on PD matches dr site in reference file
     }
 
-    if ($failover -eq "unplanned") {
-        Write-Host ""
-        Write-Host "$(get-date) [STEP] --Triggering Protection Domain Activation--" -ForegroundColor Magenta
+    if ($failover -eq "unplanned") {#doing an unplanned failover (disaster)
+        #region dvswitch shenanigans (removing disconnected fsvms from vcetner inventory)
+            if ($dvswitch) {
+                #get fsvms (name will be NTNX-fsname-*)
+                $existing_filer_vms = Get-VM -Name "NTNX-$($fsname)-*" -ErrorAction SilentlyContinue
+                if ($existing_filer_vms) {
+                    if ($existing_filer_vms.ExtensionData.Summary.OverallStatus -eq "green") {#checking their status is not OK
+                        Write-Host "$(get-date) [WARN] There are existing FSVMs for file server $($fsname) but their status is green. Skipping removal from inventory..." -ForegroundColor Yellow
+                    } else {
+                        Write-Host ""
+                        Write-Host "$(get-date) [STEP] --Cleaning vCenter inventory--" -ForegroundColor Magenta
+                        Write-Host "$(get-date) [INFO] There are existing FSVMs for file server $($fsname) and their status is not green. Removing them from vCenter inventory..." -ForegroundColor Green
+                        Foreach ($existing_filer_vm in $existing_filer_vms) {#processing each fsvm and removing it from inventory
+                            try
+                            {
+                                Write-Host "$(get-date) [INFO] Removing FSVM $($existing_filer_vm.Name) from the vCenter inventory..." -ForegroundColor Green
+                                $result = Remove-Vm -VM $existing_filer_vm -Confirm:$false -ErrorAction Stop
+                                Write-Host "$(get-date) [SUCCESS] Successfully removed FSVM $($existing_filer_vm.Name) from the vCenter inventory..." -ForegroundColor Cyan
+                            }
+                            catch
+                            {
+                                Write-Host "$(get-date) [WARN] Could not clean up vCenter inventory for FSVM $($existing_filer_vm.Name)" -ForegroundColor Yellow
+                            }
+                        }
+                    }
+                }
+            }
+        #endregion
 
-        if ($reference_data) {
-            $cluster = $reference_data.{prism-dr}              
-            if ($reference_data.pd) {
-                $pd = $reference_data.pd
+        #region protection domain activation
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Triggering Protection Domain Activation--" -ForegroundColor Magenta
+
+            if ($reference_data) {
+                $cluster = $reference_data.{prism-dr}              
+                if ($reference_data.pd) {
+                    $pd = $reference_data.pd
+                } else {
+                    $pd = "NTNX-$($reference_data.fsname)"
+                }
+                
+                #safeguard here to check if primary cluster is responding to ping before triggering activation
+                Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
+                if ((Test-Connection $reference_data.{prism-primary} -Count 5))
+                {#ping was successfull
+                    if ($force) {
+                        Write-Host "$(get-date) [WARN] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Continuing with protection domain activation since you used -force..." -ForegroundColor Yellow
+                        #TODO add prompt here to continue and enhance warning text
+                    } else {
+                        Write-Host "$(get-date) [ERROR] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Aborting protection domain activation!" -ForegroundColor Red
+                        Exit 1
+                    }
+                } 
+                else 
+                {#ping failed
+                    Write-Host "$(get-date) [SUCCESS] Cannot ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Proceeding with protection domain activation on DR." -ForegroundColor Cyan
+                }                
             } else {
-                $pd = "NTNX-$($reference_data.fsname)"
-            }
-            
-            #safeguard here to check if primary cluster is responding to ping before triggering activation
-            Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
-            if ((Test-Connection $reference_data.{prism-primary} -Count 5))
-            {#ping was successfull
-                if ($force) {
-                    Write-Host "$(get-date) [WARN] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Continuing with protection domain activation since you used -force..." -ForegroundColor Yellow
-                    #TODO add prompt here to continue and enhance warning text
-                } else {
-                    Write-Host "$(get-date) [ERROR] Can ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Aborting protection domain activation!" -ForegroundColor Red
-                    Exit 1
-                }
-            } 
-            else 
-            {#ping failed
-                Write-Host "$(get-date) [SUCCESS] Cannot ping primary site Nutanix cluster IP $($reference_data.{prism-primary}). Proceeding with protection domain activation on DR." -ForegroundColor Cyan
-            }                
-        } else {
-            $cluster = $prism
-            #TODO: add safeguard here to check if primary cluster is responding to ping before triggering activation
+                $cluster = $prism
+                #TODO: add safeguard here to check if primary cluster is responding to ping before triggering activation
 
-            #safeguard here to check if primary cluster is responding to ping before triggering activation
-            Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
-            if ((Test-Connection $remote_site_ip -Count 5))
-            {#ping was successfull
-                if ($force) {
-                    Write-Host "$(get-date) [WARN] Can ping remote site Nutanix cluster IP $($remote_site_ip). Continuing with protection domain activation since you used -force..." -ForegroundColor Yellow
-                    #TODO add prompt here to continue and enhance warning text
-                } else {
-                    Write-Host "$(get-date) [ERROR] Can ping remote site Nutanix cluster IP $($remote_site_ip). Aborting protection domain activation!" -ForegroundColor Red
-                    Exit 1
+                #safeguard here to check if primary cluster is responding to ping before triggering activation
+                Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
+                if ((Test-Connection $remote_site_ip -Count 5))
+                {#ping was successfull
+                    if ($force) {
+                        Write-Host "$(get-date) [WARN] Can ping remote site Nutanix cluster IP $($remote_site_ip). Continuing with protection domain activation since you used -force..." -ForegroundColor Yellow
+                        #TODO add prompt here to continue and enhance warning text
+                    } else {
+                        Write-Host "$(get-date) [ERROR] Can ping remote site Nutanix cluster IP $($remote_site_ip). Aborting protection domain activation!" -ForegroundColor Red
+                        Exit 1
+                    }
+                } 
+                else 
+                {#ping failed
+                    Write-Host "$(get-date) [SUCCESS] Cannot ping remote site Nutanix cluster IP $($remote_site_ip). Proceeding with protection domain activation on DR."
                 }
-            } 
-            else 
-            {#ping failed
-                Write-Host "$(get-date) [SUCCESS] Cannot ping remote site Nutanix cluster IP $($remote_site_ip). Proceeding with protection domain activation on DR."
             }
-        }
 
-        $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
-        if ($debugme) {Write-Host "$(get-date) [DEBUG] Processed pds: $processed_pds" -ForegroundColor White}
-        Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "activate"
+            $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
+            if ($debugme) {Write-Host "$(get-date) [DEBUG] Processed pds: $processed_pds" -ForegroundColor White}
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "activate"
+        #endregion
     }
     #TODO if MAIL, send notification email
 #endregion
 
-if ($failover -ne "deactivate") {
-    #region dvswitch
-        if ($dvswitch) {
-            if ($failover -eq "unplanned") {
-                #region GET protection domains (DR)
-                    #get protection domains from dr
-                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($cluster)..." -ForegroundColor Green
-                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                    $method = "GET"
-                    $cluster_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($cluster)" -ForegroundColor Cyan
-                    $cluster_vfiler_pd = $cluster_pd_list.entities | Where-Object {$_.name -eq $pd}
-                    if (!$cluster_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
-                    $filer_pd_vms = $cluster_vfiler_pd.vms.vm_name
-                #endregion
-            }
+#region post pd migration actions (dvswitch shenanigans, file server activation and dns updates)
+    if ($failover -ne "deactivate") {#nothing to do if this was a deactivation
+        #region more dvswitch shenanigans (remapping network interfaces)
+            if ($dvswitch) {
+                if ($failover -eq "unplanned") {
+                    #region GET protection domains (DR)
+                        #get protection domains from dr
+                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($cluster)..." -ForegroundColor Green
+                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+                        $method = "GET"
+                        $cluster_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($cluster)" -ForegroundColor Cyan
+                        $cluster_vfiler_pd = $cluster_pd_list.entities | Where-Object {$_.name -eq $pd}
+                        if (!$cluster_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
+                        $filer_pd_vms = $cluster_vfiler_pd.vms.vm_name
+                    #endregion
+                }
 
-            foreach ($filer_vm in $filer_pd_vms) {
+                ForEach ($filer_vm in $filer_pd_vms) {
 
-                #region check if there are duplicate names for vms (will happen in metro clusters or if the same vcenter is used)
-                    #! this region does not work as the FSVM names will already contain the (1) after the PD activation...
-                    $filer_vm_duplicate = Get-VM -Name "$($filer_vm) (1)" -ErrorAction SilentlyContinue
-                    if ($filer_vm_duplicate) {#we have a duplicate vm object in vcenter that we need to remove and rename
+                    #region check vm and vmnics
+                        Write-Host "$(get-date) [INFO] Processing VM $($filer_vm) ..." -ForegroundColor Green
                         try
-                        {
-                            Write-Host "$(get-date) [WARN] We have duplicate file server VMs in the vCenter inventory. Removing the duplicate and renaming the FSVM $($filer_vm)..." -ForegroundColor Yellow
-                            Write-Host "$(get-date) [INFO] Removing FSVM $($filer_vm) from the vCenter inventory..." -ForegroundColor Green
-                            $result = Remove-Vm -Name $filer_vm -Confirm:$false -ErrorAction Stop
-                            Write-Host "$(get-date) [SUCCESS] Successfully removed FSVM $($filer_vm) from the vCenter inventory..." -ForegroundColor Cyan
-
-                            Write-Host "$(get-date) [INFO] Renaming FSVM $($filer_vm_duplicate.Name) to $($filer_vm)..." -ForegroundColor Green
-                            $result = Set-VM -VM $filer_vm_duplicate -Name $filer_vm -Confirm:$false -ErrorAction Stop
-                            Write-Host "$(get-date) [SUCCESS] Successfully renamed FSVM $($filer_vm_duplicate.Name) to $($filer_vm)..." -ForegroundColor Cyan
+                        {#get vm object from vCenter
+                            $vm_vCenter_object = Get-VM -Name $filer_vm -ErrorAction Stop
                         }
                         catch
-                        {
-                            Write-Host "$(get-date) [ERROR] Could not clean up duplicate VM entries for FSVM $($filer_vm)" -ForegroundColor Red
+                        {#couldn't get vm object from vCenter
+                            Write-Host "$(get-date) [ERROR] Could not get VM object from vCenter server $myvarvCenter : $($_.Exception.Message)" -ForegroundColor Red
                             Exit 1
                         }
-                    }
-                #endregion
-
-                #region check vm and vmnics
-                    Write-Host "$(get-date) [INFO] Processing VM $($filer_vm) ..." -ForegroundColor Green
-                    try
-                    {#get vm object from vCenter
-                        $vm_vCenter_object = Get-VM -Name $filer_vm -ErrorAction Stop
-                    }
-                    catch
-                    {#couldn't get vm object from vCenter
-                        Write-Host "$(get-date) [ERROR] Could not get VM object from vCenter server $myvarvCenter : $($_.Exception.Message)" -ForegroundColor Red
-                        Exit 1
-                    }
-                    try
-                    {#get the vnics for that vm from vCenter
-                        $vm_vCenter_vnics = $vm_vCenter_object | Get-NetworkAdapter -ErrorAction Stop
-                    }
-                    catch
-                    {#couldn't get vnics for that vm from vCenter
-                        Write-Host "$(get-date) [ERROR] Could not vNICs for that VM object from vCenter server $myvarvCenter : $($_.Exception.Message)"
-                        Exit 1
-                    }
-                #endregion
-
-                #region reconnect vnics
-                ForEach ($vm_vCenter_vnic in $vm_vCenter_vnics)
-                {
-                    #! this is a workaround for the bug where vdportgroups are not correctly mapped after the pd activation
-                    if ($failover -eq "unplanned") {
-                        if ($vm_vCenter_vnic -eq $vm_vCenter_vnics[0]) {
-                            $target_vdportgroup = $reference_data.{dr-storage-network-name}
+                        try
+                        {#get the vnics for that vm from vCenter
+                            $vm_vCenter_vnics = $vm_vCenter_object | Get-NetworkAdapter -ErrorAction Stop
                         }
-                        if ($vm_vCenter_vnic -eq $vm_vCenter_vnics[1]) {
-                            $target_vdportgroup = $reference_data.{dr-client-network-name}
+                        catch
+                        {#couldn't get vnics for that vm from vCenter
+                            Write-Host "$(get-date) [ERROR] Could not vNICs for that VM object from vCenter server $myvarvCenter : $($_.Exception.Message)"
+                            Exit 1
                         }
-                    } else {
-                        $target_vdportgroup = $vm_vCenter_vnic.NetworkName
-                    }
+                    #endregion
 
-                    try 
-                    {#get vdportgroup
-                        Write-Host "$(get-date) [INFO] Searching for $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
-                        $vdportgroup = Get-VDPortgroup -Name $target_vdportgroup -ErrorAction Stop
-                        Write-Host "$(get-date) [SUCCESS] $($vm_vCenter_vnic.NetworkName) is a VDPortGroup." -ForegroundColor Cyan
-                    }
-                    catch 
-                    {#no vdportgroup
-                        Write-Host "$(get-date) [WARNING] $($vm_vCenter_vnic.NetworkName) is not a VDPortGroup or we could not retrieve it from vCenter. Skipping this vnic." -ForegroundColor Yellow
-                        Continue
-                    }
-                    if ($vdportgroup)
-                    {#got a vdportgroup
+                    #region reconnect vnics
+                    ForEach ($vm_vCenter_vnic in $vm_vCenter_vnics)
+                    {
+                        #! this is a workaround for the bug where vdportgroups are not correctly mapped after the pd activation
+                        if ($failover -eq "unplanned") {
+                            if ($vm_vCenter_vnic -eq $vm_vCenter_vnics[0]) {
+                                $target_vdportgroup = $reference_data.{dr-storage-network-name}
+                            }
+                            if ($vm_vCenter_vnic -eq $vm_vCenter_vnics[1]) {
+                                $target_vdportgroup = $reference_data.{dr-client-network-name}
+                            }
+                        } else {
+                            $target_vdportgroup = $vm_vCenter_vnic.NetworkName
+                        }
+
                         try 
-                        {#reconnect vnic
-                            Write-Host "$(get-date) [INFO] Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
-                            $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -PortGroup $vdportgroup -ErrorAction Stop -Confirm:$false
-                            $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -ErrorAction Stop -Confirm:$false
-                            Write-Host "$(get-date) [SUCCESS] Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Cyan
+                        {#get vdportgroup
+                            Write-Host "$(get-date) [INFO] Searching for $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
+                            $vdportgroup = Get-VDPortgroup -Name $target_vdportgroup -ErrorAction Stop
+                            Write-Host "$(get-date) [SUCCESS] $($vm_vCenter_vnic.NetworkName) is a VDPortGroup." -ForegroundColor Cyan
                         }
                         catch 
-                        {#couldn't reconnect vnic
-                            Write-Host "$(get-date) [ERROR] Could not reconnect $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)" -ForegroundColor Red
-                            Exit 1
+                        {#no vdportgroup
+                            Write-Host "$(get-date) [WARNING] $($vm_vCenter_vnic.NetworkName) is not a VDPortGroup or we could not retrieve it from vCenter. Skipping this vnic." -ForegroundColor Yellow
+                            Continue
+                        }
+                        if ($vdportgroup)
+                        {#got a vdportgroup
+                            try 
+                            {#reconnect vnic
+                                Write-Host "$(get-date) [INFO] Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
+                                $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -PortGroup $vdportgroup -ErrorAction Stop -Confirm:$false
+                                $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -ErrorAction Stop -Confirm:$false
+                                Write-Host "$(get-date) [SUCCESS] Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Cyan
+                            }
+                            catch 
+                            {#couldn't reconnect vnic
+                                Write-Host "$(get-date) [ERROR] Could not reconnect $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)" -ForegroundColor Red
+                                Exit 1
+                            }
                         }
                     }
+                    #endregion
                 }
-                #endregion
+
+                #disconnect from vcenter
+                Disconnect-viserver * -Confirm:$False
             }
+        #endregion
 
-            #disconnect from vcenter
-            Disconnect-viserver * -Confirm:$False
-        }
-    #endregion
-
-    #region activate file server
-        Write-Host ""
-        Write-Host "$(get-date) [STEP] --Activating vFiler $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
-        
-        #build the json payload here
-        $content = @{
-            name = $fsname;
-            internalNetwork = @{
-                subnetMask = $internalNetwork_subnetMask;
-                defaultGateway = $internalNetwork_defaultGateway;
-                uuid = $internalNetwork_uuid;
-                pool = @(
-                    $(if ($internalNetwork_pool) {$internalNetwork_pool})
-                )
-            };
-            externalNetworks = @(
-                @{
-                    subnetMask = $externalNetwork_subnetMask;
-                    defaultGateway = $externalNetwork_defaultGateway;
-                    uuid = $externalNetwork_uuid;
-                    pool = @(
-                        $(if ($externalNetwork_pool) {$externalNetwork_pool})
-                    )
-                }
-            );
-            dnsServerIpAddresses = @(
-                $dns_servers
-            );
-            ntpServers = @(
-                $ntp_servers
-            )
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
-
-        #* activate (POST /v1/vfilers/{$vfiler_uuid}/activate): response is a taskUuid
-        Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
-        $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/activate"
-        $method = "POST"
-        $vfiler_activation_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-        Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
-
-        #check on file server activation task status
-        Get-PrismTaskStatus -task $vfiler_activation_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
-        
-        #TODO if MAIL, send notification email
-    #endregion
-    
-    #region update DNS
-        if ($dns) {
+        #region activate file server
             Write-Host ""
-            Write-Host "$(get-date) [STEP] --Updating DNS records for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
-            #if DNS, send API call to update DNS            
+            Write-Host "$(get-date) [STEP] --Activating vFiler $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
+            
+            #build the json payload here
             $content = @{
-                dnsOpType = "MS_DNS";
-                dnsServer= "";
-                dnsUserName= $ad_credentials.UserName;
-                dnsPassword= $ad_credentials.GetNetworkCredential().password
+                name = $fsname;
+                internalNetwork = @{
+                    subnetMask = $internalNetwork_subnetMask;
+                    defaultGateway = $internalNetwork_defaultGateway;
+                    uuid = $internalNetwork_uuid;
+                    pool = @(
+                        $(if ($internalNetwork_pool) {$internalNetwork_pool})
+                    )
+                };
+                externalNetworks = @(
+                    @{
+                        subnetMask = $externalNetwork_subnetMask;
+                        defaultGateway = $externalNetwork_defaultGateway;
+                        uuid = $externalNetwork_uuid;
+                        pool = @(
+                            $(if ($externalNetwork_pool) {$externalNetwork_pool})
+                        )
+                    }
+                );
+                dnsServerIpAddresses = @(
+                    $dns_servers
+                );
+                ntpServers = @(
+                    $ntp_servers
+                )
             }
             $payload = (ConvertTo-Json $content -Depth 4)
-    
-            #* activate (POST /v1/vfilers/$($file_server_uuid)/addDns): response is a taskUuid
-            Write-Host "$(get-date) [INFO] Updating DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
-            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/addDns"
+
+            #* activate (POST /v1/vfilers/{$vfiler_uuid}/activate): response is a taskUuid
+            Write-Host "$(get-date) [INFO] Activating file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/activate"
             $method = "POST"
-            $vfiler_dns_update_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-            Write-Host "$(get-date) [SUCCESS] Successfully triggered update of DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
+            $vfiler_activation_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+            Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
-            #check on DNS update task status
-            Get-PrismTaskStatus -task $vfiler_dns_update_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
-
+            #check on file server activation task status
+            Get-PrismTaskStatus -task $vfiler_activation_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
+            
             #TODO if MAIL, send notification email
-        }
-    #endregion
+        #endregion
+        
+        #region update DNS
+            if ($dns) {
+                Write-Host ""
+                Write-Host "$(get-date) [STEP] --Updating DNS records for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
+                #if DNS, send API call to update DNS            
+                $content = @{
+                    dnsOpType = "MS_DNS";
+                    dnsServer= "";
+                    dnsUserName= $ad_credentials.UserName;
+                    dnsPassword= $ad_credentials.GetNetworkCredential().password
+                }
+                $payload = (ConvertTo-Json $content -Depth 4)
+        
+                #* activate (POST /v1/vfilers/$($file_server_uuid)/addDns): response is a taskUuid
+                Write-Host "$(get-date) [INFO] Updating DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+                $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/$($vfiler_uuid)/addDns"
+                $method = "POST"
+                $vfiler_dns_update_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                Write-Host "$(get-date) [SUCCESS] Successfully triggered update of DNS records for file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
-    #region print final file server status
-        Write-Host ""
-        Write-Host "$(get-date) [STEP] --Getting final status for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
-        #check status of file server
-        Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
-        $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
-        $method = "GET"
-        $vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-        $vfiler = $vfilers.entities | Where-Object {$_.Name -eq $fsname}
-        if (!$vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
-        Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
-        Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) has the following status: $($vfiler.fileServerState)" -ForegroundColor Green
-        #TODO if MAIL, send notification email
-    #endregion
-}
+                #check on DNS update task status
+                Get-PrismTaskStatus -task $vfiler_dns_update_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
+
+                #TODO if MAIL, send notification email
+            }
+        #endregion
+
+        #region print final file server status
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] --Getting final status for vFiler $($fsname) on cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))--" -ForegroundColor Magenta
+            #check status of file server
+            Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))..." -ForegroundColor Green
+            $url = "https://$($filer_activation_cluster):9440/PrismGateway/services/rest/v1/vfilers/"
+            $method = "GET"
+            $vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            $vfiler = $vfilers.entities | Where-Object {$_.Name -eq $fsname}
+            if (!$vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))!" -ForegroundColor Red; Exit 1}
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name))" -ForegroundColor Cyan
+            Write-Host "$(get-date) [INFO] File server $fsname on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) has the following status: $($vfiler.fileServerState)" -ForegroundColor Green
+            #TODO if MAIL, send notification email
+        #endregion
+    }
+#endregion
 
 #endregion
 
