@@ -2111,7 +2111,7 @@ if ($failover -eq "deactivate") {
         #region more dvswitch shenanigans (remapping network interfaces)
             if ($dvswitch) {
                 if ($failover -eq "unplanned") {
-
+                    #* querying the vfiler to extract the exact fsvm names (as they could have changed if this is a metro cluster)
                     #region GET vfiler (DR)
                         #check status of file server on dr
                         Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($cluster)..." -ForegroundColor Green
@@ -2123,7 +2123,7 @@ if ($failover -eq "deactivate") {
                         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($cluster)" -ForegroundColor Cyan
                         $filer_pd_vms = $cluster_vfiler.nvms.name
                     #endregion
-                    
+
                 }
 
                 ForEach ($filer_vm in $filer_pd_vms) {
