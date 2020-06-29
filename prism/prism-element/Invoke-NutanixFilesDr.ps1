@@ -2111,17 +2111,19 @@ if ($failover -eq "deactivate") {
         #region more dvswitch shenanigans (remapping network interfaces)
             if ($dvswitch) {
                 if ($failover -eq "unplanned") {
-                    #region GET protection domains (DR)
-                        #get protection domains from dr
-                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($cluster)..." -ForegroundColor Green
-                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+
+                    #region GET vfiler (DR)
+                        #check status of file server on dr
+                        Write-Host "$(get-date) [INFO] Retrieving details of file server $fsname status from Nutanix cluster $($cluster)..." -ForegroundColor Green
+                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/vfilers/"
                         $method = "GET"
-                        $cluster_pd_list = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($cluster)" -ForegroundColor Cyan
-                        $cluster_vfiler_pd = $cluster_pd_list.entities | Where-Object {$_.name -eq $pd}
-                        if (!$cluster_vfiler_pd) {Write-Host "$(get-date) [ERROR] Could not find a protection domain called $pd on DR Nutanix cluster $($reference_data.{prism-dr})!" -ForegroundColor Red; Exit 1}
-                        $filer_pd_vms = $cluster_vfiler_pd.vms.vm_name
+                        $cluster_vfilers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                        $cluster_vfiler = $cluster_vfilers.entities | Where-Object {$_.Name -eq $fsname}
+                        if (!$cluster_vfiler) {Write-Host "$(get-date) [ERROR] Could not find a file server called $fsname on Nutanix cluster $($cluster)!" -ForegroundColor Red; Exit 1}
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($cluster)" -ForegroundColor Cyan
+                        $filer_pd_vms = $cluster_vfiler.nvms.name
                     #endregion
+                    
                 }
 
                 ForEach ($filer_vm in $filer_pd_vms) {
