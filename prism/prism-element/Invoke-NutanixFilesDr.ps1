@@ -2123,7 +2123,6 @@ if ($failover -eq "deactivate") {
                         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of file server $fsname status from Nutanix cluster $($cluster)" -ForegroundColor Cyan
                         $filer_pd_vms = $cluster_vfiler.nvms.name
                     #endregion
-
                 }
 
                 ForEach ($filer_vm in $filer_pd_vms) {
@@ -2180,23 +2179,20 @@ if ($failover -eq "deactivate") {
                         {#got a vdportgroup
                             try 
                             {#reconnect vnic
-                                Write-Host "$(get-date) [INFO] Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
+                                Write-Host "$(get-date) [INFO] Reconnecting $($filer_vm) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Green
                                 $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -PortGroup $vdportgroup -ErrorAction Stop -Confirm:$false
                                 $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -ErrorAction Stop -Confirm:$false
-                                Write-Host "$(get-date) [SUCCESS] Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Cyan
+                                Write-Host "$(get-date) [SUCCESS] Successfully reconnected $($filer_vm) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..." -ForegroundColor Cyan
                             }
                             catch 
                             {#couldn't reconnect vnic
-                                Write-Host "$(get-date) [ERROR] Could not reconnect $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)" -ForegroundColor Red
+                                Write-Host "$(get-date) [ERROR] Could not reconnect $($filer_vm) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)" -ForegroundColor Red
                                 Exit 1
                             }
                         }
                     }
                     #endregion
                 }
-
-                #disconnect from vcenter
-                Disconnect-viserver * -Confirm:$False
             }
         #endregion
 
@@ -2240,6 +2236,20 @@ if ($failover -eq "deactivate") {
             $method = "POST"
             $vfiler_activation_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
             Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
+
+            if ($dvswitch) {
+                if ($failover -eq "unplanned") {
+                    Write-Host "$(get-date) [INFO] Waiting 30 seconds..." -ForegroundColor Green
+                    Sleep 30
+                    ForEach ($filer_vm in $filer_pd_vms) {
+                        Write-Host "$(get-date) [INFO] Powering on $($filer_vm)..." -ForegroundColor Green
+                        $result = Get-VM -Name $filer_vm | Start-VM -ErrorAction Continue -Confirm:$false
+                    }
+                }
+
+                #disconnect from vcenter
+                Disconnect-viserver * -Confirm:$False
+            }
 
             #check on file server activation task status
             Get-PrismTaskStatus -task $vfiler_activation_task_uuid.taskUuid -cluster $filer_activation_cluster -credential $prismCredentials
