@@ -2035,7 +2035,7 @@ if ($failover -eq "deactivate") {
                             try
                             {
                                 Write-Host "$(get-date) [INFO] Removing FSVM $($existing_filer_vm.Name) from the vCenter inventory..." -ForegroundColor Green
-                                $result = Remove-Vm -VM $existing_filer_vm -Confirm:$false -ErrorAction Stop
+                                $result = Remove-Vm -VM $existing_filer_vm -DeletePermanently -Confirm:$false -ErrorAction Stop
                                 Write-Host "$(get-date) [SUCCESS] Successfully removed FSVM $($existing_filer_vm.Name) from the vCenter inventory..." -ForegroundColor Cyan
                             }
                             catch
