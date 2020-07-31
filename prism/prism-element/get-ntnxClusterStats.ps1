@@ -409,6 +409,7 @@ Generate one csv file per overview metric for the last 7 days.
 
     #region exporting results to csv
         ForEach ($metric in $myvar_metrics_results.keys) {
+            
             #region creating timestamped results
                 [System.Collections.ArrayList]$myvar_metrics_timestamped_results = New-Object System.Collections.ArrayList($null)
                 $timestamp = $startdate

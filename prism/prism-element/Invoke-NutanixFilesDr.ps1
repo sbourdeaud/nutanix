@@ -41,6 +41,10 @@
   (Required if -mail) Comma separated list of email addresses to notify.
 .PARAMETER dvswitch
   (Optional) If the File server you are failing over uses distributed virtual switches on VMware vSphere, use this switch to reconnect the network interface after the Protection Domain has failed over and before File Server activation, otherwise the FSVMs will start without network connectivity.
+.PARAMETER workaround
+  (Optional) Will remove failed ESXi hosts from vCenter so the Files server can register properly.  This may be necessary of you are using a Metro cluster.  Only applies to unplanned failover.
+.PARAMETER undoworkaround
+  (Optional/Work in progress) Will add removef failed ESXi hosts in vCenter and migrate them bak to dvSwitch as appropriate. This is required if you did an unplanned failover with the workaround switch.
 .EXAMPLE
 .\Invoke-NutanixFilesDr.ps1 -fsname myfileserver -failover unplanned
 Do an unplanned failover of a file server called myfileserver.  All reference information will be obtained from myfileserver.csv in the current directory:
@@ -48,10 +52,10 @@ Do an unplanned failover of a file server called myfileserver.  All reference in
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 25th 2020
+  Revision: July 31st 2020
 #>
 
-#! when you run an unplanned failover on an esx cluster with metro availability using a dvswitch, things may not work as expected during file server activation.
+#! when you run an unplanned failover on an esx cluster with metro availability using a dvswitch, things may not work as expected during file server activation. Try using the -workaround switch.
 
 #region parameters
 Param
@@ -75,7 +79,9 @@ Param
     [parameter(mandatory = $false)] [string]$smtp,
     [parameter(mandatory = $false)] [string]$email,
     [parameter(mandatory = $false)] [switch]$force,
-    [parameter(mandatory = $false)] [switch]$dvswitch
+    [parameter(mandatory = $false)] [switch]$dvswitch,
+    [parameter(mandatory = $false)] [switch]$workaround,
+    [parameter(mandatory = $false)] [switch]$undoworkaround
 )
 #endregion
 
@@ -1216,6 +1222,8 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 06/08/2020 sb   Initial release.
+07/31/2020 sb   Cleanup and addition of the -workaround switch for unplanned
+                failovers.
 ################################################################################
 '@
 $myvarScriptName = ".\Invoke-NutanixFilesDr.ps1"
@@ -1370,7 +1378,7 @@ if ($failover -eq "deactivate") {
 #endregion
 
 #region processing
-#TODO enhance deactivate workflow to require fsname instead of pd
+#TODO (low priority) enhance deactivate workflow to require fsname instead of pd
 #region check reference_data and validate entries
     if ($reference_data) {
         if (!$reference_data.fsname) {Write-Host "$(get-date) [ERROR] Reference file is missing a value for attribute fsname" -ForegroundColor Red; exit 1}
@@ -1873,8 +1881,8 @@ if ($failover -eq "deactivate") {
     }
 #endregion
 
-#region check vcenter connectivity (if dvswitch)
-    if ($dvSwitch) {#user has specified dvswitch, so wee need to check connectivity to vcenter
+#region check vcenter connectivity (if dvswitch or workaround)
+    if ($dvSwitch -or $workaround -or $undoworkaround) {#user has specified dvswitch or workaround, so wee need to check connectivity to vcenter
         #region Load/Install VMware.PowerCLI
             if (!(Get-Module VMware.PowerCLI)) 
             {#module VMware.PowerCLI is not loaded
@@ -1937,6 +1945,21 @@ if ($failover -eq "deactivate") {
     }
 #endregion
 
+#TODO work in progress: region below to be completed
+#region undoworkaround
+    if ($undoworkaround) {
+        #TODO look for file with list of removed esxi hosts (should be called undoworkaround.csv in the current directory)
+        
+        #TODO add esxi hosts back to vcenter cluster (this will prompt for the root password)
+
+        #TODO determine if they need to be migrated to a dvswitch
+
+        #TODO do dvswitch migration as appropriate
+
+        #TODO add them back to the DRS host group
+    }
+#endregion
+
 #region deactivate
     if ($failover -eq "deactivate") {
         Write-Host ""
@@ -1954,6 +1977,7 @@ if ($failover -eq "deactivate") {
     }
 #endregion
 
+#TODO enhance workaround region here with safeguards
 #region failover pd
     if ($failover -eq "planned") {#doing a planned failover
 
@@ -2020,30 +2044,49 @@ if ($failover -eq "deactivate") {
     }
 
     if ($failover -eq "unplanned") {#doing an unplanned failover (disaster)
-        #region dvswitch shenanigans (removing disconnected fsvms from vcetner inventory)
-            if ($dvswitch) {
-                #get fsvms (name will be NTNX-fsname-*)
-                $existing_filer_vms = Get-VM -Name "NTNX-$($fsname)-*" -ErrorAction SilentlyContinue
-                if ($existing_filer_vms) {
-                    if ($existing_filer_vms.ExtensionData.Summary.OverallStatus -eq "green") {#checking their status is not OK
-                        Write-Host "$(get-date) [WARN] There are existing FSVMs for file server $($fsname) but their status is green. Skipping removal from inventory..." -ForegroundColor Yellow
-                    } else {
-                        Write-Host ""
-                        Write-Host "$(get-date) [STEP] --Cleaning vCenter inventory--" -ForegroundColor Magenta
-                        Write-Host "$(get-date) [INFO] There are existing FSVMs for file server $($fsname) and their status is not green. Removing them from vCenter inventory..." -ForegroundColor Green
-                        Foreach ($existing_filer_vm in $existing_filer_vms) {#processing each fsvm and removing it from inventory
-                            try
-                            {
-                                Write-Host "$(get-date) [INFO] Removing FSVM $($existing_filer_vm.Name) from the vCenter inventory..." -ForegroundColor Green
-                                $result = Remove-Vm -VM $existing_filer_vm -DeletePermanently -Confirm:$false -ErrorAction Stop
-                                Write-Host "$(get-date) [SUCCESS] Successfully removed FSVM $($existing_filer_vm.Name) from the vCenter inventory..." -ForegroundColor Cyan
+        #region workaround shenanigans (removing disconnected esxi hosts from vcenter inventory)
+            if ($workaround) {
+                Write-Host "$(get-date) [STEP] --Applying workaround and removing disconnected ESXi hosts from vCenter--" -ForegroundColor Magenta
+                #figure out which cluster the FSVMs belong to
+                $fsvm_cluster = Get-VM -Name "NTNX-$($fsname)-*" -ErrorAction SilentlyContinue | Get-Cluster
+                Write-Host "$(get-date) [INFO] FSVMs are in cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
+                
+                #get disconnected hosts in that cluster and save that list to a text file
+                if ($disconnected_vmhosts = $fsvm_cluster | get-vmhost | Where-Object {$_.ConnectionState -eq "Disconnected"}) {
+                    Write-Host "$(get-date) [INFO] Identified disconnected ESXi hosts in cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
+                    
+                    #initializing csv file for saving the list of esxi hosts
+                    $outfile = "undoworkaround.csv"
+                    $newcsv = {} | Select "host","cluster" | Export-Csv $outfile
+                    $count = 0
+
+                    #TODO Add a safeguard here to make sure HA events are done (such as counting the number of 
+                    #TODO     disconnected VMs and making sure they are equal to the number of FSVMs + CVMs and that 
+                    #TODO     it does not vary for a couple of minutes)
+                    
+                    #remove disconnected hosts from inventory
+                    ForEach ($vmhost in $disconnected_vmhosts) {
+                        Write-Host "$(get-date) [INFO] Removing disconnected ESXi hosts $($vmhost.name) from cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
+                        try {
+                            $result = Remove-VMHost -VMHost $vmhost -Confirm:$False -ErrorAction Stop
+                            
+                            #save host we have disconnected to a recovery file (for -undoworkaround)
+                            $csvfile = Import-Csv $outfile
+                            $csvfile.host = $vmhost.name
+                            $csvfile.cluster = $fsvm_cluster.Name
+                            if ($count = 0) {
+                                $csvfile | Export-Csv $outfile
+                            } else {
+                                $csvfile | Export-Csv $outfile -Append
                             }
-                            catch
-                            {
-                                Write-Host "$(get-date) [WARN] Could not clean up vCenter inventory for FSVM $($existing_filer_vm.Name)" -ForegroundColor Yellow
-                            }
+                            ++$count
+                        }
+                        catch {
+                            Write-Host "$(get-date) [WARNING] Could not removed disconnected ESXi hosts $($vmhost.name) from cluster $($fsvm_cluster.Name): $($_.Exception.Message)" -ForegroundColor Yellow
                         }
                     }
+                } else {
+                    Write-Host "$(get-date) [WARNING] There are no disconnected ESXi hosts in cluster $($fsvm_cluster.Name)..." -ForegroundColor Yellow
                 }
             }
         #endregion
@@ -2078,7 +2121,6 @@ if ($failover -eq "deactivate") {
                 }                
             } else {
                 $cluster = $prism
-                #TODO: add safeguard here to check if primary cluster is responding to ping before triggering activation
 
                 #safeguard here to check if primary cluster is responding to ping before triggering activation
                 Write-Host "$(get-date) [INFO] Trying to ping IP $($reference_data.{prism-primary}) ..." -ForegroundColor Green
@@ -2108,7 +2150,7 @@ if ($failover -eq "deactivate") {
 
 #region post pd migration actions (dvswitch shenanigans, file server activation and dns updates)
     if ($failover -ne "deactivate") {#nothing to do if this was a deactivation
-        #region more dvswitch shenanigans (remapping network interfaces)
+        #region dvswitch shenanigans (remapping network interfaces)
             if ($dvswitch) {
                 if ($failover -eq "unplanned") {
                     #* querying the vfiler to extract the exact fsvm names (as they could have changed if this is a metro cluster)
@@ -2237,6 +2279,7 @@ if ($failover -eq "deactivate") {
             $vfiler_activation_task_uuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
             Write-Host "$(get-date) [SUCCESS] Successfully triggered activation of file server $($fsname) on Nutanix cluster $($filer_activation_cluster) ($($filer_activation_cluster_name)) (task: $($vfiler_activation_task_uuid.taskUuid))" -ForegroundColor Cyan
 
+            #! remove this after tests with ephemeral ports
             if ($dvswitch) {
                 if ($failover -eq "unplanned") {
                     Write-Host "$(get-date) [INFO] Waiting 30 seconds..." -ForegroundColor Green
