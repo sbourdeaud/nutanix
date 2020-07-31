@@ -2066,10 +2066,10 @@ if ($failover -eq "deactivate") {
                     
                     #remove disconnected hosts from inventory
                     ForEach ($vmhost in $disconnected_vmhosts) {
-                        Write-Host "$(get-date) [INFO] Removing disconnected ESXi hosts $($vmhost.name) from cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
+                        Write-Host "$(get-date) [INFO] Removing disconnected ESXi host $($vmhost.name) from cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
                         try {
                             $result = Remove-VMHost -VMHost $vmhost -Confirm:$False -ErrorAction Stop
-                            
+                            Write-Host "$(get-date) [INFO] Successfully removed disconnected ESXi host $($vmhost.name) from cluster $($fsvm_cluster.Name)" -ForegroundColor Cyan
                             #save host we have disconnected to a recovery file (for -undoworkaround)
                             $csvfile = Import-Csv $outfile
                             $csvfile.host = $vmhost.name
@@ -2080,6 +2080,7 @@ if ($failover -eq "deactivate") {
                                 $csvfile | Export-Csv $outfile -Append
                             }
                             ++$count
+                            Write-Host "$(get-date) [INFO] Updated file $outfile" -ForegroundColor Green
                         }
                         catch {
                             Write-Host "$(get-date) [WARNING] Could not removed disconnected ESXi hosts $($vmhost.name) from cluster $($fsvm_cluster.Name): $($_.Exception.Message)" -ForegroundColor Yellow
