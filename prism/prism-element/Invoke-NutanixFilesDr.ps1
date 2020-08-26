@@ -20,7 +20,7 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER failover
-  Specifies the type of failover (valid entries are planned or unplanned).
+  Specifies the type of failover (valid entries are planned, unplanned and deactivate).
 .PARAMETER fsname
   Name of the file server instance you want to failover.
 .PARAMETER reference
@@ -1935,6 +1935,7 @@ if ($failover -eq "deactivate") {
         #endregion
 
         #region connect to vCenter
+            Disconnect-viserver * -Confirm:$False
             try {
                 Write-Host "$(get-date) [INFO] Connecting to vCenter server $myvarvCenter..." -ForegroundColor Green
                 $myvarvCenterObject = Connect-VIServer $myvarvCenter -ErrorAction Stop
@@ -2052,7 +2053,7 @@ if ($failover -eq "deactivate") {
                 Write-Host "$(get-date) [INFO] FSVMs are in cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
                 
                 #get disconnected hosts in that cluster and save that list to a text file
-                if ($disconnected_vmhosts = $fsvm_cluster | get-vmhost | Where-Object {$_.ConnectionState -eq "Disconnected"}) {
+                if ($disconnected_vmhosts = $fsvm_cluster | get-vmhost | Where-Object {$_.ConnectionState -eq "NotResponding"}) {
                     Write-Host "$(get-date) [INFO] Identified disconnected ESXi hosts in cluster $($fsvm_cluster.Name)..." -ForegroundColor Green
                     
                     #initializing csv file for saving the list of esxi hosts
