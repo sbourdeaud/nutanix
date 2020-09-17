@@ -1,0 +1,33 @@
+## Expose the grafana service to be accessed from outside the cluster (LoadBalancer service).
+## or access it from within the cluster (ClusterIP service). Set the service type and the port to serve it.
+## ref: http://kubernetes.io/docs/user-guide/services/
+##
+service:
+  type: NodePort
+
+## Enable persistence using Persistent Volume Claims
+## ref: http://kubernetes.io/docs/user-guide/persistent-volumes/
+##
+persistence:
+  enabled: true
+  size: 20Gi
+
+## Pass the plugins you want installed as a list.
+##
+plugins:
+  - grafana-piechart-panel
+  # - digrich-bubblechart-panel
+  # - grafana-clock-panel
+
+## Configure grafana datasources
+## ref: http://docs.grafana.org/administration/provisioning/#datasources
+##
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: prometheus-federation
+        type: prometheus
+        url: http://prometheus-federation-server.prometheus-federation.svc.cluster.local
+        access: proxy
+        isDefault: true

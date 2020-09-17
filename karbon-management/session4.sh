@@ -1,7 +1,7 @@
 #* title: Managing Kubernetes Clusters at Scale with Karbon
 #* version/date: Sept-15-2020
 #* author: Stephane Bourdeaud (stephane.bourdeaud@nutanix.com)
-#* url: 
+#* url: https://github.com/sbourdeaud/nutanix/blob/master/karbon-management/
 
 #* note: meant to be used in vscode with the "Better Comments" extension
 #*       this extension will color code the comments and make this file

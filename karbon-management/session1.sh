@@ -1,7 +1,7 @@
 #* title: Managing Kubernetes Clusters at Scale with Karbon
 #* version/date: Sept-15-2020
 #* author: Stephane Bourdeaud (stephane.bourdeaud@nutanix.com)
-#* url: 
+#* url: https://github.com/sbourdeaud/nutanix/blob/master/karbon-management/
 
 #* note: meant to be used in vscode with the "Better Comments" extension
 #*       this extension will color code the comments and make this file
@@ -50,7 +50,7 @@
     #*      (5)user grabs kubeconfig from Prism Central UI or using karbonctl (see previous section)
 
     #* exp: cluster wide admin (apply ClusterRoleBinding)
-cat <<EOF | kubectl apply -f -
+    cat <<EOF | kubectl apply -f -
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -66,7 +66,7 @@ roleRef:
 EOF
 
     #* exp: dev role for specific namespace (create namespace, create custom role, apply rolebinding)
-cat <<EOF | kubectl apply -f -
+    cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -109,7 +109,7 @@ EOF
     #* K8s service accounts have non-expiring tokens and can be used for things like CI/CD pipelines
     kubectl create serviceaccount prometheus-federation #example
     #* once the serviceaccount has been created, you must bind it to a Role or ClusterRole
-cat <<EOF | kubectl apply -f -
+    cat <<EOF | kubectl apply -f -
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
 metadata:
@@ -117,7 +117,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole #* could be Role or ClusterRole
-  name: prometheus-k8s #* name of the ClusterRole
+  name: prometheus-operator #* name of the ClusterRole
 subjects:
 - kind: ServiceAccount
   name: prometheus-federation #* name of service account
