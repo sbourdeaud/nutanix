@@ -51,17 +51,22 @@ def prism_get_vms(api_server,username,secret):
         # deal with the result/response
         if resp.ok:
             json_resp = json.loads(resp.content)
-            print("Processing results from {} to {} out of {}".format(
-                json_resp['metadata']['offset'], 
-                json_resp['metadata']['length']+json_resp['metadata']['offset'],
-                json_resp['metadata']['total_matches']))
             entities.extend(json_resp['entities'])
-            if json_resp['metadata']['length'] == length:
-                payload = {
-                    "kind": "vm",
-                    "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
-                    "length": length
-                }
+            key = 'length'
+            if key in json_resp['metadata']:
+                if json_resp['metadata']['length'] == length:
+                    print("Processing results from {} to {} out of {}".format(
+                        json_resp['metadata']['offset'], 
+                        json_resp['metadata']['length']+json_resp['metadata']['offset'],
+                        json_resp['metadata']['total_matches']))
+                    payload = {
+                        "kind": "vm",
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
+                        "length": length
+                    }
+                else:
+                    return entities
+                    break
             else:
                 return entities
                 break
@@ -153,17 +158,22 @@ def prism_get_clusters(api_server,username,secret):
         # deal with the result/response
         if resp.ok:
             json_resp = json.loads(resp.content)
-            print("Processing results from {} to {} out of {}".format(
-                json_resp['metadata']['offset'], 
-                json_resp['metadata']['length']+json_resp['metadata']['offset'],
-                json_resp['metadata']['total_matches']))
             entities.extend(json_resp['entities'])
-            if json_resp['metadata']['length'] == length:
-                payload = {
-                    "kind": "cluster",
-                    "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
-                    "length": length
-                }
+            key = 'length'
+            if key in json_resp['metadata']:
+                if json_resp['metadata']['length'] == length:
+                    print("Processing results from {} to {} out of {}".format(
+                        json_resp['metadata']['offset'], 
+                        json_resp['metadata']['length']+json_resp['metadata']['offset'],
+                        json_resp['metadata']['total_matches']))
+                    payload = {
+                        "kind": "cluster",
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
+                        "length": length
+                    }
+                else:
+                    return entities
+                    break
             else:
                 return entities
                 break
@@ -186,7 +196,7 @@ def prism_get_cluster(api_server,username,secret,cluster_name):
         api_server: The IP or FQDN of Prism.
         username: The Prism user name.
         secret: The Prism user name password.
-        cluster_name: Name of the virtual machine.
+        cluster_name: Name of the cluster.
         
     Returns:
         A string containing the UUID of the VM (vm_uuid) and the json content
@@ -255,17 +265,22 @@ def prism_get_images(api_server,username,secret):
         # deal with the result/response
         if resp.ok:
             json_resp = json.loads(resp.content)
-            print("Processing results from {} to {} out of {}".format(
-                json_resp['metadata']['offset'], 
-                json_resp['metadata']['length']+json_resp['metadata']['offset'],
-                json_resp['metadata']['total_matches']))
             entities.extend(json_resp['entities'])
-            if json_resp['metadata']['length'] == length:
-                payload = {
-                    "kind": "cluster",
-                    "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
-                    "length": length
-                }
+            key = 'length'
+            if key in json_resp['metadata']:
+                if json_resp['metadata']['length'] == length:
+                    print("Processing results from {} to {} out of {}".format(
+                        json_resp['metadata']['offset'], 
+                        json_resp['metadata']['length']+json_resp['metadata']['offset'],
+                        json_resp['metadata']['total_matches']))
+                    payload = {
+                        "kind": "image",
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
+                        "length": length
+                    }
+                else:
+                    return entities
+                    break
             else:
                 return entities
                 break

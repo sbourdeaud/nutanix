@@ -8,12 +8,14 @@
 #*       a lot easier to navigate.
 
 #! using the built-in Nutanix Volumes CSI
-#? objective: 
+#? objective: understand how to create pv and pvc then use it in a manifest to assign
+#?  persistent storage to a container
 #region csi
 #endregion
 
 
 #! snapshot & DR of stateful containers (native)
-#? objective: 
+#? objective: understand how to snapshot and replicate Nutanix Volumes volumes used as pv
+#?  in Karbon deployed K8s clusters and recover them on a different cluster.
 #region csi-dr
 #endregion

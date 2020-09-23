@@ -9,31 +9,33 @@
 
 
 #! backup/restore/dr/migration with velero
-#? objective: 
+#? objective: understand how to install velero and use it along with Nutanix Objetcs
+#?  to backup, restore and migrate applications from one K8s cluster to another
 #region velero
 #endregion
 
 
 #! backup/restore/dr/migration with stash
-#? objective: 
+#? objective: understand how to install stash and use it along with Nutanix Objetcs
+#?  to backup, restore and migrate applications from one K8s cluster to another
 #region stash
 #endregion
 
 
 #! load balancing with metallb
-#? objective: 
+#? objective: understand how to deploy metallb load balancer in a Karbon deployed K8s cluster.
 #region metallb
 #endregion
 
 
 #! ingress controller with nginx
-#? objective: 
+#? objective: understand how to deploy an nginx ingress controller in a Karbon deployed K8s cluster.
 #region nginx-ingress
 #endregion
 
 
 #! configuring private container registries
-#? objective: 
+#? objective: understand how to add private container registries to Karbon deployed K8s clusters.
 #region registries
 #endregion
 
