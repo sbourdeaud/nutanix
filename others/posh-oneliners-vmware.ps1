@@ -94,5 +94,8 @@ Get-Cluster | Sort-Object -Property Name | Select Name, @{N="CpuOversubscription
 
 Get-Cluster | Sort-Object -Property Name | Select Name, @{N="Cores";E={($_|get-vmhost|measure numcpu -sum).sum/2}}, @{N="vCPUs";E={($_|get-VM|where {$_.PowerState -eq "PoweredOn"}|measure numcpu -sum).Sum}}, @{N="Ratio";E={[math]::Round((($_|get-VM|where {$_.PowerState -eq "PoweredOn"}|measure numcpu -sum).Sum)/(($_|get-vmhost|measure numcpu -sum).sum/2),2)}}
 
+#*VMware: get memory oversubscription ratio
+Get-Cluster | Sort-Object -Property Name | Select Name, @{N="RAM";E={[math]::Round(($_|get-vmhost|measure MemoryTotalGB -sum).sum,2)}}, @{N="Allocated";E={($_|get-VM|where {$_.PowerState -eq "PoweredOn"}|measure MemoryGB -sum).Sum}}, @{N="Ratio";E={[math]::Round((($_|get-VM|where {$_.PowerState -eq "PoweredOn"}|measure MemoryGB -sum).Sum)/(($_|get-vmhost|measure MemoryTotalGB -sum).sum),2)}}
+
 #*Vmware: add to inventory all vmx in a datastore:
 dir 'vmstores:\<nom du vCenter>@443\<nom du datacenter>\<nom du datastore>\restore\*\*.vmx' | % {New-VM -Host "esxihostname" -VMFilePath $_.DatastoreFullPath}

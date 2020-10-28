@@ -25,6 +25,8 @@
   Name of the image when the disk is added to the image library.
 .PARAMETER container
   Name of the container where you want the image to reside. If none is specified, the image will be created in the same container as the VM.
+.PARAMETER device
+  Name of the device (exp: scsi.1) you want to import in the library.  By default, scsi.0 will get imported in the library.
 .EXAMPLE
 .\new-AhvImage.ps1 -cluster ntnxc1.local -username admin -password admin -vm myvm -image _template-windows2016
 Create a new image called _template-windows2016 in the image library of AHV cluster ntnxc1.local based on the first scsi disk of VM myvm.
@@ -32,7 +34,7 @@ Create a new image called _template-windows2016 in the image library of AHV clus
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 6th 2020
+  Revision: October 28th 2020
 #>
 
 #region parameters
@@ -49,7 +51,8 @@ Create a new image called _template-windows2016 in the image library of AHV clus
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $true,HelpMessage = "Enter the name of the VM to base the image on")] [string]$vm,
         [parameter(mandatory = $true,HelpMessage = "Enter the name you want to give to the new image")] [string]$image,
-        [parameter(mandatory = $false)] [string]$container
+        [parameter(mandatory = $false)] [string]$container,
+        [parameter(mandatory = $false)] [string]$device
     )
 #endregion
 
@@ -231,6 +234,10 @@ else
     }
     $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 }
+
+if (!$device) {
+    $device = "scsi.0"
+}
 #endregion
 
 #region processing	
@@ -262,19 +269,19 @@ else
         }
     #endregion
 
-    #region find the disk labeled scsi.0
+    #region find the device (scsi.0 by default)
         ForEach ($vmDisk in $vmDetails.vm_disk_info)
         {#for each vm disk
-            if ($vmDisk.disk_address.disk_label -eq "scsi.0")
+            if ($vmDisk.disk_address.disk_label -eq $device)
             {#this is the first scsi disk
-                Write-Host "$(get-date) [INFO] Found disk uuid $($vmDisk.disk_address.vmdisk_uuid) with label scsi.0 for VM $vm on $cluster" -ForegroundColor Green
+                Write-Host "$(get-date) [INFO] Found disk uuid $($vmDisk.disk_address.vmdisk_uuid) with label $($device) for VM $vm on $cluster" -ForegroundColor Green
                 $diskUuid = $vmDisk.disk_address.vmdisk_uuid
             }
         }
 
         if (!$diskUuid)
-        {#couldn't find a disk labeled scsi.0
-            Throw "$(get-date) [ERROR] Could not find a disk labeled scsi.0 for VM $vm on $cluster!"
+        {#couldn't find the specified device
+            Throw "$(get-date) [ERROR] Could not find a disk labeled $($device) for VM $vm on $cluster!"
         }
     #endregion
 
