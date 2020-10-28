@@ -249,7 +249,8 @@ url = "https://{}:{}{}".format(
 )
 method = "PUT"
 headers = {
-    'Accept': 'application/json'
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
 }
 payload = {
     "vm_disks": [
@@ -278,6 +279,7 @@ if resp.ok:
     print("Request was successful. Status code: {}".format(resp.status_code))
 else:
     print("Request failed")
+    print("Payload: {}".format(json.dumps(payload)))
     print("Headers: {}".format(headers))
     print('Status code: {}'.format(resp.status_code))
     print('Response: {}'.format(json.dumps(json.loads(resp.content), indent=4)))
