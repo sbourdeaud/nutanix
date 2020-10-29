@@ -1,3 +1,14 @@
+# region headers
+# escript-template v20200316 / stephane.bourdeaud@nutanix.com
+# * author:     stephane.bourdeaud@nutanix.com
+# * version:    2020/10/29
+# task_name:    PeClonevDisk
+# description:  Given a source VM name and virtual disk (exp: scsi.1) as well as a list of target VMs, this script will clone the source vdisks to all target vms (deleting existing disks that match the scsi id if they already exist)
+# task type:    Execute
+# input_vars:   pc (credentials), pc_ip, master_vm, master_vm_disk, target_vms
+# output_vars:  none
+# endregion
+
 # region capture Calm variables
 username = "@@{pc.username}@@"
 username_secret = "@@{pc.secret}@@"
