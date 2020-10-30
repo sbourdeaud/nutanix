@@ -249,7 +249,7 @@ Date       By   Updates (newest updates at the top)
         ForEach ($cluster in $myvarClustersResults) {
             Write-Host "$(get-date) [INFO] Retrieving list of vms for cluster $($cluster.name)..." -ForegroundColor Green
             $url = "https://{0}:{1}{2}" -f $cluster.external_ip,$api_server_port, $api_server_endpoint
-            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of vms for cluster $($cluster.name)!" -ForegroundColor Cyan
             ForEach ($entity in $resp.entities) {
                 $myvarVmInfo = [ordered]@{
