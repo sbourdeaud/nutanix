@@ -1041,7 +1041,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
     #endregion
 
     #region vCenter
-    $result = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue #making sure we are not already connected to a vCenter server
+    #$result = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue #making sure we are not already connected to a vCenter server
     
     #* CUSTOMIZATION: if you want to edit the object names, check out the section below
     if ($myvarNTNXCluster1Name)
