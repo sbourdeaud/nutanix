@@ -1281,7 +1281,7 @@ public class ServerCertificateValidationCallback
         {
             Write-Host "$(get-date) [INFO] All done! Note that nodes may take as long as 20 minutes to shutdown completely. To restart your cluster, use the following IP addresses:" -ForegroundColor Green
             Write-Host "IPMI:" $myvar_ipmi_ips
-            Write-Host "Hosts:" $myvar_host_ips
+            Write-Host "Hosts:" $myvar_ntnx_hosts_ips
             Write-Host "CVMs:" $myvar_cvm_ips
         }
     }
