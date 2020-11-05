@@ -46,7 +46,7 @@ Param
     [parameter(mandatory = $false)] [switch]$history,
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$cluster,
-	[parameter(mandatory = $false)] [string]$pd,
+    [parameter(mandatory = $false)] [string]$pd,
     [parameter(mandatory = $false)] [string]$username,
     [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $prismCreds,
@@ -407,10 +407,79 @@ Function Update-DRSVMToHostRule
     $spec.RulesSpec += $rule
     $cluster.ReconfigureComputeResource_Task($spec,$true) | Out-Null
 }#end function Update-DRSVMToHostRule
+
+#this function puts all the Nutanix ESXi hosts in a given cluster in maintenance mode
+Function Set-NtnxVmhostsToMaintenanceMode
+{
+    #todo think about changes to make this "resumable" (assuming problems with vmotions, etc...)
+    #? params/variables required: $myvar_ntnx_vmhosts, $myvar_cvm_names, $myvar_ntnx_cluster_name, $myvar_cvm_ips
+
+    Write-Host ""
+    Write-Host "$(get-date) [STEP] Checking if there are still running UVMs on the Nutanix cluster ESXi hosts..." -ForegroundColor Magenta   
+
+    #* check if there are running uvms on each host
+    #check each host ($myvar_ntnx_vmhosts) to see if they have running vms other than cvms
+    foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
+        try {
+            $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
+            ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}} #exclude CVMs
+            if ($myvar_running_vms)
+            {
+                Throw "$(get-date) [ERROR] There are still virtual machines (other than CVMs) running on ESXi host $($myvar_vmhost.Name)"
+            }
+            else {
+                Write-Host "$(get-date) [DATA] There are no running UVMs on host $($myvar_vmhost.Name)" -ForegroundColor White
+            }
+        }
+        catch {throw "$(get-date) [ERROR] Could not retrieve VMs running on host $($myvar_vmhost.Name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+    }
+    
+    #* nutanix cluster stop
+    #todo: enhance this with do while cluster pings
+    #region stopping the Nutanix cluster
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Stopping Nutanix cluster $($myvar_ntnx_cluster_name) and shutting down CVMs..." -ForegroundColor Magenta
+        #sending the cluster stop command
+        Write-Host "$(get-date) [INFO] Sending cluster stop command to $($myvar_cvm_ips[0])..." -ForegroundColor Green
+        try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'y' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
+        catch {throw "$(get-date) [ERROR] Could not send cluster stop command to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
+        Write-Host "$(get-date) [SUCCESS] Sent cluster stop command to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
+        Write-Host "$(get-date) [INFO] Waiting 3 minutes..." -ForegroundColor Green
+        Start-Sleep 180
+    #endregion
+
+    #* cvm shutdown
+    #todo: enhance this to do while cvm is poweredon
+    #region shutting down CVMs
+        Write-Host "$(get-date) [INFO] Shutting down CVMs in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
+        foreach ($myvar_cvm_name in $myvar_cvm_names) {
+            try {$myvar_cvm_vm = Get-VM -ErrorAction Stop -Name $myvar_cvm_name}
+            catch {throw "$(get-date) [ERROR] Could not retrieve VM object for CVM $($myvar_cvm_name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+            try {$myvar_cvm_shutdown_command = Stop-VMGuest -ErrorAction Stop -VM $myvar_cvm_vm -Confirm:$False}
+            catch {throw "$(get-date) [ERROR] Could not stop CVM $($myvar_cvm_name) on vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+        }
+        Write-Host "$(get-date) [SUCCESS] Sent the shutdown command to all CVMs." -ForegroundColor Cyan
+        Write-Host "$(get-date) [INFO] Waiting 3 minutes..." -ForegroundColor Green
+        Start-Sleep 180
+    #endregion
+
+    #* put hosts in maintenance
+    #region putting hosts in maintenance mode
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Putting ESXi hosts in Nutanix cluster $($myvar_ntnx_cluster_name) in maintenance mode..." -ForegroundColor Magenta
+        foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
+            Write-Host "$(get-date) [INFO] Putting ESXi host $($myvar_vmhost.Name) in maintenance mode..." -ForegroundColor Green
+            try {$myvar_vmhost_maintenance_command = $myvar_vmhost | set-vmhost -State Maintenance -ErrorAction Stop}
+            catch {throw "$(get-date) [ERROR] Could not put ESXi host $($myvar_vmhost.Name) in maintenance mode : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Successfully put ESXi host $($myvar_vmhost.Name) in maintenance mode!" -ForegroundColor Cyan
+        }
+    #endregion
+}#end function Set-NtnxVmhostsToMaintenanceMode
 #endregion
 
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
+#todo should this script include a start section? q for client
 #region prepwork
     Write-Host ""
     Write-Host "$(get-date) [STEP] Checking PowerShell configuration ..." -ForegroundColor Magenta
@@ -541,7 +610,6 @@ public class ServerCertificateValidationCallback
 
 #endregion
 
-#todo make -pd "all" if action was specified
 #region parameters validation
     Write-Host ""       
     Write-Host "$(get-date) [STEP] Validating parameters ..." -ForegroundColor Magenta
@@ -681,6 +749,16 @@ public class ServerCertificateValidationCallback
         }
         #endregion
 
+        #* making sure cluster will be ready to be shutdown (if -action)
+        #region cluster stop ready status
+            if ($action) {
+                #let's make sure our current redundancy is at least 2
+                if ($myvar_ntnx_cluster_info.cluster_redundancy_state.current_redundancy_factor -lt 2) {throw "$(get-date) [ERROR] Current redundancy is less than 2. Exiting."}
+                #check if there is an upgrade in progress
+                if ($myvar_ntnx_cluster_info.is_upgrade_in_progress) {throw "$(get-date) [ERROR] Cluster upgrade is in progress. Exiting."}
+            }
+        #endregion
+
         #* getting hosts ips
         #region GET hosts
         Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $($cluster) ..." -ForegroundColor Green
@@ -696,6 +774,11 @@ public class ServerCertificateValidationCallback
         }
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($cluster)" -ForegroundColor Cyan
         $myvar_ntnx_hosts_ips = ($myvar_ntnx_hosts.entities).hypervisor_address
+        if ($action) {#collecting cvm ips and ipmi ips
+            #! resume here
+            $myvar_cvm_ips = $myvar_ntnx_hosts.entities | %{$_.service_vmexternal_ip}
+            $myvar_ipmi_ips = $myvar_ntnx_hosts.entities | %{$_.ipmi_address}
+        }
         #endregion
 
         #* getting protection domains and checking they are active and enabled on this cluster, and build $pd_list and $ctr_list
@@ -843,16 +926,50 @@ public class ServerCertificateValidationCallback
             }
             Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
         }
+        if ($action) 
+        {#figure out the vCenter and CVM VM names
+            try {
+                Write-Host "$(get-date) [INFO] Figuring out vCenter VM name..." -ForegroundColor Green
+                $myvar_vcenter_vm_name = (Get-VM -ErrorAction Stop| Select Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | ?{$_."IP address" -eq $myvar_vcenter_ip}).Name
+                Write-Host "$(get-date) [SUCCESS] Successfully queried VMs from $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                Write-Host "$(get-date) [DATA] vCenter VM name is $($myvar_vcenter_vm_name)" -ForegroundColor White
+
+                #figure out the CVM VM names
+                [System.Collections.ArrayList]$myvar_cvm_names = New-Object System.Collections.ArrayList($null)
+                Write-Host "$(get-date) [INFO] Figuring out CVM VM names..." -ForegroundColor Green
+                ForEach ($myvar_cvm_ip in $myvar_cvm_ips) {
+                    try {$myvar_cvm_name = (Get-VM -ErrorAction Stop | Select Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | ?{$_."IP address" -eq $myvar_cvm_ip}).Name}
+                    catch {throw "Could not retrieve list of VMs from $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+                    $myvar_cvm_names += $myvar_cvm_name
+                    Write-Host "$(get-date) [DATA] CVM with ip $($myvar_cvm_ip) VM name is $($myvar_cvm_name)" -ForegroundColor White
+                }
+
+                #figure out if the vCenter VM runs on one of the Nutanix compute cluster
+                #todo assess if this necessary
+                $myvar_vcenter_vm_cluster = Get-VM -Name $myvar_vcenter_vm_name | Get-Cluster
+                if ($myvar_vsphere_cluster_name  -eq $myvar_vcenter_vm_cluster.Name) 
+                {
+                    $myvar_vcenter_ntnx_hosted = $true
+                    Write-Host "$(get-date) [DATA] vCenter VM is hosted in the Nutanix cluster" -ForegroundColor White
+                } else 
+                {
+                    $myvar_vcenter_ntnx_hosted = $false
+                    Write-Host "$(get-date) [DATA] vCenter VM is not hosted in the Nutanix cluster" -ForegroundColor White
+                }
+            }
+            catch {
+                Throw "$(get-date) [ERROR] Could not retrieve vCenter VM from $($myvar_vcenter_ip) : $($_.Exception.Message)"
+            }
+        }
         #endregion
 
-        #todo if action was specified, can we ssh to cvm using cluster ip?
         #! this only works on windows with sshsessions module
         if ($action) {
             #trying to ssh into cvm
-            Write-Host "$(get-date) [INFO] Opening ssh session to $($cluster)..." -ForegroundColor Green
-            try {$myvar_cvm_ssh_session = New-SshSession -ComputerName $cluster -Credential $myvar_cvm_credentials -ErrorAction Stop}
-            catch {throw "$(get-date) [ERROR] Could not open ssh session to $($cluster) : $($_.Exception.Message)"}
-            Write-Host "$(get-date) [SUCCESS] Opened ssh session to $($cluster)." -ForegroundColor Cyan
+            Write-Host "$(get-date) [INFO] Opening ssh session to $($myvar_cvm_ips[0])..." -ForegroundColor Green
+            try {$myvar_cvm_ssh_session = New-SshSession -ComputerName $myvar_cvm_ips[0] -Credential $myvar_cvm_credentials -ErrorAction Stop}
+            catch {throw "$(get-date) [ERROR] Could not open ssh session to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Opened ssh session to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
         }
         
     #endregion
@@ -981,7 +1098,8 @@ public class ServerCertificateValidationCallback
                 $myvar_drs_done = $false
                 Do {
                     #figure out which vmhosts have vms running in this datastore
-                    $myvar_datastore_vmhosts = get-datastore -name $myvar_datastore | get-vm | get-vmhost | Select-Object -Unique -Property Name
+                    try {$myvar_datastore_vmhosts = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop | get-vmhost -ErrorAction Stop | Select-Object -Unique -Property Name}
+                    catch {throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
                     $myvar_vmhost_found = $false
                     foreach ($myvar_ntnx_vmhost in $myvar_ntnx_vmhosts) {
                         if ($myvar_datastore_vmhosts.Name -contains $myvar_ntnx_vmhost.Name) {
@@ -1005,8 +1123,6 @@ public class ServerCertificateValidationCallback
         #endregion
     #endregion
         
-    #Write-Host ""
-    #Write-Host "$(get-date) [STEP] Failing over specified active storage from $($myvar_ntnx_cluster_name) to $($remote_site_name) ..." -ForegroundColor Magenta
     #region planned failover of the protection domain(s)
         foreach ($myvar_pd in $pd_list.name) {
             Write-Host ""
@@ -1091,18 +1207,23 @@ public class ServerCertificateValidationCallback
 
     #region maintenance
         if ($action -eq "maintenance") {
-            #! move all this to a function
-            #todo shutdown any remaining vms
-            #todo nutanix cluster stop
-            #todo cvm shutdown
-            #todo put hosts in maintenance
+            Set-NtnxVmhostsToMaintenanceMode
         }
     #endregion
 
     #region shutdown
         if ($action -eq "shutdown") {
-            #todo call maintenance function
-            #todo shutdown esxi hosts
+            #* call maintenance function
+            Set-NtnxVmhostsToMaintenanceMode
+            #* shutdown esxi hosts
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] Shutting down ESXi hosts in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Magenta
+            foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
+                Write-Host "$(get-date) [INFO] Shutting down ESXi host $($myvar_vmhost.Name)..." -ForegroundColor Green
+                try {$myvar_vmhost_shutdown_command = $myvar_vmhost | Stop-VMhost -Confirm:$false -ErrorAction Stop}
+                catch {throw "$(get-date) [ERROR] Could not shut down ESXi host $($myvar_vmhost.Name) : $($_.Exception.Message)"}
+                Write-Host "$(get-date) [SUCCESS] Successfully shut down ESXi host $($myvar_vmhost.Name)!" -ForegroundColor Cyan
+            }
         }
     #endregion
 #endregion
@@ -1114,6 +1235,18 @@ public class ServerCertificateValidationCallback
     #disconnect viserver
     Write-Host "$(get-date) [INFO] Disconnecting from vCenter $($myvar_vcenter_ip)" -ForegroundColor Green
     $myvar_vcenter_disconnect = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue
+
+    if ($action)
+    {#cleaning up ssh sessions and displaying ip addresses for restart if this was a shutdown
+        Remove-SshSession -RemoveAll -ErrorAction SilentlyContinue
+        if ($action -eq "shutdown")
+        {
+            Write-Host "$(get-date) [INFO] All done! Note that nodes may take as long as 20 minutes to shutdown completely. To restart your cluster, use the following IP addresses:" -ForegroundColor Green
+            Write-Host "IPMI:" $myvar_ipmi_ips
+            Write-Host "Hosts:" $myvar_host_ips
+            Write-Host "CVMs:" $myvar_cvm_ips
+        }
+    }
 
     #let's figure out how much time this all took
 	Write-Host "$(get-date) [SUM] total processing time: $($myvar_elapsed_time.Elapsed.ToString())" -ForegroundColor Magenta
