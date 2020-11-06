@@ -497,7 +497,7 @@ Function Set-NtnxVmhostsToMaintenanceMode
 
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
-#todo should this script include a start section? q for client
+#todo should this script include a start section? (already included re-enable for active protection domains)
 #region prepwork
     Write-Host ""
     Write-Host "$(get-date) [STEP] Checking PowerShell configuration ..." -ForegroundColor Magenta
@@ -769,7 +769,7 @@ public class ServerCertificateValidationCallback
             } 
             else 
             {
-                $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | where {$_.management_server_type -eq "vcenter"}).ip_address
+                $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
                 Write-Host "$(get-date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor White
                 if (!$reEnableOnly) 
                 {#we don't really care if DRS is not enabled if all we're doing is re-enabling replication
@@ -960,7 +960,7 @@ public class ServerCertificateValidationCallback
             } 
             else 
             {
-                $myvar_remote_site_vcenter_ip = ($myvar_ntnx_remote_cluster_info.management_servers | where {$_.management_server_type -eq "vcenter"}).ip_address
+                $myvar_remote_site_vcenter_ip = ($myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
                 Write-Host "$(get-date) [DATA] vCenter IP address for remote Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_remote_site_vcenter_ip)" -ForegroundColor White
                 if ($myvar_remote_site_vcenter_ip -ne $myvar_vcenter_ip) {#houston we have a problem, both sites have different registered vcenters
                     Throw "$(get-date) [ERROR] Nutanix clusters $($myvar_ntnx_cluster_name) and $($myvar_ntnx_remote_cluster_name) have different registered vCenter servers: $($myvar_vcenter_ip) and $($myvar_remote_site_vcenter_ip). Exiting."
@@ -1004,7 +1004,7 @@ public class ServerCertificateValidationCallback
                     try 
                     {
                         Write-Host "$(get-date) [INFO] Figuring out vCenter VM name..." -ForegroundColor Green
-                        $myvar_vcenter_vm_name = (Get-VM -ErrorAction Stop| Select Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | ?{$_."IP address" -eq $myvar_vcenter_ip}).Name
+                        $myvar_vcenter_vm_name = (Get-VM -ErrorAction Stop| Select-Object Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | Where-Object {$_."IP address" -eq $myvar_vcenter_ip}).Name
                         Write-Host "$(get-date) [SUCCESS] Successfully queried VMs from $($myvar_vcenter_ip)" -ForegroundColor Cyan
                         Write-Host "$(get-date) [DATA] vCenter VM name is $($myvar_vcenter_vm_name)" -ForegroundColor White
 
@@ -1015,7 +1015,7 @@ public class ServerCertificateValidationCallback
                         {
                             try 
                             {
-                                $myvar_cvm_name = (Get-VM -ErrorAction Stop | Select Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | ?{$_."IP address" -eq $myvar_cvm_ip}).Name
+                                $myvar_cvm_name = (Get-VM -ErrorAction Stop | Select-Object Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | Where-Object {$_."IP address" -eq $myvar_cvm_ip}).Name
                             }
                             catch 
                             {
@@ -1070,92 +1070,96 @@ public class ServerCertificateValidationCallback
         
     #endregion
     
-    Write-Host ""
-    Write-Host "$(get-date) [STEP] Figuring out information required to move metro protected virtual machines from vmhosts in $($myvar_ntnx_cluster_name) to vmhosts in $($myvar_ntnx_remote_cluster_name) for specified metro availability protection domains..." -ForegroundColor Magenta
     #region move vms using drs
         #* identify HA/DRS cluster and making sure HA and DRS are enabled
         #region figure out vsphere cluster name ($myvar_vsphere_cluster_name)
-            #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
-            $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
-            Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-            try 
-            {#get all the vmhosts registered in vCenter
-                $myvar_vmhosts = Get-VMHost -ErrorAction Stop 
-                Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
-            }
-            catch
-            {#couldn't get all the vmhosts registered in vCenter
-                throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-            }
-            foreach ($myvar_vmhost in $myvar_vmhosts) 
-            {#let's look at each host and determine which is which
-                Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
+            if (!$reEnableOnly)
+            {
+                Write-Host ""
+                Write-Host "$(get-date) [STEP] Figuring out information required to move metro protected virtual machines from vmhosts in $($myvar_ntnx_cluster_name) to vmhosts in $($myvar_ntnx_remote_cluster_name) for specified metro availability protection domains..." -ForegroundColor Magenta
+    
+                #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
+                $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
+                Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
                 try 
-                {#retrieve all vmk NICs for that host
-                    $myvar_host_vmks = $myvar_vmhost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
-                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $($myvar_vmhost)" -ForegroundColor Cyan
+                {#get all the vmhosts registered in vCenter
+                    $myvar_vmhosts = Get-VMHost -ErrorAction Stop 
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
                 }
                 catch
-                {#couldn't retrieve all vmk NICs for that host
-                    throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $($myvar_vmhost) : $($_.Exception.Message)"
+                {#couldn't get all the vmhosts registered in vCenter
+                    throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
                 }
-                foreach ($myvar_host_vmk in $myvar_host_vmks) 
-                {#examine all VMKs
-                    foreach ($myvar_host_ip in $myvar_ntnx_hosts_ips) 
-                    {#compare to the host IP addresses we got from the Nutanix cluster
-                        if ($myvar_host_vmk.IP -eq $myvar_host_ip)
-                        {#if we get a match, that vcenter host is in cluster 1
-                            Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor White
-                            $myvar_ntnx_vmhosts += $myvar_vmhost
-                        }
-                    }#end foreach IP loop
-                }#end foreach VMK loop
-            }#end foreach VMhost loop
-            if (!$myvar_ntnx_vmhosts) 
-            {#couldn't find hosts in cluster
-                throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $($myvar_ntnx_cluster_name) in vCenter server $($myvar_vcenter_ip)"
-            }
-
-            #figure out vsphere cluster name
-            Write-Host "$(get-date) [INFO] Checking which compute cluster contains hosts from $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
-            try 
-            {#we look at which cluster the first vmhost in cluster belongs to.
-                $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
-                $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
-                Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
-
-                foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
-                {#make sure all hosts are part of the same cluster
+                foreach ($myvar_vmhost in $myvar_vmhosts) 
+                {#let's look at each host and determine which is which
+                    Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
                     try 
-                    {
-                        $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
-                        $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
-                        if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
-                        {#houston we have a problem: some nutanix hosts are not in the same compute cluster
-                            throw "$(get-date) [ERROR] Nutanix host $($myvar_vmhost) is in vsphere cluster $($myvar_vmhost_vsphere_cluster_name) instead of vsphere cluster $($myvar_vsphere_cluster_name)! Exiting."
+                    {#retrieve all vmk NICs for that host
+                        $myvar_host_vmks = $myvar_vmhost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $($myvar_vmhost)" -ForegroundColor Cyan
+                    }
+                    catch
+                    {#couldn't retrieve all vmk NICs for that host
+                        throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $($myvar_vmhost) : $($_.Exception.Message)"
+                    }
+                    foreach ($myvar_host_vmk in $myvar_host_vmks) 
+                    {#examine all VMKs
+                        foreach ($myvar_host_ip in $myvar_ntnx_hosts_ips) 
+                        {#compare to the host IP addresses we got from the Nutanix cluster
+                            if ($myvar_host_vmk.IP -eq $myvar_host_ip)
+                            {#if we get a match, that vcenter host is in cluster 1
+                                Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor White
+                                $myvar_ntnx_vmhosts += $myvar_vmhost
+                            }
+                        }#end foreach IP loop
+                    }#end foreach VMK loop
+                }#end foreach VMhost loop
+                if (!$myvar_ntnx_vmhosts) 
+                {#couldn't find hosts in cluster
+                    throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $($myvar_ntnx_cluster_name) in vCenter server $($myvar_vcenter_ip)"
+                }
+
+                #figure out vsphere cluster name
+                Write-Host "$(get-date) [INFO] Checking which compute cluster contains hosts from $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
+                try 
+                {#we look at which cluster the first vmhost in cluster belongs to.
+                    $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
+                    $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
+                    Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
+
+                    foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
+                    {#make sure all hosts are part of the same cluster
+                        try 
+                        {
+                            $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
+                            $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
+                            if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
+                            {#houston we have a problem: some nutanix hosts are not in the same compute cluster
+                                throw "$(get-date) [ERROR] Nutanix host $($myvar_vmhost) is in vsphere cluster $($myvar_vmhost_vsphere_cluster_name) instead of vsphere cluster $($myvar_vsphere_cluster_name)! Exiting."
+                            }
+                        }
+                        catch 
+                        {
+                            throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
                         }
                     }
-                    catch 
-                    {
-                        throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
-                    }
                 }
-            }
-            catch 
-            {
-                throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
-            }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                }
 
-            #checking vsphere cluster configuration
-            Write-Host "$(get-date) [INFO] Checking HA is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
-            if ($myvar_vsphere_cluster.HaEnabled -ne $true) 
-            {
-                throw "$(get-date) [ERROR] HA is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
-            }
-            Write-Host "$(get-date) [INFO] Checking DRS is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
-            if ($myvar_vsphere_cluster.DrsEnabled -ne $true)  
-            {
-                throw "$(get-date) [ERROR] DRS is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
+                #checking vsphere cluster configuration
+                Write-Host "$(get-date) [INFO] Checking HA is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
+                if ($myvar_vsphere_cluster.HaEnabled -ne $true) 
+                {
+                    throw "$(get-date) [ERROR] HA is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
+                }
+                Write-Host "$(get-date) [INFO] Checking DRS is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
+                if ($myvar_vsphere_cluster.DrsEnabled -ne $true)  
+                {
+                    throw "$(get-date) [ERROR] DRS is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
+                }
             }
         #endregion
         
@@ -1249,7 +1253,7 @@ public class ServerCertificateValidationCallback
     #endregion
         
     #region planned failover of the protection domain(s)
-        if (!$skipfailover -!$reEnableOnly)
+        if (!$skipfailover -and !$reEnableOnly)
         {
             foreach ($myvar_pd in $pd_list.name) 
             {
@@ -1343,7 +1347,7 @@ public class ServerCertificateValidationCallback
         {
             foreach ($myvar_pd in $pd_list) 
             {
-                if ($myvar_pd.status -eq "Disabled") 
+                if (($myvar_pd.role -eq "Active") -and ($myvar_pd.status -eq "Disabled")) 
                 {
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Enabling replication for protection domain $($myvar_pd.name) from $($myvar_ntnx_cluster_name) to $($remote_site_name) ..." -ForegroundColor Magenta
@@ -1390,7 +1394,13 @@ public class ServerCertificateValidationCallback
                 }
                 else 
                 {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
-                    Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in disabled status so we will NOT try to re-enable it. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                    if ($myvar_pd.role -ne "Active")
+                    {
+                        Write-Host "$(get-date) [INFO] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not active. Skipping." -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in disabled status so we will NOT try to re-enable it. Current status is $($myvar_pd.status)." -ForegroundColor Yellow
+                    }
                 }
             }
         }
@@ -1433,8 +1443,11 @@ public class ServerCertificateValidationCallback
     Write-Host "$(get-date) [STEP] Cleaning up ..." -ForegroundColor Magenta
 
     #disconnect viserver
-    Write-Host "$(get-date) [INFO] Disconnecting from vCenter $($myvar_vcenter_ip)" -ForegroundColor Green
-    $myvar_vcenter_disconnect = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue
+    if (!$reEnableOnly)
+    {
+        Write-Host "$(get-date) [INFO] Disconnecting from vCenter $($myvar_vcenter_ip)" -ForegroundColor Green
+        $myvar_vcenter_disconnect_command = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue
+    }
 
     if ($action)
     {#cleaning up ssh sessions and displaying ip addresses for restart if this was a shutdown
