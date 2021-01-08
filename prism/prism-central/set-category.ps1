@@ -39,7 +39,7 @@ Adds the category mycategory:myvalue to myvm.
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 21st 2020
+  Revision: January 8th 2021
 #>
 
 #region Parameters
@@ -72,6 +72,8 @@ Date       By   Updates (newest updates at the top)
 01/14/2020 sb   Initial release.
 04/07/2020 sb   Added sourcecsv + do over with sbourdeaud module.
 04/21/2020 sb   Do over with sbourdeaud module.
+08/01/2021 sb   Imported Invoke-PrismCall function to be able to deal with 
+                return code 409 correctly.
 ################################################################################
 '@
   $myvarScriptName = ".\set-category.ps1"
