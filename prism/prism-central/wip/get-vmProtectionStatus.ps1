@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  This script retrieves the list of Leap Protection Policies configured in Prism Central.
+  This is a summary of what the script is.
 .DESCRIPTION
-  This script retrieves the list of Leap Protection Policies configured in Prism Central.
+  This is a detailed description of what the script does and how it is used.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -11,22 +11,22 @@
   Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
-.PARAMETER prismcentral
-  Nutanix Prism Central instance fully qualified domain name or IP address.
+.PARAMETER cluster
+  Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER username
-  Username used to connect to the Nutanix Prism Central instance.
+  Username used to connect to the Nutanix cluster.
 .PARAMETER password
-  Password used to connect to the Nutanix Prism Central instance.
+  Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
-.\get-protectionPolicies.ps1 -prismcentral ntnxc1.local -username admin -password admin
-Retrieve the list of protection policies defined in Prism Central ntnxc1.local.
+.\template.ps1 -cluster ntnxc1.local -username admin -password admin
+Connect to a Nutanix cluster of your choice:
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: January 11th 2021
+  Revision: July 22nd 2015
 #>
 
 #region parameters
@@ -37,7 +37,7 @@ Retrieve the list of protection policies defined in Prism Central ntnxc1.local.
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$prismcentral,
+        [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $true)] [string]$username,
         [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds
@@ -53,7 +53,7 @@ Retrieve the list of protection policies defined in Prism Central ntnxc1.local.
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
-01/11/2021 sb   Initial release.
+06/19/2015 sb   Initial release.
 ################################################################################
 '@
     $myvarScriptName = ".\template.ps1"
@@ -155,12 +155,11 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region processing	
-    Write-Host "$(get-date) [INFO] Retrieving list of protection policies from $($prismcentral)..." -ForegroundColor Green
-    #! resume coding effort here
-    $url = "https://$($prismcentral):9440/PrismGateway/services/rest/v2.0/vms/"
+    Write-Host "$(get-date) [INFO] Retrieving list of VMs..." -ForegroundColor Green
+    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
     $method = "GET"
     $vmList = Get-PrismRESTCall -method $method -url $url -credential $prismCredentials
-    Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs list from $prismcentral!" -ForegroundColor Cyan
+    Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs list from $cluster!" -ForegroundColor Cyan
     $vmList
 #endregion
 
