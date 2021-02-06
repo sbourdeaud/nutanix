@@ -5,10 +5,6 @@
   Given a Prism Central IP or FQDN, get, acknowledge or resolve alerts.
 .PARAMETER prism
   IP address or FQDN of Prism Central.
-.PARAMETER username
-  Prism Central username.
-.PARAMETER password
-  Prism Central username password.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER get
@@ -39,7 +35,7 @@ Get all critical alerts which are neither acknowledged nor resolved from Prism C
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: Apr 15th 2020
+  Revision: February 6th 2021
 #>
 
 #region Parameters
@@ -51,8 +47,6 @@ Param
     [parameter(mandatory = $false)] [switch]$log,
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$prism,
-    [parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $prismCreds,
     [parameter(mandatory = $false)] [switch]$get,
     [parameter(mandatory = $false)] [string]$uuid,
@@ -197,6 +191,7 @@ Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 01/15/2020 sb   Initial release.
 04/15/2020 sb   Do over with sbourdeaud module
+02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
 $myvarScriptName = ".\add-AhvNetwork.ps1"
@@ -249,203 +244,211 @@ Set-PoshTls
 #endregion
 
 #region variables
-#initialize variables
-#misc variables
-$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-$myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-$myvarOutputLogFile += "OutputLog.log"
+  #initialize variables
+  #misc variables
+  $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+  $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
+  $myvarOutputLogFile += "OutputLog.log"
+	
+  #let's initialize parameters if they haven't been specified
+  if ((!$get) -and !($acknowledge) -and !($resolve)) {throw "You must specify either get, acknowledge or resolve!"}
+  if ($acknowledge -and $resolve) {throw "You must specify either acknowledge or resolve but not both!"}
+  if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism Central"}
+  if (!$prismCreds) 
+  {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+      $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+  } 
+  else 
+  { #we are using custom credentials, so let's grab the username and password from that
+      try 
+      {
+          $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+          $username = $prismCredentials.UserName
+          $PrismSecurePassword = $prismCredentials.Password
+      }
+      catch 
+      {
+          Set-CustomCredentials -credname $prismCreds
+          $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+          $username = $prismCredentials.UserName
+          $PrismSecurePassword = $prismCredentials.Password
+      }
+      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+  }
 
-############################################################################
-# command line arguments initialization
-############################################################################	
-#let's initialize parameters if they haven't been specified
-if ((!$get) -and !($acknowledge) -and !($resolve)) {throw "You must specify either get, acknowledge or resolve!"}
-if ($acknowledge -and $resolve) {throw "You must specify either acknowledge or resolve but not both!"}
-if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism Central"}
-if (!$prismCreds) 
-{#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-    if (!$username) 
-    {#if Prism username has not been specified ask for it
-        $username = Read-Host "Enter the Prism username"
-    } 
-
-    if (!$password) 
-    {#if password was not passed as an argument, let's prompt for it
-        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-    }
-    else 
-    {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-        Remove-Variable password
-    }
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-} 
-else 
-{ #we are using custom credentials, so let's grab the username and password from that
-    try 
-    {
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-    }
-    catch 
-    {
-        $credname = Read-Host "Enter the credentials name"
-        Set-CustomCredentials -credname $credname
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-    }
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-}
-
-$api_server = $prism
-$api_server_port = "9440"
-[System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
+  $api_server = $prism
+  $api_server_port = "9440"
+  [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
 #endregion
 
 #region processing
 
     #! -get
     #region -get
-    if ($get) {
-        try {
-            $myvarResults = GetAlerts
-            if ($csv) {
-              Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
-              $myvarResults | export-csv -NoTypeInformation $csv
-            } else {
-                $myvarResults | Sort-Object -Property latest_occurrence_time
-            }
-        }
-        catch {
-            $saved_error = $_.Exception.Message
-            throw "$(get-date) [ERROR] $saved_error"
-        }
-        finally {
-        }
-        #endregion
-    }
+      if ($get) 
+      {
+          try 
+          {
+              $myvarResults = GetAlerts
+              if ($csv) 
+              {
+                Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
+                $myvarResults | export-csv -NoTypeInformation $csv
+              } 
+              else 
+              {
+                  $myvarResults | Sort-Object -Property latest_occurrence_time
+              }
+          }
+          catch 
+          {
+              $saved_error = $_.Exception.Message
+              throw "$(get-date) [ERROR] $saved_error"
+          }
+          finally 
+          {
+          }
+      }
     #endregion
 
     #! -acknowledge
     #region -acknowledge
-    if ($acknowledge) {
-        #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/alerts/action/ACKNOWLEDGE"
-        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-            $api_server_endpoint
-        $method = "POST"
-        $length = 500
+      if ($acknowledge) 
+      {
+          #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/alerts/action/ACKNOWLEDGE"
+            $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+                $api_server_endpoint
+            $method = "POST"
+            $length = 500
 
-        if (!$uuid) {
-          #$filter = "resolved!=true"
-          #if ($severity) {$filter += ";severity==$($severity)"}
-          #*retrieve alerts (as if -get)
-          $myvarResults = GetAlerts
-          $uuid_list = @()
-          Foreach ($alert in $myvarResults) {
-            if ($severity) {
-              $uuid_list = ($myvarResults | Where-Object {$_.severity -eq $severity}).uuid
-            } else {
-              $uuid_list = ($myvarResults).uuid
+            if (!$uuid) 
+            {
+              #$filter = "resolved!=true"
+              #if ($severity) {$filter += ";severity==$($severity)"}
+              #*retrieve alerts (as if -get)
+              $myvarResults = GetAlerts
+              $uuid_list = @()
+              Foreach ($alert in $myvarResults) 
+              {
+                if ($severity) 
+                {
+                  $uuid_list = ($myvarResults | Where-Object {$_.severity -eq $severity}).uuid
+                } 
+                else 
+                {
+                  $uuid_list = ($myvarResults).uuid
+                }
+              }
+              $content = @{
+                alert_uuid_list= @($uuid_list)
+              }
+            } 
+            else 
+            {
+              $content = @{
+                alert_uuid_list= @($uuid)
+              }
             }
-          }
-          $content = @{
-            alert_uuid_list= @($uuid_list)
-          }
-        } else {
-          $content = @{
-            alert_uuid_list= @($uuid)
-          }
-        }
-        
-        $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
+            
+            $payload = (ConvertTo-Json $content -Depth 4)
+          #endregion
 
-        #region make the api call
-        Write-Host "$(Get-Date) [INFO] Acknowledging alert $uuid in $prism..." -ForegroundColor Green
-        try {
-            $ack_task_uuid = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-            $task_status = Get-PrismCentralTaskStatus -task $ack_task_uuid.task_uuid -credential $prismCredentials -cluster $prism
-        }
-        catch {
-            $saved_error = $_.Exception.Message
-            throw "$(get-date) [ERROR] $saved_error"
-        }
-        finally {
-        }
-        #endregion
-    }
+          #region make the api call
+            Write-Host "$(Get-Date) [INFO] Acknowledging alert $uuid in $prism..." -ForegroundColor Green
+            try 
+            {
+                $ack_task_uuid = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                $task_status = Get-PrismCentralTaskStatus -task $ack_task_uuid.task_uuid -credential $prismCredentials -cluster $prism
+            }
+            catch 
+            {
+                $saved_error = $_.Exception.Message
+                throw "$(get-date) [ERROR] $saved_error"
+            }
+            finally 
+            {
+            }
+          #endregion
+      }
     #endregion
 
     #! -resolve
     #region -resolve
-    if ($resolve) {
-        #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/alerts/action/RESOLVE"
-        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-            $api_server_endpoint
-        $method = "POST"
-        $length = 500
-        
-        #todo: add code here to process anything but $uuid
-        if (!$uuid) {
-          #$filter = "resolved!=true"
-          #if ($severity) {$filter += ";severity==$($severity)"}
-          #*retrieve alerts (as if -get)
-          $myvarResults = GetAlerts
-          $uuid_list = @()
-          Foreach ($alert in $myvarResults) {
-            if ($severity) {
-              $uuid_list = ($myvarResults | Where-Object {$_.severity -eq $severity}).uuid
-            } else {
-              $uuid_list = ($myvarResults).uuid
+      if ($resolve) 
+      {
+          #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/alerts/action/RESOLVE"
+            $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+                $api_server_endpoint
+            $method = "POST"
+            $length = 500
+            
+            #todo: add code here to process anything but $uuid
+            if (!$uuid) 
+            {
+              #$filter = "resolved!=true"
+              #if ($severity) {$filter += ";severity==$($severity)"}
+              #*retrieve alerts (as if -get)
+              $myvarResults = GetAlerts
+              $uuid_list = @()
+              Foreach ($alert in $myvarResults) 
+              {
+                if ($severity) 
+                {
+                  $uuid_list = ($myvarResults | Where-Object {$_.severity -eq $severity}).uuid
+                } 
+                else 
+                {
+                  $uuid_list = ($myvarResults).uuid
+                }
+              }
+              $content = @{
+                alert_uuid_list= @($uuid_list)
+              }
+            } 
+            else 
+            {
+              $content = @{
+                alert_uuid_list= @($uuid)
+              }
             }
-          }
-          $content = @{
-            alert_uuid_list= @($uuid_list)
-          }
-        } else {
-          $content = @{
-            alert_uuid_list= @($uuid)
-          }
-        }
 
-        $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
+            $payload = (ConvertTo-Json $content -Depth 4)
+          #endregion
 
-        #region make the api call
-        Write-Host "$(Get-Date) [INFO] Resolving alert $uuid in $prism..." -ForegroundColor Green
-        try {
-          $resolve_task_uuid = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-          $task_status = Get-PrismCentralTaskStatus -task $resolve_task_uuid.task_uuid -credential $prismCredentials -cluster $prism
-        }
-        catch {
-            $saved_error = $_.Exception.Message
-            Throw "$(get-date) [ERROR] $saved_error"
-        }
-        finally {
-        }
-        #endregion
-    }
+          #region make the api call
+            Write-Host "$(Get-Date) [INFO] Resolving alert $uuid in $prism..." -ForegroundColor Green
+            try 
+            {
+              $resolve_task_uuid = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+              $task_status = Get-PrismCentralTaskStatus -task $resolve_task_uuid.task_uuid -credential $prismCredentials -cluster $prism
+            }
+            catch 
+            {
+                $saved_error = $_.Exception.Message
+                Throw "$(get-date) [ERROR] $saved_error"
+            }
+            finally 
+            {
+            }
+          #endregion
+      }
     #endregion
 
 #endregion processing
 
 #region cleanup	
-#let's figure out how much time this all took
-Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+  #let's figure out how much time this all took
+  Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
-#cleanup after ourselves and delete all custom variables
-Remove-Variable myvar* -ErrorAction SilentlyContinue
-Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
-Remove-Variable help -ErrorAction SilentlyContinue
-Remove-Variable history -ErrorAction SilentlyContinue
-Remove-Variable log -ErrorAction SilentlyContinue
-Remove-Variable username -ErrorAction SilentlyContinue
-Remove-Variable password -ErrorAction SilentlyContinue
-Remove-Variable prism -ErrorAction SilentlyContinue
-Remove-Variable debugme -ErrorAction SilentlyContinue
-Remove-Variable prismCreds -ErrorAction SilentlyContinue
+  #cleanup after ourselves and delete all custom variables
+  Remove-Variable myvar* -ErrorAction SilentlyContinue
+  Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+  Remove-Variable help -ErrorAction SilentlyContinue
+  Remove-Variable history -ErrorAction SilentlyContinue
+  Remove-Variable log -ErrorAction SilentlyContinue
+  Remove-Variable prism -ErrorAction SilentlyContinue
+  Remove-Variable debugme -ErrorAction SilentlyContinue
+  Remove-Variable prismCreds -ErrorAction SilentlyContinue
 #endregion

@@ -20,10 +20,6 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prismcentral
   Nutanix Prism Central fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for 
   %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on 
@@ -48,19 +44,19 @@
 .PARAMETER cluster
   Limit processing VMs to the specified cluster.
 .EXAMPLE
-.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -username myuser -password mypassword
+.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com
 Power on all VMs in the specified Prism Central based on their labels: boot_priority_1 labelled Vms will power on first, then boot_priority_2 labelled Vms, etc... up to boot_priority_5 labelled VMs.  All remaining Vms (with no label) will remain untouched.  The script will wait 180 seconds between each group/sequence of VMs.
 .EXAMPLE
-.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -username myuser -password mypassword -labels group1,group2 -delay 60 -leaveOtherVmsOff
+.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -labels group1,group2 -delay 60 -leaveOtherVmsOff
 Power on VMs labeled group1 and group2 in the specified order. All other Vms will remain untouched.  The script will wait 60 seconds between each group/sequence of VMs.
 .EXAMPLE
-.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -username myuser -password mypassword -tag .\vm-sequence.csv
+.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -tag .\vm-sequence.csv
 Tag VMs listed in the specified csv file (csv file content is vm_name;integer): VMs will be labeled boot_priority_1, boot_priority_2, etc...
 .LINK
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 21st 2020
+  Revision: February 6th 2021
 #>
 
 #region parameters
@@ -72,8 +68,6 @@ Tag VMs listed in the specified csv file (csv file content is vm_name;integer): 
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$prismcentral,
-        [parameter(mandatory = $false)] [string]$username,
-        [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] [string]$prismCreds,
         [parameter(mandatory = $false)] [array]$labels,
         [parameter(mandatory = $false)] [int]$delay,
@@ -96,6 +90,7 @@ Date       By   Updates (newest updates at the top)
 07/11/2019 sb   First tested version. Missing -sequence still (wip).
 07/12/2019 sb   Implementing -sequence
 04/21/2020 sb   Do over with sbourdeaud module.
+02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-PcVmPowerOnSequence.ps1"
@@ -163,21 +158,7 @@ Date       By   Updates (newest updates at the top)
 #region parameters validation
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        if (!$username) 
-        {#if Prism username has not been specified ask for it
-            $username = Read-Host "Enter the Prism username"
-        } 
-
-        if (!$password) 
-        {#if password was not passed as an argument, let's prompt for it
-            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-        }
-        else 
-        {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-            Remove-Variable password
-        }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -189,8 +170,7 @@ Date       By   Updates (newest updates at the top)
         }
         catch 
         {
-            $credname = Read-Host "Enter the credentials name"
-            Set-CustomCredentials -credname $credname
+            Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
             $username = $prismCredentials.UserName
             $PrismSecurePassword = $prismCredentials.Password
@@ -720,8 +700,6 @@ Date       By   Updates (newest updates at the top)
     Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
     Remove-Variable log -ErrorAction SilentlyContinue
-    Remove-Variable username -ErrorAction SilentlyContinue
-    Remove-Variable password -ErrorAction SilentlyContinue
     Remove-Variable prismcentral -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion

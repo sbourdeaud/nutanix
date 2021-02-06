@@ -13,22 +13,18 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prism
   Nutanix Prism Central fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
 .PARAMETER csv
   Name of csv file to export to. By default this is date_prism-hw-report.csv in the working directory.
 .EXAMPLE
-.\get-ntnxHwConfig.ps1 -prism ntnxc1.local -username admin -password admin
+.\get-ntnxHwConfig.ps1 -prism ntnxc1.local
 Connect to a Nutanix Prism Central VM of your choice and retrieve the hardware configuration for all managed nodes.
 .LINK
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 20th 2020
+  Revision: February 6th
 #>
 
 #region parameters
@@ -40,8 +36,6 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the hardware c
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$prism,
-        [parameter(mandatory = $false)] [string]$username,
-        [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $false)] [string]$csv
     )
@@ -55,6 +49,7 @@ Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 01/17/2020 sb   Initial release.
 04/20/2020 sb   Do over with sbourdeaud module
+02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
     $myvarScriptName = ".\get-ntnxHwConfig.ps1"
@@ -124,21 +119,7 @@ Date       By   Updates (newest updates at the top)
 #region parameters validation
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        if (!$username) 
-        {#if Prism username has not been specified ask for it
-            $username = Read-Host "Enter the Prism username"
-        } 
-
-        if (!$password) 
-        {#if password was not passed as an argument, let's prompt for it
-            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-        }
-        else 
-        {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-            Remove-Variable password
-        }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -150,8 +131,7 @@ Date       By   Updates (newest updates at the top)
         }
         catch 
         {
-            $credname = Read-Host "Enter the credentials name"
-            Set-CustomCredentials -credname $credname
+            Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
             $username = $prismCredentials.UserName
             $PrismSecurePassword = $prismCredentials.Password
@@ -467,8 +447,6 @@ Date       By   Updates (newest updates at the top)
     Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
     Remove-Variable log -ErrorAction SilentlyContinue
-    Remove-Variable username -ErrorAction SilentlyContinue
-    Remove-Variable password -ErrorAction SilentlyContinue
     Remove-Variable cluster -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
