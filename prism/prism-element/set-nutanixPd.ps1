@@ -36,216 +36,207 @@ Removes all orphaned VM entries from the protection domain "protect1" on Nutanix
 #>
 
 #region parameters
-######################################
-##   parameters and initial setup   ##
-######################################
-#let's start with some command line parsing
-Param
-(
-    #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
-    [parameter(mandatory = $false)] [switch]$help,
-    [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$log,
-    [parameter(mandatory = $false)] [switch]$debugme,
-    [parameter(mandatory = $true)] [string]$cluster,
-    [parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $false)] $pd,
-    [parameter(mandatory = $false)] [switch]$clean
-)
+    Param
+    (
+        #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
+        [parameter(mandatory = $false)] [switch]$help,
+        [parameter(mandatory = $false)] [switch]$history,
+        [parameter(mandatory = $false)] [switch]$log,
+        [parameter(mandatory = $false)] [switch]$debugme,
+        [parameter(mandatory = $true)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$username,
+        [parameter(mandatory = $false)] [string]$password,
+        [parameter(mandatory = $false)] $pd,
+        [parameter(mandatory = $false)] [switch]$clean
+    )
 #endregion
 
 #region functions
-########################
-##   main functions   ##
-########################
-function Write-LogOutput
-{
-<#
-.SYNOPSIS
-Outputs color coded messages to the screen and/or log file based on the category.
-
-.DESCRIPTION
-This function is used to produce screen and log output which is categorized, time stamped and color coded.
-
-.PARAMETER Category
-This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-
-.PARAMETER Message
-This is the actual message you want to display.
-
-.PARAMETER LogFile
-If you want to log output to a file as well, use logfile to pass the log file full path name.
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-PS> Write-LogOutput -category "ERROR" -message "You must be kidding!"
-
-Displays an error message.
-
-.LINK
-https://github.com/sbourdeaud
-#>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-	param
-	(
-		[Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM')]
-        [string]
-        $Category,
-
-        [string]
-		$Message,
-
-        [string]
-        $LogFile
-	)
-
-    process
+    function Write-LogOutput
     {
-        $Date = get-date #getting the date so we can timestamp the output entry
-	    $FgColor = "Gray" #resetting the foreground/text color
-	    switch ($Category) #we'll change the text color depending on the selected category
-	    {
-		    "INFO" {$FgColor = "Green"}
-		    "WARNING" {$FgColor = "Yellow"}
-		    "ERROR" {$FgColor = "Red"}
-		    "SUM" {$FgColor = "Magenta"}
-	    }
+    <#
+    .SYNOPSIS
+    Outputs color coded messages to the screen and/or log file based on the category.
 
-	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
+    .DESCRIPTION
+    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+
+    .PARAMETER Category
+    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+
+    .PARAMETER Message
+    This is the actual message you want to display.
+
+    .PARAMETER LogFile
+    If you want to log output to a file as well, use logfile to pass the log file full path name.
+
+    .NOTES
+    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+    .EXAMPLE
+    PS> Write-LogOutput -category "ERROR" -message "You must be kidding!"
+
+    Displays an error message.
+
+    .LINK
+    https://github.com/sbourdeaud
+    #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param
+        (
+            [Parameter(Mandatory)]
+            [ValidateSet('INFO','WARNING','ERROR','SUM')]
+            [string]
+            $Category,
+
+            [string]
+            $Message,
+
+            [string]
+            $LogFile
+        )
+
+        process
         {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-        }
-    }
+            $Date = get-date #getting the date so we can timestamp the output entry
+            $FgColor = "Gray" #resetting the foreground/text color
+            switch ($Category) #we'll change the text color depending on the selected category
+            {
+                "INFO" {$FgColor = "Green"}
+                "WARNING" {$FgColor = "Yellow"}
+                "ERROR" {$FgColor = "Red"}
+                "SUM" {$FgColor = "Magenta"}
+            }
 
-}#end function Write-LogOutput
+            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+            if ($LogFile) #add the entry to the log file if -LogFile has been specified
+            {
+                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+            }
+        }
+
+    }#end function Write-LogOutput
+#endregion
 
 #region prepwork
-# get rid of annoying error messages
-if (!$debugme) {$ErrorActionPreference = "SilentlyContinue"}
-#check if we need to display help and/or history
-$HistoryText = @'
+    # get rid of annoying error messages
+    if (!$debugme) {$ErrorActionPreference = "SilentlyContinue"}
+    #check if we need to display help and/or history
+    $HistoryText = @'
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  12/07/2017 sb   Initial release.
 ################################################################################
 '@
-$myvarScriptName = ".\set-nutanixPd.ps1"
- 
-if ($help) {get-help $myvarScriptName; exit}
-if ($History) {$HistoryText; exit}
+    $myvarScriptName = ".\set-nutanixPd.ps1"
+    
+    if ($help) {get-help $myvarScriptName; exit}
+    if ($History) {$HistoryText; exit}
 
 
-#process requirements (PoSH version and modules)
-    Write-Host "$(get-date) [INFO] Checking the Powershell version..." -ForegroundColor Green
-    if ($PSVersionTable.PSVersion.Major -lt 5) {
-        Write-Host "$(get-date) [WARNING] Powershell version is less than 5. Trying to upgrade from the web..." -ForegroundColor Yellow
-        if (!$IsLinux) {
-            $ChocoVersion = choco
-            if (!$ChocoVersion) {
-                Write-Host "$(get-date) [WARNING] Chocolatey is not installed!" -ForegroundColor Yellow
-                [ValidateSet('y','n')]$ChocoInstall = Read-Host "Do you want to install the chocolatey package manager? (y/n)"
-                if ($ChocoInstall -eq "y") {
-                    Write-Host "$(get-date) [INFO] Downloading and running chocolatey installation script from chocolatey.org..." -ForegroundColor Green
-                    iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
-                    Write-Host "$(get-date) [INFO] Downloading and installing the latest Powershell version from chocolatey.org..." -ForegroundColor Green
-                    choco install -y powershell
-                } else {
-                    Write-Host "$(get-date) [ERROR] Please upgrade to Powershell v5 or above manually (https://www.microsoft.com/en-us/download/details.aspx?id=54616)" -ForegroundColor Red
+    #process requirements (PoSH version and modules)
+        Write-Host "$(get-date) [INFO] Checking the Powershell version..." -ForegroundColor Green
+        if ($PSVersionTable.PSVersion.Major -lt 5) {
+            Write-Host "$(get-date) [WARNING] Powershell version is less than 5. Trying to upgrade from the web..." -ForegroundColor Yellow
+            if (!$IsLinux) {
+                $ChocoVersion = choco
+                if (!$ChocoVersion) {
+                    Write-Host "$(get-date) [WARNING] Chocolatey is not installed!" -ForegroundColor Yellow
+                    [ValidateSet('y','n')]$ChocoInstall = Read-Host "Do you want to install the chocolatey package manager? (y/n)"
+                    if ($ChocoInstall -eq "y") {
+                        Write-Host "$(get-date) [INFO] Downloading and running chocolatey installation script from chocolatey.org..." -ForegroundColor Green
+                        iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+                        Write-Host "$(get-date) [INFO] Downloading and installing the latest Powershell version from chocolatey.org..." -ForegroundColor Green
+                        choco install -y powershell
+                    } else {
+                        Write-Host "$(get-date) [ERROR] Please upgrade to Powershell v5 or above manually (https://www.microsoft.com/en-us/download/details.aspx?id=54616)" -ForegroundColor Red
+                        Exit
+                    }#endif choco install
+                }#endif not choco
+            } else {
+                Write-Host "$(get-date) [ERROR] Please upgrade to Powershell v5 or above manually by running sudo apt-get upgrade powershell" -ForegroundColor Red
+                Exit
+            } #endif not Linux
+        }#endif PoSH version
+
+    #region module sbourdeaud is used for facilitating Prism REST calls
+        if (!(Get-Module -Name sbourdeaud)) 
+        {#module is not loaded
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing module 'sbourdeaud'..."
+            try
+            {#try loading the module
+                Import-Module -Name sbourdeaud -ErrorAction Stop
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
+            }
+            catch 
+            {#we couldn't import the module, so let's install it
+                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Installing module 'sbourdeaud' from the Powershell Gallery..."
+                try 
+                {#install
+                    Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+                }
+                catch 
+                {#couldn't install
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not install module 'sbourdeaud': $($_.Exception.Message)"
                     Exit
-                }#endif choco install
-            }#endif not choco
-        } else {
-            Write-Host "$(get-date) [ERROR] Please upgrade to Powershell v5 or above manually by running sudo apt-get upgrade powershell" -ForegroundColor Red
-            Exit
-        } #endif not Linux
-    }#endif PoSH version
+                }
 
-#region module sbourdeaud is used for facilitating Prism REST calls
-if (!(Get-Module -Name sbourdeaud)) 
-{#module is not loaded
-    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Importing module 'sbourdeaud'..."
-    try
-    {#try loading the module
-        Import-Module -Name sbourdeaud -ErrorAction Stop
-        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-    }
-    catch 
-    {#we couldn't import the module, so let's install it
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Installing module 'sbourdeaud' from the Powershell Gallery..."
-        try 
-        {#install
-            Install-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+                try
+                {#import
+                    Import-Module -Name sbourdeaud -ErrorAction Stop
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
+                }
+                catch 
+                {#we couldn't import the module
+                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)"
+                    Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1"
+                    Exit
+                }
+            }
+        }#endif module sbourdeaud
+        if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 2)) 
+        {
+            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating module 'sbourdeaud'..."
+            try 
+            {#update the module
+                Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+            }
+            catch 
+            {#couldn't update
+                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
+                Exit
+            }
         }
-        catch 
-        {#couldn't install
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not install module 'sbourdeaud': $($_.Exception.Message)"
-            Exit
-        }
+    #endregion
 
-        try
-        {#import
-            Import-Module -Name sbourdeaud -ErrorAction Stop
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Imported module 'sbourdeaud'!"
-        }
-        catch 
-        {#we couldn't import the module
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)"
-            Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1"
-            Exit
-        }
-    }
-}#endif module sbourdeaud
-if (((Get-Module -Name sbourdeaud).Version.Major -le 2) -and ((Get-Module -Name sbourdeaud).Version.Minor -le 2)) 
-{
-    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Updating module 'sbourdeaud'..."
-    try 
-    {#update the module
-        Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-    }
-    catch 
-    {#couldn't update
-        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
-        Exit
+    #region module BetterTls
+        $result = Set-PoshTls
+    #endregion
+
+
+    #let's get ready to use the Nutanix REST API
+    #Accept self signed certs
+    if (!$IsLinux) {
+    add-type @"
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+public class TrustAllCertsPolicy : ICertificatePolicy {
+    public bool CheckValidationResult(
+        ServicePoint srvPoint, X509Certificate certificate,
+        WebRequest request, int certificateProblem) {
+        return true;
     }
 }
-#endregion
-
-#region module BetterTls
-$result = Set-PoshTls
-#endregion
-
-
-#let's get ready to use the Nutanix REST API
-#Accept self signed certs
-if (!$IsLinux) {
-add-type @"
-    using System.Net;
-    using System.Security.Cryptography.X509Certificates;
-    public class TrustAllCertsPolicy : ICertificatePolicy {
-        public bool CheckValidationResult(
-            ServicePoint srvPoint, X509Certificate certificate,
-            WebRequest request, int certificateProblem) {
-            return true;
-        }
-    }
 "@
-[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-}#endif not Linux
-
-
+    [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+    }#endif not Linux
 
 #endregion
 
 #region variables
-#initialize variables
 	#misc variables
 	$ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
 
@@ -266,20 +257,11 @@ add-type @"
 #endregion
 
 #region parameters validation
-	############################################################################
-	# command line arguments initialization
-	############################################################################	
-    
-    
-
-    
+	  
 #endregion
 
 #region processing	
-	################################
-	##  Main execution here       ##
-	################################
-   
+	
     #region GET
     if (!$pd)
     {
@@ -318,7 +300,7 @@ add-type @"
             }#endforeach $orphanedVm
             
             if ($orphanedList) {
-                Write-Host "$(get-date) [INFO] Removing oprhaned VM entries from protection domain $pdEntry..." -ForegroundColor Green
+                Write-Host "$(get-date) [INFO] Removing orphaned VM entries from protection domain $pdEntry..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pdEntry)/unprotect_vms"
                 $method = "POST"
                 $body = (ConvertTo-Json $orphanedList)
