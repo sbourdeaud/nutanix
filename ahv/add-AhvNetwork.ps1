@@ -5,10 +5,6 @@
   Given a Nutanix cluster, a network name, a vlan ID, a description and a virtual switch, add or remove the AHV network using Prism Element REST API.
 .PARAMETER prism
   IP address or FQDN of Prism Element.
-.PARAMETER username
-  Prism Central username.
-.PARAMETER password
-  Prism Central username password.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER network
@@ -43,7 +39,7 @@ Adds the network mynetwork with vlan id 100 to the AHV br1 virtual switch on clu
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: January 14th 2021
+  Revision: February 6th 2021
 #>
 
 #region Parameters
@@ -55,8 +51,6 @@ Adds the network mynetwork with vlan id 100 to the AHV br1 virtual switch on clu
       [parameter(mandatory = $false)] [switch]$log,
       [parameter(mandatory = $false)] [switch]$debugme,
       [parameter(mandatory = $false)] [string]$prism,
-      [parameter(mandatory = $false)] [string]$username,
-      [parameter(mandatory = $false)] [string]$password,
       [parameter(mandatory = $false)] $prismCreds,
       [parameter(mandatory = $false)] [string]$network,
       [parameter(mandatory = $false)] [Int32]$vlanid,
@@ -80,6 +74,7 @@ Date       By   Updates (newest updates at the top)
                 future maintenance.
 01/14/2021 sb   Added ability to specify -network as a csv file to enable
                 mass creation.
+02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
   $myvarScriptName = ".\add-AhvNetwork.ps1"
@@ -169,21 +164,7 @@ Date       By   Updates (newest updates at the top)
 
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-      if (!$username) 
-      {#if Prism username has not been specified ask for it
-          $username = Read-Host "Enter the Prism username"
-      } 
-
-      if (!$password) 
-      {#if password was not passed as an argument, let's prompt for it
-          $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-      }
-      else 
-      {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-          $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-          Remove-Variable password
-      }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+      $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
   } 
   else 
   { #we are using custom credentials, so let's grab the username and password from that
@@ -195,8 +176,7 @@ Date       By   Updates (newest updates at the top)
       }
       catch 
       {
-          $credname = Read-Host "Enter the credentials name"
-          Set-CustomCredentials -credname $credname
+          Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
           $username = $prismCredentials.UserName
           $PrismSecurePassword = $prismCredentials.Password
@@ -355,24 +335,22 @@ Date       By   Updates (newest updates at the top)
 #endregion processing
 
 #region cleanup	
-#let's figure out how much time this all took
-Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+  #let's figure out how much time this all took
+  Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
-#cleanup after ourselves and delete all custom variables
-Remove-Variable myvar* -ErrorAction SilentlyContinue
-Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
-Remove-Variable help -ErrorAction SilentlyContinue
-Remove-Variable history -ErrorAction SilentlyContinue
-Remove-Variable log -ErrorAction SilentlyContinue
-Remove-Variable username -ErrorAction SilentlyContinue
-Remove-Variable password -ErrorAction SilentlyContinue
-Remove-Variable prism -ErrorAction SilentlyContinue
-Remove-Variable debugme -ErrorAction SilentlyContinue
-Remove-Variable network_uuid -ErrorAction SilentlyContinue
-Remove-Variable network -ErrorAction SilentlyContinue
-Remove-Variable vswitch -ErrorAction SilentlyContinue
-Remove-Variable vlanid -ErrorAction SilentlyContinue
-Remove-Variable description -ErrorAction SilentlyContinue
-Remove-Variable prismCreds -ErrorAction SilentlyContinue
-Remove-Variable prismCredentials -ErrorAction SilentlyContinue
+  #cleanup after ourselves and delete all custom variables
+  Remove-Variable myvar* -ErrorAction SilentlyContinue
+  Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+  Remove-Variable help -ErrorAction SilentlyContinue
+  Remove-Variable history -ErrorAction SilentlyContinue
+  Remove-Variable log -ErrorAction SilentlyContinue
+  Remove-Variable prism -ErrorAction SilentlyContinue
+  Remove-Variable debugme -ErrorAction SilentlyContinue
+  Remove-Variable network_uuid -ErrorAction SilentlyContinue
+  Remove-Variable network -ErrorAction SilentlyContinue
+  Remove-Variable vswitch -ErrorAction SilentlyContinue
+  Remove-Variable vlanid -ErrorAction SilentlyContinue
+  Remove-Variable description -ErrorAction SilentlyContinue
+  Remove-Variable prismCreds -ErrorAction SilentlyContinue
+  Remove-Variable prismCredentials -ErrorAction SilentlyContinue
 #endregion

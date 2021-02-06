@@ -1,2 +1,3 @@
 *.csv
 set-EsxPortGroup.ps1
+.vscode

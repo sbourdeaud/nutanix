@@ -13,10 +13,6 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
   Nutanix cluster fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER sourcevm
   Name of the source virtual machine as displayed in Prism.
 .PARAMETER targetvm
@@ -24,193 +20,190 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
- .\clone-ntnxVg.ps1 -cluster ntnxc1.local -username admin -password admin -sourcevm sqlprod1 -targetvm sqldev1
+ .\clone-ntnxVg.ps1 -cluster ntnxc1.local -sourcevm sqlprod1 -targetvm sqldev1
 Display a list of volume groups to clone from sqlprod1 to sqldev1 and proceed with the clone operation.
 .LINK
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 3rd 2020
+  Revision: February 6th 2021
 #>
 
 #region parameters
-Param
-(
-    #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
-    [parameter(mandatory = $false)] [switch]$help,
-    [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$log,
-    [parameter(mandatory = $false)] [switch]$debugme,
-    [parameter(mandatory = $true)] [string]$cluster,
-	[parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $true)] [string]$sourcevm,
-	[parameter(mandatory = $true)] [string]$targetvm,
-	[parameter(mandatory = $false)] [string]$prismCreds
-)
+    Param
+    (
+        #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
+        [parameter(mandatory = $false)] [switch]$help,
+        [parameter(mandatory = $false)] [switch]$history,
+        [parameter(mandatory = $false)] [switch]$log,
+        [parameter(mandatory = $false)] [switch]$debugme,
+        [parameter(mandatory = $true)] [string]$cluster,
+        [parameter(mandatory = $true)] [string]$sourcevm,
+        [parameter(mandatory = $true)] [string]$targetvm,
+        [parameter(mandatory = $false)] [string]$prismCreds
+    )
 #endregion
 
 #region functions
-Function Write-LogOutput
-{
-<#
-.SYNOPSIS
-Outputs color coded messages to the screen and/or log file based on the category.
-
-.DESCRIPTION
-This function is used to produce screen and log output which is categorized, time stamped and color coded.
-
-.PARAMETER Category
-This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-
-.PARAMETER Message
-This is the actual message you want to display.
-
-.PARAMETER LogFile
-If you want to log output to a file as well, use logfile to pass the log file full path name.
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-Displays an error message.
-
-.LINK
-https://github.com/sbourdeaud
-#>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-	param
-	(
-		[Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS')]
-        [string]
-        $Category,
-
-        [string]
-		$Message,
-
-        [string]
-        $LogFile
-	)
-
-    process
+    Function Write-LogOutput
     {
-        $Date = get-date #getting the date so we can timestamp the output entry
-	    $FgColor = "Gray" #resetting the foreground/text color
-	    switch ($Category) #we'll change the text color depending on the selected category
-	    {
-		    "INFO" {$FgColor = "Green"}
-		    "WARNING" {$FgColor = "Yellow"}
-		    "ERROR" {$FgColor = "Red"}
-            "SUM" {$FgColor = "Magenta"}
-            "SUCCESS" {$FgColor = "Cyan"}
-	    }
+    <#
+    .SYNOPSIS
+    Outputs color coded messages to the screen and/or log file based on the category.
 
-	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
+    .DESCRIPTION
+    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+
+    .PARAMETER Category
+    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+
+    .PARAMETER Message
+    This is the actual message you want to display.
+
+    .PARAMETER LogFile
+    If you want to log output to a file as well, use logfile to pass the log file full path name.
+
+    .NOTES
+    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+    .EXAMPLE
+    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
+    Displays an error message.
+
+    .LINK
+    https://github.com/sbourdeaud
+    #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param
+        (
+            [Parameter(Mandatory)]
+            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS')]
+            [string]
+            $Category,
+
+            [string]
+            $Message,
+
+            [string]
+            $LogFile
+        )
+
+        process
         {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-        }
-    }
+            $Date = get-date #getting the date so we can timestamp the output entry
+            $FgColor = "Gray" #resetting the foreground/text color
+            switch ($Category) #we'll change the text color depending on the selected category
+            {
+                "INFO" {$FgColor = "Green"}
+                "WARNING" {$FgColor = "Yellow"}
+                "ERROR" {$FgColor = "Red"}
+                "SUM" {$FgColor = "Magenta"}
+                "SUCCESS" {$FgColor = "Cyan"}
+            }
 
-}#end function Write-LogOutput
+            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+            if ($LogFile) #add the entry to the log file if -LogFile has been specified
+            {
+                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+            }
+        }
+
+    }#end function Write-LogOutput
 #endregion
 
 #region prepwork
-# get rid of annoying error messages
-if (!$debugme) 
-{
-    $ErrorActionPreference = "SilentlyContinue"
-}
-if ($debugme) 
-{
-    $VerbosePreference = "Continue"
-}
+    # get rid of annoying error messages
+    if (!$debugme) 
+    {
+        $ErrorActionPreference = "SilentlyContinue"
+    }
+    if ($debugme) 
+    {
+        $VerbosePreference = "Continue"
+    }
 
-#check if we need to display help and/or history
-$HistoryText = @'
+    #check if we need to display help and/or history
+    $HistoryText = @'
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  06/19/2015 sb   Initial release.
  04/03/2020 sb   Do over with sbourdeaud module.
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
-$myvarScriptName = ".\clone-ntnxVg.ps1"
- 
-if ($help) 
-{
-    get-help $myvarScriptName
-    exit
-}
-if ($History) 
-{
-    $HistoryText
-    exit
-}
+    $myvarScriptName = ".\clone-ntnxVg.ps1"
+    
+    if ($help) 
+    {
+        get-help $myvarScriptName
+        exit
+    }
+    if ($History) 
+    {
+        $HistoryText
+        exit
+    }
 
-#check PoSH version
-if ($PSVersionTable.PSVersion.Major -lt 5) 
-{
-    throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"
-}
+    #check PoSH version
+    if ($PSVersionTable.PSVersion.Major -lt 5) 
+    {
+        throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"
+    }
 
-#check if we have all the required PoSH modules
-Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
+    #check if we have all the required PoSH modules
+    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
 
-#region module sbourdeaud is used for facilitating Prism REST calls
-$required_version = "3.0.8"
-if (!(Get-Module -Name sbourdeaud)) {
-  Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-  try
-  {
-      Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-      Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-  }#end try
-  catch #we couldn't import the module, so let's install it
-  {
-      Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-      try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-      catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
+    #region module sbourdeaud is used for facilitating Prism REST calls
+        $required_version = "3.0.8"
+        if (!(Get-Module -Name sbourdeaud)) {
+        Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
+        try
+        {
+            Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+            Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+        }#end try
+        catch #we couldn't import the module, so let's install it
+        {
+            Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
+            try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
+            catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
 
-      try
-      {
-          Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-          Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-      }#end try
-      catch #we couldn't import the module
-      {
-          Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-          Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-          Exit
-      }#end catch
-  }#end catch
-}#endif module sbourdeaud
-$MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-  Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-  Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-  Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-  try {
-    Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-    Import-Module -Name sbourdeaud -ErrorAction Stop
-  }
-  catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-}
-#endregion
-Set-PoSHSSLCerts
-Set-PoshTls
+            try
+            {
+                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+            }#end try
+            catch #we couldn't import the module
+            {
+                Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
+                Exit
+            }#end catch
+        }#end catch
+        }#endif module sbourdeaud
+        $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
+        if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
+        Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+        Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+        Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+        try {
+            Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+            Import-Module -Name sbourdeaud -ErrorAction Stop
+        }
+        catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+        }
+    #endregion
+    Set-PoSHSSLCerts
+    Set-PoshTls
 
 #endregion
 
 #region variables
-#initialize variables
 	#misc variables
 	$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-
 #endregion
 
 #region parameters validation	
@@ -221,41 +214,26 @@ Set-PoshTls
         exit
 	}
 	if (!$prismCreds) 
-	{#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-		if (!$username) 
-		{#if Prism username has not been specified ask for it
-			$username = Read-Host "Enter the Prism username"
-		} 
-
-		if (!$password) 
-		{#if password was not passed as an argument, let's prompt for it
-			$PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-		}
-		else 
-		{#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-			$PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-			Remove-Variable password
-		}
-		$prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-	} 
-	else 
-	{ #we are using custom credentials, so let's grab the username and password from that
-		try 
-		{
-			$prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-			$username = $prismCredentials.UserName
-			$PrismSecurePassword = $prismCredentials.Password
-		}
-		catch 
-		{
-			$credname = Read-Host "Enter the credentials name"
-			Set-CustomCredentials -credname $credname
-			$prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-			$username = $prismCredentials.UserName
-			$PrismSecurePassword = $prismCredentials.Password
-		}
-		$prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-	}
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+    } 
+    else 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        catch 
+        {
+            Set-CustomCredentials -credname $prismCreds
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    }
 #endregion
 
 #region processing	
@@ -423,7 +401,5 @@ Set-PoshTls
     Remove-Variable history -ErrorAction SilentlyContinue
 	Remove-Variable log -ErrorAction SilentlyContinue
 	Remove-Variable cluster -ErrorAction SilentlyContinue
-	Remove-Variable username -ErrorAction SilentlyContinue
-	Remove-Variable password -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion

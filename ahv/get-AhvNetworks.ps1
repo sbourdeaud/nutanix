@@ -13,14 +13,10 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prismcentral
   Nutanix Prism Central fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
 .EXAMPLE
-.\get-AhvNetworks.ps1 -cluster ntnxc1.local -username admin -password admin
+.\get-AhvNetworks.ps1 -cluster ntnxc1.local
 Connect to a Nutanix Prism Central of your choice and retrieve the list of networks.
 .LINK
   http://github.com/sbourdeaud/nutanix
@@ -30,18 +26,16 @@ Connect to a Nutanix Prism Central of your choice and retrieve the list of netwo
 #>
 
 #region parameters
-Param
-(
-    #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
-    [parameter(mandatory = $false)] [switch]$help,
-    [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$log,
-    [parameter(mandatory = $false)] [switch]$debugme,
-    [parameter(mandatory = $true)] [string]$prismcentral,
-    [parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
-    [parameter(mandatory = $false)] $prismCreds
-)
+  Param
+  (
+      #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
+      [parameter(mandatory = $false)] [switch]$help,
+      [parameter(mandatory = $false)] [switch]$history,
+      [parameter(mandatory = $false)] [switch]$log,
+      [parameter(mandatory = $false)] [switch]$debugme,
+      [parameter(mandatory = $true)] [string]$prismcentral,
+      [parameter(mandatory = $false)] $prismCreds
+  )
 #endregion
 
 #region prepwork
@@ -50,6 +44,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 11/13/2020 sb   Initial release.
+02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
   $myvarScriptName = ".\get-AhvNetworks.ps1"
@@ -136,29 +131,15 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region variables
-$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
-$length=100 #this specifies how many entities we want in the results of each API query
-$api_server_port = "9440"
+  $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
+  $length=100 #this specifies how many entities we want in the results of each API query
+  $api_server_port = "9440"
 #endregion
 
 #region parameters validation
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-      if (!$username) 
-      {#if Prism username has not been specified ask for it
-          $username = Read-Host "Enter the Prism username"
-      } 
-
-      if (!$password) 
-      {#if password was not passed as an argument, let's prompt for it
-          $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-      }
-      else 
-      {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-          $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-          Remove-Variable password
-      }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+      $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
   } 
   else 
   { #we are using custom credentials, so let's grab the username and password from that
@@ -170,8 +151,7 @@ $api_server_port = "9440"
       }
       catch 
       {
-          $credname = Read-Host "Enter the credentials name"
-          Set-CustomCredentials -credname $credname
+          Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
           $username = $prismCredentials.UserName
           $PrismSecurePassword = $prismCredentials.Password
@@ -403,8 +383,6 @@ $api_server_port = "9440"
   Remove-Variable help -ErrorAction SilentlyContinue
   Remove-Variable history -ErrorAction SilentlyContinue
   Remove-Variable log -ErrorAction SilentlyContinue
-  Remove-Variable username -ErrorAction SilentlyContinue
-  Remove-Variable password -ErrorAction SilentlyContinue
   Remove-Variable cluster -ErrorAction SilentlyContinue
   Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion

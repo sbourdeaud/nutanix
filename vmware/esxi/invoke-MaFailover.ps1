@@ -21,10 +21,6 @@
   ***WARNING*** Specifies that if any remaining user virtual machines are found on a vmhost, they should be powered off. Those would be VMs which were not protected by a metro protection domain or were running on the wrong hosts. Be careful with this parameter!
 .PARAMETER reEnableOnly
   Try to enable specified active but disabled metro protection domains. Do nothing else.
-.PARAMETER username
-  Username used to connect to the Nutanix clusters.
-.PARAMETER password
-  Password used to connect to the Nutanix clusters.
 .PARAMETER prismCreds
   Specifies a custom credentials file name for Prism authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file and do not use username or password, the script will prompt you for this information.
@@ -35,13 +31,13 @@
   Specifies a custom credentials file name for CVM ssh authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$cvmCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file, the script will prompt you for this information.
 .EXAMPLE
-.\invoke-MAFailover.ps1 -cluster c1.local -username admin -password nutanix/4u -pd all -action maintenance
+.\invoke-MAFailover.ps1 -cluster c1.local -pd all -action maintenance
 Trigger a manual failover of all metro protection domains and put esxi hosts in maintenance mode:
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: November 6th 2020
+  Revision: February 6th 2021
 #>
 
 #region parameters
@@ -53,8 +49,6 @@ Param
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$cluster,
     [parameter(mandatory = $false)] [string]$pd,
-    [parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $prismCreds,
     [parameter(mandatory = $false)] $vcenterCreds,
     [parameter(mandatory = $false)] $cvmCreds,
@@ -507,6 +501,7 @@ Function Set-NtnxVmhostsToMaintenanceMode
  ---------- ---- ---------------------------------------------------------------
  11/03/2020 sb   Initial release.
  11/06/2020 sb   Added -reEnableOnly switch.
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -661,21 +656,7 @@ public class ServerCertificateValidationCallback
 
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        if (!$username) 
-        {#if Prism username has not been specified ask for it
-            $username = Read-Host "Enter the Prism username"
-        } 
-
-        if (!$password) 
-        {#if password was not passed as an argument, let's prompt for it
-            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-        }
-        else 
-        {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-            Remove-Variable password
-        }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -696,7 +677,7 @@ public class ServerCertificateValidationCallback
     }
 
     if ($vcenterCreds) 
-    {
+    {#vcenterCreds was specified
         try 
         {
             $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
@@ -712,6 +693,10 @@ public class ServerCertificateValidationCallback
         }
         $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
     }
+	else 
+	{#no vcenter creds were given
+		$vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
+	}
 
     if ($action -and !$cvmCreds) 
     {
@@ -975,30 +960,16 @@ public class ServerCertificateValidationCallback
             if (!$reEnableOnly)
             {
                 Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
-                if ($vcenterCreds) 
+                try 
                 {
-                    try 
-                    {
-                        $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
-                    }
-                    catch 
-                    {
-                        throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-                    }
-                    Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
-                } 
-                else 
-                {
-                    try 
-                    {
-                        $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -ErrorAction Stop
-                    }
-                    catch 
-                    {
-                        throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-                    }
-                    Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                    $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
                 }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                }
+                Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                
                 if ($action) 
                 {#figure out the vCenter and CVM VM names
                     try 

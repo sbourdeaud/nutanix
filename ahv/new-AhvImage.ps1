@@ -13,10 +13,6 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
   Nutanix cluster fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER vm
@@ -28,13 +24,13 @@
 .PARAMETER device
   Name of the device (exp: scsi.1) you want to import in the library.  By default, scsi.0 will get imported in the library.
 .EXAMPLE
-.\new-AhvImage.ps1 -cluster ntnxc1.local -username admin -password admin -vm myvm -image _template-windows2016
+.\new-AhvImage.ps1 -cluster ntnxc1.local -vm myvm -image _template-windows2016
 Create a new image called _template-windows2016 in the image library of AHV cluster ntnxc1.local based on the first scsi disk of VM myvm.
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 28th 2020
+  Revision: February 6th 2021
 #>
 
 #region parameters
@@ -46,8 +42,6 @@ Create a new image called _template-windows2016 in the image library of AHV clus
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true,HelpMessage = "Enter the Nutanix AHV cluster name or address")] [string]$cluster,
-        [parameter(mandatory = $false)] [string]$username,
-        [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $true,HelpMessage = "Enter the name of the VM to base the image on")] [string]$vm,
         [parameter(mandatory = $true,HelpMessage = "Enter the name you want to give to the new image")] [string]$image,
@@ -128,14 +122,14 @@ Create a new image called _template-windows2016 in the image library of AHV clus
 #endregion
 
 #region prepwork
-
-#check if we need to display help and/or history
-$HistoryText = @'
+    #check if we need to display help and/or history
+    $HistoryText = @'
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
  06/11/2018 sb   Initial release.
  04/06/2020 sb   Do over with sbourdeaud module
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
     $myvarScriptName = ".\new-AhvImage.ps1"
@@ -147,44 +141,45 @@ $HistoryText = @'
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
     #region module sbourdeaud is used for facilitating Prism REST calls
-    $required_version = "3.0.8"
-    if (!(Get-Module -Name sbourdeaud)) {
-    Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-    try
-    {
-        Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-        Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-    }#end try
-    catch #we couldn't import the module, so let's install it
-    {
-        Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-        try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-        catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
-
+        $required_version = "3.0.8"
+        if (!(Get-Module -Name sbourdeaud)) 
+        {
+        Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
         try
         {
             Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
             Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
         }#end try
-        catch #we couldn't import the module
+        catch #we couldn't import the module, so let's install it
         {
-            Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-            Exit
+            Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
+            try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
+            catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
+
+            try
+            {
+                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
+            }#end try
+            catch #we couldn't import the module
+            {
+                Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
+                Exit
+            }#end catch
         }#end catch
-    }#end catch
-    }#endif module sbourdeaud
-    $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-    if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-    Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-    Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-    Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-    try {
-        Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-        Import-Module -Name sbourdeaud -ErrorAction Stop
-    }
-    catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-    }
+        }#endif module sbourdeaud
+        $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
+        if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
+        Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
+        Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+        Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+        try {
+            Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
+            Import-Module -Name sbourdeaud -ErrorAction Stop
+        }
+        catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+        }
     #endregion
     Set-PoSHSSLCerts
     Set-PoshTls
@@ -192,52 +187,35 @@ $HistoryText = @'
 #endregion
 
 #region variables
-
 	$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-
 #endregion
 
 #region parameters validation
-if (!$prismCreds) 
-{#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-    if (!$username) 
-    {#if Prism username has not been specified ask for it
-        $username = Read-Host "Enter the Prism username"
+    if (!$prismCreds) 
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
-
-    if (!$password) 
-    {#if password was not passed as an argument, let's prompt for it
-        $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-    }
     else 
-    {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-        $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-        Remove-Variable password
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        catch 
+        {
+            Set-CustomCredentials -credname $prismCreds
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-} 
-else 
-{ #we are using custom credentials, so let's grab the username and password from that
-    try 
-    {
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-    }
-    catch 
-    {
-        $credname = Read-Host "Enter the credentials name"
-        Set-CustomCredentials -credname $credname
-        $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-    }
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-}
 
-if (!$device) {
-    $device = "scsi.0"
-}
+    if (!$device) {
+        $device = "scsi.0"
+    }
 #endregion
 
 #region processing	
@@ -411,7 +389,5 @@ if (!$device) {
     Remove-Variable history -ErrorAction SilentlyContinue
 	Remove-Variable log -ErrorAction SilentlyContinue
 	Remove-Variable cluster -ErrorAction SilentlyContinue
-	Remove-Variable username -ErrorAction SilentlyContinue
-	Remove-Variable password -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
