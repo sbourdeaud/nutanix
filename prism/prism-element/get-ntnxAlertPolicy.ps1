@@ -19,14 +19,16 @@
   Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
+.PARAMETER prismCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
-  PS> .\get-ntnxAlertPolicy.ps1 -prism 10.10.10.1 -username admin -password nutanix/4u -csv c:\temp\production-cluster-report.csv
+.\get-ntnxAlertPolicy.ps1 -prism 10.10.10.1 -csv c:\temp\production-cluster-report.csv
 .LINK
   http://www.nutanix.com/services
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 17th 2020
+  Revision: February 6th 2021
 #>
 
 #region Parameters
@@ -38,8 +40,6 @@
       [parameter(mandatory = $false)] [switch]$log,
       [parameter(mandatory = $false)] [switch]$debugme,
       [parameter(mandatory = $false)] [string]$prism,
-      [parameter(mandatory = $false)] [string]$username,
-      [parameter(mandatory = $false)] [string]$password,
       [parameter(mandatory = $false)] $prismCreds,
       [parameter(mandatory = $false)] [string]$csv
   )
@@ -58,6 +58,7 @@
  04/04/2017 sb   Initial release.
  12/19/2019 sb   Updated code to use REST API instead of cmdlets.
  04/17/2020 sb   Do over to use sbourdeaud module.
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
   $myvarScriptName = ".\get-ntnxAlertPolicy.ps1"
@@ -119,29 +120,12 @@
   [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
   $api_server = $prism
   $api_server_port = "9440"
-
-  ############################################################################
-  # command line arguments initialization
-  ############################################################################	
+	
   #let's initialize parameters if they haven't been specified
   if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism"}
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-      if (!$username) 
-      {#if Prism username has not been specified ask for it
-          $username = Read-Host "Enter the Prism username"
-      } 
-
-      if (!$password) 
-      {#if password was not passed as an argument, let's prompt for it
-          $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-      }
-      else 
-      {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-          $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-          Remove-Variable password
-      }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+      $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
   } 
   else 
   { #we are using custom credentials, so let's grab the username and password from that
@@ -153,8 +137,7 @@
       }
       catch 
       {
-          $credname = Read-Host "Enter the credentials name"
-          Set-CustomCredentials -credname $credname
+          Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
           $username = $prismCredentials.UserName
           $PrismSecurePassword = $prismCredentials.Password
@@ -238,8 +221,6 @@
   Remove-Variable help -ErrorAction SilentlyContinue
   Remove-Variable history -ErrorAction SilentlyContinue
   Remove-Variable log -ErrorAction SilentlyContinue
-  Remove-Variable username -ErrorAction SilentlyContinue
-  Remove-Variable password -ErrorAction SilentlyContinue
   Remove-Variable prism -ErrorAction SilentlyContinue
   Remove-Variable debugme -ErrorAction SilentlyContinue
   Remove-Variable export -ErrorAction SilentlyContinue

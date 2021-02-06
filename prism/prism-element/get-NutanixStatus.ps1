@@ -13,23 +13,19 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
   Nutanix cluster fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER email
   If used, this will send an email to the recipients specified in the script (you will need to customize that section by editing the script).
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
-.\get-NutanixStatus.ps1 -cluster ntnxc1.local,ntnxc2.local -username admin -password admin
+.\get-NutanixStatus.ps1 -cluster ntnxc1.local,ntnxc2.local
 Retrieve status for a list of Nutanix clusters.
 
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 21st 2020
+  Revision: February 6th 2021
 #>
 
 #region parameters
@@ -41,8 +37,6 @@ Retrieve status for a list of Nutanix clusters.
 		[parameter(mandatory = $false)] [switch]$log,
 		[parameter(mandatory = $false)] [switch]$debugme,
 		[parameter(mandatory = $false)] [string]$cluster,
-		[parameter(mandatory = $false)] [string]$username,
-		[parameter(mandatory = $false)] [string]$password,
 		[parameter(mandatory = $false)] [string]$prismCreds,
 		[parameter(mandatory = $false)] [switch]$email
 	)
@@ -112,6 +106,7 @@ Retrieve status for a list of Nutanix clusters.
  03/14/2016 sb   Initial release.
  03/22/2016 sb   Added the email parameter.
  04/21/2020 sb	 Do over with sbourdeaud module.
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
 	$myvarScriptName = ".\get-NutanixStatus.ps1"
@@ -187,41 +182,26 @@ Retrieve status for a list of Nutanix clusters.
 	$myvarClusters = $cluster.Split(",") #make sure we parse the argument in case it contains several entries
 	
 	if (!$prismCreds) 
-	{#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-		if (!$username) 
-		{#if Prism username has not been specified ask for it
-			$username = Read-Host "Enter the Prism username"
-		} 
-
-		if (!$password) 
-		{#if password was not passed as an argument, let's prompt for it
-			$PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-		}
-		else 
-		{#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-			$PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-			Remove-Variable password
-		}
-		$prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-	} 
-	else 
-	{ #we are using custom credentials, so let's grab the username and password from that
-		try 
-		{
-			$prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-			$username = $prismCredentials.UserName
-			$PrismSecurePassword = $prismCredentials.Password
-		}
-		catch 
-		{
-			$credname = Read-Host "Enter the credentials name"
-			Set-CustomCredentials -credname $credname
-			$prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-			$username = $prismCredentials.UserName
-			$PrismSecurePassword = $prismCredentials.Password
-		}
-		$prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-	}
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+    } 
+    else 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        catch 
+        {
+            Set-CustomCredentials -credname $prismCreds
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    }
 	
 	[System.Collections.ArrayList]$myvarClusterReport = New-Object System.Collections.ArrayList($null) #used for storing all entries.
 	[System.Collections.ArrayList]$myvarContainerReport = New-Object System.Collections.ArrayList($null) #used for storing all entries.
@@ -323,14 +303,12 @@ Retrieve status for a list of Nutanix clusters.
 	OutputLogData -category "SUM" -message "total processing time: $($myvarElapsedTime.Elapsed.ToString())"
 	
 	#cleanup after ourselves and delete all custom variables
-	Remove-Variable myvar*
-	Remove-Variable help
-    Remove-Variable history
-	Remove-Variable log
-	Remove-Variable cluster
-	Remove-Variable username
-	Remove-Variable password
-    Remove-Variable debugme
-	Remove-Variable email
+	Remove-Variable myvar* -ErrorAction SilentlyContinue
+	Remove-Variable help -ErrorAction SilentlyContinue
+    Remove-Variable history -ErrorAction SilentlyContinue
+	Remove-Variable log -ErrorAction SilentlyContinue
+	Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable debugme -ErrorAction SilentlyContinue
+	Remove-Variable email -ErrorAction SilentlyContinue
 	
 #endregion

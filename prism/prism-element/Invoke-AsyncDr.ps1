@@ -24,10 +24,6 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
   Nutanix cluster fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER migrate
   Specifies you want to trigger a planned failover workflow.  See the script description for more information.
 .PARAMETER activate
@@ -49,13 +45,13 @@ Trigger a planned failover workflow for the specified protection domain. Use the
 .\Invoke-AsyncDr.ps1 -cluster <ip> -activate -username admin -password <secret>
 Trigger an uplanned failover for all protection domains.
 .EXAMPLE
-.\Invoke-AsyncDr.ps1 -cluster <ip> -deactivate -username admin -password <secret> -pd <protection domain name>
+.\Invoke-AsyncDr.ps1 -cluster <ip> -deactivate -pd <protection domain name>
 Disable the specified protection domain and delete VMs.
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 9th 2020
+  Revision: February 6th 2021
   Version: 0.2
 #>
 
@@ -70,8 +66,6 @@ Param
     [parameter(mandatory = $false)] [switch]$activate,
     [parameter(mandatory = $false)] [switch]$deactivate,
     [parameter(mandatory = $true)] [string]$cluster,
-	[parameter(mandatory = $false)] [string]$username,
-	[parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] $pd, #don't specify type as this is sometimes a string, sometimes an array in the script
     [parameter(mandatory = $false)] $prismCreds, #don't specify type as this is sometimes a string, sometimes secure credentials
     [parameter(mandatory = $false)] [switch]$powerOnVms,
@@ -989,6 +983,7 @@ $HistoryText = @'
  ---------- ---- ---------------------------------------------------------------
  10/08/2018 sb   Initial release.
  06/09/2020 sb   Do over with new sbourdeaud module
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-AsyncDr.ps1"
@@ -1025,21 +1020,7 @@ $HistoryText = @'
 
         if (!$prismCreds) 
         {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-            if (!$username) 
-            {#if Prism username has not been specified ask for it
-                $username = Read-Host "Enter the Prism username"
-            } 
-
-            if (!$password) 
-            {#if password was not passed as an argument, let's prompt for it
-                $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-            }
-            else 
-            {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-                $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-                Remove-Variable password
-            }
-            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
         } 
         else 
         { #we are using custom credentials, so let's grab the username and password from that
@@ -1051,8 +1032,7 @@ $HistoryText = @'
             }
             catch 
             {
-                $credname = Read-Host "Enter the credentials name"
-                Set-CustomCredentials -credname $credname
+                Set-CustomCredentials -credname $prismCreds
                 $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
                 $username = $prismCredentials.UserName
                 $PrismSecurePassword = $prismCredentials.Password

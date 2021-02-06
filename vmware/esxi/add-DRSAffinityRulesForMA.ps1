@@ -15,10 +15,6 @@
   First Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER ntnx_cluster2
   Second Nutanix cluster fully qualified domain name or IP address.
-.PARAMETER username
-  Username used to connect to the Nutanix clusters.
-.PARAMETER password
-  Password used to connect to the Nutanix clusters.
 .PARAMETER vcenter
   Hostname or IP address of the vCenter Server.
 .PARAMETER noruleupdate
@@ -26,13 +22,13 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
 .EXAMPLE
-.\add-DRSAffinityRulesForMA.ps1 -ntnx_cluster1 ntnxc1.local -ntnx_cluster2 ntnxc2.local -username admin -password nutanix/4u -vcenter vcenter1.local
+.\add-DRSAffinityRulesForMA.ps1 -ntnx_cluster1 ntnxc1.local -ntnx_cluster2 ntnxc2.local -vcenter vcenter1.local
 Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 3rd 2019
+  Revision: February 6th 2021
 #>
 
 #region A - parameters
@@ -45,8 +41,6 @@ Param
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$ntnx_cluster1,
 	[parameter(mandatory = $false)] [string]$ntnx_cluster2,
-    [parameter(mandatory = $false)] [string]$username,
-    [parameter(mandatory = $false)] [string]$password,
     [parameter(mandatory = $false)] [string]$vcenter,
     [parameter(mandatory = $false)] $prismCreds,
     [parameter(mandatory = $false)] [switch]$noruleupdate
@@ -761,6 +755,7 @@ $HistoryText = @'
  10/26/2018 sb   Added additional error control.
  09/03/2019 sb   Added yet additional error control.  Removed dependencies on
                  sbourdeaud and BetterTls modules.
+ 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
 '@
         $myvarScriptName = ".\add-DRSAffinityRulesForMA.ps1"
@@ -901,21 +896,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
     
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        if (!$username) 
-        {#if Prism username has not been specified ask for it
-            $username = Read-Host "Enter the Prism username"
-        } 
-
-        if (!$password) 
-        {#if password was not passed as an argument, let's prompt for it
-            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-        }
-        else 
-        {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-            Remove-Variable password
-        }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -1373,8 +1354,6 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 	Remove-Variable log -ErrorAction SilentlyContinue
 	Remove-Variable ntnx_cluster1 -ErrorAction SilentlyContinue
 	Remove-Variable ntnx_cluster2 -ErrorAction SilentlyContinue
-	Remove-Variable username -ErrorAction SilentlyContinue
-	Remove-Variable password -ErrorAction SilentlyContinue
 	Remove-Variable vcenter -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion

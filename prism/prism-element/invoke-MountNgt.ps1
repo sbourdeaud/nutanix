@@ -13,22 +13,18 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prism
   Fully qualified domain name or IP address of Prism Element.
-.PARAMETER username
-  Username used to connect to the Nutanix cluster.
-.PARAMETER password
-  Password used to connect to the Nutanix cluster.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
 .PARAMETER pd
   Name of the protection domain to use as a reference list of virtual machines.
 .EXAMPLE
-.\invoke-MountNgt.ps1 -prism ntnx1.local -username admin -password nutanix/4u -pd MyProtectionDomain
+.\invoke-MountNgt.ps1 -prism ntnx1.local -pd MyProtectionDomain
 Mount the NGT iso on all VMs which are in the protection domain called "MyProtectionDomain".
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 21st 2020
+  Revision: February 6th 2021
 #>
 
 #region A - parameters
@@ -41,8 +37,6 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $false)] [string]$prism,
         [parameter(mandatory = $false)] [string]$pd,
-        [parameter(mandatory = $false)] [string]$username,
-        [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds
     )
 #endregion
@@ -113,6 +107,7 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
  ---------- ---- ---------------------------------------------------------------
  02/24/2020 sb   Initial release.
  04/21/2020 sb   Do over with sbourdeaud module.
+ 02/06/2021 sb   Replaced username with get-credential
  ###############################################################################
 '@
         $myvarScriptName = ".\invoke-MountNgt.ps1"
@@ -193,21 +188,7 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
     
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        if (!$username) 
-        {#if Prism username has not been specified ask for it
-            $username = Read-Host "Enter the Prism username"
-        } 
-
-        if (!$password) 
-        {#if password was not passed as an argument, let's prompt for it
-            $PrismSecurePassword = Read-Host "Enter the Prism user $username password" -AsSecureString
-        }
-        else 
-        {#if password was passed as an argument, let's convert the string to a secure string and flush the memory
-            $PrismSecurePassword = ConvertTo-SecureString $password –asplaintext –force
-            Remove-Variable password
-        }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -219,8 +200,7 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
         }
         catch 
         {
-            $credname = Read-Host "Enter the credentials name"
-            Set-CustomCredentials -credname $credname
+            Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
             $username = $prismCredentials.UserName
             $PrismSecurePassword = $prismCredentials.Password
@@ -277,7 +257,5 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
 	Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
 	Remove-Variable log -ErrorAction SilentlyContinue
-	Remove-Variable username -ErrorAction SilentlyContinue
-	Remove-Variable password -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
