@@ -231,12 +231,85 @@ Date       By   Updates (newest updates at the top)
     #region retrieve information from Prism
         #* retrieve cluster information
         #region GET cluster
+            Write-Host "$(get-date) [INFO] Retrieving cluster information from Nutanix cluster $($cluster) ..." -ForegroundColor Green
+            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $cluster
+            $method = "GET"
+            $myvar_ntnx_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information from Nutanix cluster $($cluster)" -ForegroundColor Cyan
 
+            $myvar_ntnx_cluster_name = $myvar_ntnx_cluster_info.name
+            Write-Host "$(get-date) [DATA] Nutanix cluster name is $($myvar_ntnx_cluster_name)" -ForegroundColor White
+            $myvar_ntnx_cluster_rf = $myvar_ntnx_cluster_info.cluster_redundancy_state.desired_redundancy_factor
+            Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) replication factor is $($myvar_ntnx_cluster_rf)" -ForegroundColor White
+
+            if (($myvar_ntnx_cluster_info.hypervisor_types).count -gt 1)
+            {#cluster has mixed hypervisors
+                Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) has multiple hypervisors" -ForegroundColor White
+                if ($myvar_ntnx_cluster_info.hypervisor_types -notcontains "kVMware")
+                {#none of the nodes are running VMware
+                    Throw "$(get-date) [ERROR] None of the cluster hosts are running VMware vSphere. Exiting!"    
+                }
+            }
+            else 
+            {#cluster has single hypervisor: let's make sure it is vmware
+                if (($myvar_ntnx_cluster_info.hypervisor_types)[0] -eq "kVMware")
+                {#hypervisor is vSphere
+                    Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])" -ForegroundColor White    
+                }
+                else 
+                {#hypervisor is not vmware
+                    Write-Host "$(get-date) [ERROR] Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])" -ForegroundColor Red
+                    Throw "$(get-date) [ERROR] Hypervisor is not kVMware. Exiting!"    
+                }
+            }
+
+            #region figure out vcenter ip
+                $myvar_management_server = $myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
+                if ($myvar_management_server -is [array]) 
+                {#houston, we have a problem, there is more than one registered vcenter
+                    Throw "$(get-date) [ERROR] There is more than 1 registered management server for cluster $($cluster). Exiting."
+                } 
+                else 
+                {
+                    $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
+                    Write-Host "$(get-date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor White
+                }
+                if (!$myvar_vcenter_ip) {Write-Host "$(get-date) [ERROR] vCenter registration is not done in Prism for cluster $cluster!" -ForegroundColor Red;exit}
+            #endregion
+
+            #let's make sure our current redundancy is at least 2
+            if ($myvar_ntnx_cluster_info.cluster_redundancy_state.current_redundancy_factor -lt $myvar_ntnx_cluster_rf) 
+            {#cluster redundancy state is < replication factor (a host must be down)
+                throw "$(get-date) [ERROR] Current redundancy is less than $($myvar_ntnx_cluster_rf). Exiting."
+            }
+            #check if there is an upgrade in progress
+            if ($myvar_ntnx_cluster_info.is_upgrade_in_progress) 
+            {#cluster has an upgrade in progress
+                throw "$(get-date) [ERROR] Cluster upgrade is in progress. Exiting."
+            }
         #endregion
         
         #* retrieve host information
         #region GET hosts
-
+            Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $cluster
+            $method = "GET"
+            $myvar_ntnx_cluster_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+            
+            #! resume coding effort here
+            $myvar_ntnx_cluster_hosts_ips = ($myvar_ntnx_hosts.entities).hypervisor_address
+            #todo figure out hw configuration
+            <#
+            $myvarHostInfo = [ordered]@{
+                "num_cpu_sockets" = $entity.status.resources.num_cpu_sockets;
+                "num_cpu_cores" = $entity.status.resources.num_cpu_cores;
+                #"num_cpu_total_cores" = ($entity.status.resources.num_cpu_sockets * $entity.status.resources.num_cpu_cores);
+                "cluster_uuid" = $entity.status.cluster_reference.uuid;
+            }
+            #store the results for this entity in our overall result variable
+            $myvarHostResults.Add((New-Object PSObject -Property $myvarHostInfo)) | Out-Null
+            #>
         #endregion
         
         #* retrieve storage containers information
@@ -246,12 +319,50 @@ Date       By   Updates (newest updates at the top)
         
         #* retrieve protection domains information
         #region GET protection_domains
+            Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+            $method = "GET"
+            $myvar_pds = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
 
+            #todo: figure out active ma pds and their containers
+            <#
+            $myvar_ntnx_ma_active_ctrs = ($myvar_ma_active_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
+            $myvar_ntnx_ma_active_pds = $myvar_ma_active_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}
+            #>
         #endregion
         
         #* retrieve remote site information
+        #region retrieve remote site cluster information
             #region GET remote_site
+                <#
+                $remote_site_name = $pd_list.remote_site | select-object -unique
+                if ($remote_site_name -is [array]) 
+                {#houston we have a problem: active metro pds are pointing to more than one remote site!
+                    Throw "$(get-date) [ERROR] Cluster $($cluster) has metro availability protection domains which are pointing to different remote sites. Exiting."
+                } 
+                else 
+                {
+                    Write-Host "$(get-date) [DATA] Remote site name is $($remote_site_name)" -ForegroundColor White
+                }
+                #* query prism for remote sites
+                Write-Host "$(get-date) [INFO] Retrieving remote sites from Nutanix cluster $($cluster) ..." -ForegroundColor Green
+                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/remote_sites/" -f $cluster
+                $method = "GET"
+                try 
+                {
+                    $myvar_remote_sites = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                }
+                catch
+                {
+                    throw "$(get-date) [ERROR] Could not retrieve remote sites from Nutanix cluster $($cluster) : $($_.Exception.Message)"
+                }
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved remote sites from Nutanix cluster $($cluster)" -ForegroundColor Cyan
+                #* grab ip for our remote site
+                $myvar_remote_site_ip = (($myvar_remote_sites.entities | Where-Object {$_.name -eq $remote_site_name}).remote_ip_ports).psobject.properties.name
+                Write-Host "$(get-date) [DATA] Remote site $($remote_site_name) ip address is $($myvar_remote_site_ip)" -ForegroundColor White
 
+                #>
             #endregion
             
             #* retrieve remote cluster information
@@ -268,10 +379,6 @@ Date       By   Updates (newest updates at the top)
             #region GET remote_site containers
 
             #endregion
-        
-            #* figure out vcenter information
-        #region figure out vcenter information
-            
         #endregion
     #endregion
 
@@ -279,6 +386,16 @@ Date       By   Updates (newest updates at the top)
     #region retrieve information from vCenter
         #* connect to vCenter
         #region connect-viserver
+            Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
+            try 
+            {#connecting to vcenter
+                $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
+            }
+            catch 
+            {#could not connect to vcenter
+                throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+            }
+            Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan    
         #endregion
 
         #* figure out ha/drs cluster
