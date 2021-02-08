@@ -15,10 +15,8 @@
   Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
-.PARAMETER vcenterCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
-.\template.ps1 -cluster ntnxc1.local -username admin -password admin
+.\get-UvmCapacity.ps1 -cluster ntnxc1.local
 Connect to a Nutanix cluster of your choice:
 .LINK
   http://www.nutanix.com/services
@@ -36,8 +34,7 @@ Connect to a Nutanix cluster of your choice:
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$cluster,
-        [parameter(mandatory = $false)] [string]$prismCreds,
-        [parameter(mandatory = $false)] [string]$vcenterCreds
+        [parameter(mandatory = $false)] [string]$prismCreds
     )
 #endregion
 
@@ -53,7 +50,7 @@ Date       By   Updates (newest updates at the top)
 02/07/2021 sb   Initial release.
 ################################################################################
 '@
-    $myvarScriptName = ".\get-metroCapacity.ps1"
+    $myvarScriptName = ".\get-UvmCapacity.ps1"
 
     if ($help) {get-help $myvarScriptName; exit}
     if ($History) {$HistoryText; exit}
@@ -63,58 +60,6 @@ Date       By   Updates (newest updates at the top)
 
     #check if we have all the required PoSH modules
     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
-
-    #region Load/Install VMware.PowerCLI
-        if (!(Get-Module VMware.PowerCLI)) 
-        {#module VMware.PowerCLI is not loaded
-            try 
-            {#load module VMware.PowerCLI
-                Write-Host "$(get-date) [INFO] Loading VMware.PowerCLI module..." -ForegroundColor Green
-                Import-Module VMware.PowerCLI -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Loaded VMware.PowerCLI module" -ForegroundColor Cyan
-            }
-            catch 
-            {#couldn't load module VMware.PowerCLI
-                Write-Host "$(get-date) [WARNING] Could not load VMware.PowerCLI module!" -ForegroundColor Yellow
-                try 
-                {#install module VMware.PowerCLI
-                    Write-Host "$(get-date) [INFO] Installing VMware.PowerCLI module..." -ForegroundColor Green
-                    Install-Module -Name VMware.PowerCLI -Scope CurrentUser -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] Installed VMware.PowerCLI module" -ForegroundColor Cyan
-                    try 
-                    {#loading module VMware.PowerCLI
-                        Write-Host "$(get-date) [INFO] Loading VMware.PowerCLI module..." -ForegroundColor Green
-                        Import-Module VMware.VimAutomation.Core -ErrorAction Stop
-                        Write-Host "$(get-date) [SUCCESS] Loaded VMware.PowerCLI module" -ForegroundColor Cyan
-                    }
-                    catch 
-                    {#couldn't load module VMware.PowerCLI
-                        throw "$(get-date) [ERROR] Could not load the VMware.PowerCLI module : $($_.Exception.Message)"
-                    }
-                }
-                catch 
-                {#couldn't install module VMware.PowerCLI
-                    throw "$(get-date) [ERROR] Could not install the VMware.PowerCLI module. Install it manually from https://www.powershellgallery.com/items?q=powercli&x=0&y=0 : $($_.Exception.Message)"
-                }
-            }
-        }
-        
-        if ((Get-Module -Name VMware.VimAutomation.Core).Version.Major -lt 10) 
-        {#check PowerCLI version
-            try 
-            {#update module VMware.PowerCLI
-                Update-Module -Name VMware.PowerCLI -ErrorAction Stop
-            } 
-            catch 
-            {#couldn't update module VMware.PowerCLI
-                throw "$(get-date) [ERROR] Could not update the VMware.PowerCLI module : $($_.Exception.Message)"
-            }
-        }
-    #endregion
-    if ((Get-PowerCLIConfiguration | where-object {$_.Scope -eq "User"}).InvalidCertificateAction -ne "Ignore") 
-    {#ignore invalid certificates for vCenter
-        Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -confirm:$false
-    }
 
     #region module sbourdeaud is used for facilitating Prism REST calls
         $required_version = "3.0.8"
@@ -167,10 +112,10 @@ Date       By   Updates (newest updates at the top)
     #* constants
     $myvar_cpu_over_subscription_ratio = 4
     $myvar_ram_over_subscription_ratio = 1
-    $myvar_cvm_cpu_reservation = 0 #if this is set to 0, we'll use the sum of cvm cpu allocation
-    $myvar_cvm_ram_gib_reservation = 0 #if this is set to 0, we'll use the sum of cvm ram allocation
-    $myvar_hypervisor_cpu_overhead = 0 #if this is set to 0, we'll look at the replication factor, then subtract the assume biggest host(s) cpu capacity
-    $myvar_hypervisor_ram_gib_overhead = 0 #if this is set to 0, we'll look at the replication factor, then subtract the assume biggest host(s) ram capacity
+    $myvar_cvm_cpu_reservation = 4 #if this is set to 0, we'll use the sum of cvm cpu allocation, otherwise this number will be used on a per host basis
+    $myvar_cvm_ram_gib_reservation = 0 #if this is set to 0, we'll use the sum of cvm ram allocation, otherwise this number will be used on a per host basis
+    $myvar_hypervisor_cpu_overhead = 1 #this is on a per host basis
+    $myvar_hypervisor_ram_gib_overhead = 4 #this is on a per host basis
 
     #* configuration
     $myvar_smtp_server = ""
@@ -201,30 +146,9 @@ Date       By   Updates (newest updates at the top)
         }
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
-
-    if ($vcenterCreds) 
-    {#vcenterCreds was specified
-        try 
-        {
-            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
-            $vcenterUsername = $vcenterCredentials.UserName
-            $vcenterSecurePassword = $vcenterCredentials.Password
-        }
-        catch 
-        {
-            Set-CustomCredentials -credname $vcenterCreds
-            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
-            $vcenterUsername = $vcenterCredentials.UserName
-            $vcenterSecurePassword = $vcenterCredentials.Password
-        }
-        $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
-    }
-	else 
-	{#no vcenter creds were given
-		$vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
-	}
 #endregion
 
+#todo: make this hypervisor agnostic
 #* processing here
 #region processing	
     #* retrieve information from Prism
@@ -240,7 +164,6 @@ Date       By   Updates (newest updates at the top)
             $myvar_ntnx_cluster_name = $myvar_ntnx_cluster_info.name
             Write-Host "$(get-date) [DATA] Nutanix cluster name is $($myvar_ntnx_cluster_name)" -ForegroundColor White
             $myvar_ntnx_cluster_rf = $myvar_ntnx_cluster_info.cluster_redundancy_state.desired_redundancy_factor
-            Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) replication factor is $($myvar_ntnx_cluster_rf)" -ForegroundColor White
 
             if (($myvar_ntnx_cluster_info.hypervisor_types).count -gt 1)
             {#cluster has mixed hypervisors
@@ -297,7 +220,7 @@ Date       By   Updates (newest updates at the top)
             $myvar_ntnx_cluster_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
             
-            $myvar_ntnx_cluster_hosts_ips = ($myvar_ntnx_hosts.entities).hypervisor_address
+            #$myvar_ntnx_cluster_hosts_ips = ($myvar_ntnx_hosts.entities).hypervisor_address
             [System.Collections.ArrayList]$myvar_ntnx_cluster_hosts_config = New-Object System.Collections.ArrayList($null)
             ForEach ($myvar_ntnx_cluster_host in $myvar_ntnx_cluster_hosts.entities)
             {#process each cluster host
@@ -308,8 +231,7 @@ Date       By   Updates (newest updates at the top)
                     "cpu_capacity_in_hz" = $myvar_ntnx_cluster_host.cpu_capacity_in_hz;
                     "memory_capacity_in_bytes" = $myvar_ntnx_cluster_host.memory_capacity_in_bytes;
                     "hypervisor_full_name" = $myvar_ntnx_cluster_host.hypervisor_full_name;
-                    "hypervisor_type" = $myvar_ntnx_cluster_host.hypervisor_type;
-                    "service_vmid" = $myvar_ntnx_cluster_host.service_vmid;
+                    "hypervisor_type" = $myvar_ntnx_cluster_host.hypervisor_type
                 }
                 #store the results for this entity in our overall result variable
                 $myvar_ntnx_cluster_hosts_config.Add((New-Object PSObject -Property $myvar_host_config)) | Out-Null
@@ -334,11 +256,26 @@ Date       By   Updates (newest updates at the top)
             $myvar_ntnx_cluster_pds = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
 
-            $myvar_ntnx_cluster_ma_active_ctrs = ($myvar_ntnx_cluster_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
+            #! for testing purposes
+            $myvar_ntnx_cluster_ma_active_ctrs_names = "steph-test"
+            #$myvar_ntnx_cluster_ma_active_ctrs_names = ($myvar_ntnx_cluster_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}).metro_avail.storage_container
+            
+            [System.Collections.ArrayList]$myvar_ntnx_cluster_ma_active_ctrs = New-Object System.Collections.ArrayList($null)
+            ForEach ($myvar_ntnx_cluster_ma_active_ctr in $myvar_ntnx_cluster_ma_active_ctrs_names)
+            {#figure out the uuid of each active metro enabled storage container
+                $myvar_ntnx_cluster_ma_active_ctr_info = [ordered]@{
+                    "name" = $myvar_ntnx_cluster_ma_active_ctr;
+                    "uuid" = ($myvar_ntnx_cluster_storage_containers.entities | Where-Object {$_.name -eq $myvar_ntnx_cluster_ma_active_ctr}).storage_container_uuid;
+                    "user_free_bytes" = ($myvar_ntnx_cluster_storage_containers.entities | Where-Object {$_.name -eq $myvar_ntnx_cluster_ma_active_ctr}).usage_stats.storage.user_free_bytes;
+                }
+                #store the results for this entity in our overall result variable
+                $myvar_ntnx_cluster_ma_active_ctrs.Add((New-Object PSObject -Property $myvar_ntnx_cluster_ma_active_ctr_info)) | Out-Null
+            }
+
             $myvar_ntnx_cluster_ma_active_pds = $myvar_ntnx_cluster_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}
             if (!$myvar_ntnx_cluster_ma_active_pds)
             {#there are no active metro availability protection domains on this cluster
-                Write-Host "$(get-date) [DATA] There are no active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor White
+                Write-Host "$(get-date) [WARNING] There are no active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Yellow
             }
             else 
             {#there are active metro availability protection domains on this cluster
@@ -353,9 +290,31 @@ Date       By   Updates (newest updates at the top)
             $method = "GET"
             $myvar_ntnx_cluster_vms = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved virtual machines from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+            $myvar_ntnx_cluster_cvms = $myvar_ntnx_cluster_vms.entities | Where-Object {$_.controllerVm -eq $true}
+            $myvar_ntnx_cluster_uvms = $myvar_ntnx_cluster_vms.entities | Where-Object {$_.controllerVm -eq $false} | Where-Object {$_.powerState -eq "on"}
+
+            #figure out which uvms are metro protected
+            [System.Collections.ArrayList]$myvar_ntnx_cluster_ma_uvms = New-Object System.Collections.ArrayList($null)
+            ForEach ($myvar_ntnx_cluster_ma_active_ctr in $myvar_ntnx_cluster_ma_active_ctrs)
+            {#collect VMs in each MA enabled container
+                $myvar_ntnx_cluster_ma_active_ctr_uvms = $myvar_ntnx_cluster_uvms | Where-Object {$_.containerUuids -contains $myvar_ntnx_cluster_ma_active_ctr.uuid}
+                ForEach ($myvar_ntnx_cluster_ma_active_ctr_uvm in $myvar_ntnx_cluster_ma_active_ctr_uvms)
+                {#collect specific information for each UVM
+                    $myvar_ntnx_cluster_ma_active_ctr_uvm_info = [ordered]@{
+                        "vm_name" = $myvar_ntnx_cluster_ma_active_ctr_uvm_info.vmName;
+                        "container_uuid" = $myvar_ntnx_cluster_ma_active_ctr.uuid;
+                        "container_name" = $myvar_ntnx_cluster_ma_active_ctr.name;
+                        "numVCpus" = $myvar_ntnx_cluster_ma_active_ctr_uvm.numVCpus;
+                        "memoryCapacityInBytes" = $myvar_ntnx_cluster_ma_active_ctr_uvm.memoryCapacityInBytes
+                    }
+                    #store the results for this entity in our overall result variable
+                    $myvar_ntnx_cluster_ma_uvms.Add((New-Object PSObject -Property $myvar_ntnx_cluster_ma_active_ctr_uvm_info)) | Out-Null
+                }
+            }
         #endregion
 
-        #* retrieve remote site information
+        #todo: retrieve remote site information
         #region retrieve remote site cluster information
             #region GET remote_site
                 Write-Host "$(get-date) [INFO] Retrieving remote sites from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
@@ -382,55 +341,26 @@ Date       By   Updates (newest updates at the top)
                 #>
             #endregion
             
-            #* retrieve remote cluster information
+            #todo: retrieve remote cluster information
             #region GET remote_site cluster
 
             #endregion
             
-            #* retrieve remote host information
+            #todo: retrieve remote host information
             #region GET remote_site hosts
 
             #endregion
             
-            #* retrieve remote storage containers information
+            #todo: retrieve remote storage containers information
             #region GET remote_site containers
 
             #endregion
 
-            #* retrieve remote vms information
+            #todo: retrieve remote vms information
             #region GET remote_site vms
 
             #endregion
         #endregion
-    #endregion
-
-    #* retrieve information from vCenter
-    #region retrieve information from vCenter
-        #* connect to vCenter
-        #region connect-viserver
-            Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
-            try 
-            {#connecting to vcenter
-                $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
-            }
-            catch 
-            {#could not connect to vcenter
-                throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-            }
-            Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan    
-        #endregion
-
-        #* figure out ha/drs cluster
-        #region figure out ha/drs cluster
-
-        #endregion
-        
-        #* retrieve vms
-        #region Get-Vm
-
-        #endregion
-
-        Disconnect-viserver * -Confirm:$False #cleanup after ourselves and disconnect from vcenter
     #endregion
 
     #* compute capacity numbers
@@ -440,74 +370,120 @@ Date       By   Updates (newest updates at the top)
             #for ntnx_cluster
             $myvar_ntnx_cluster_cpu_capacity_total = ($myvar_ntnx_cluster_hosts_config | Measure-Object num_cpu_cores -sum).Sum
             $myvar_ntnx_cluster_ram_gib_capacity_total = [math]::round(($myvar_ntnx_cluster_hosts_config | Measure-Object memory_capacity_in_bytes -sum).Sum / 1024 / 1024 / 1024,0)
-            #for ntnx_remote_site_cluster
+            #todo: for ntnx_remote_site_cluster
         #endregion
         
+        #* compute number of nodes to take out based on high availability (which is based on RF)
+        #for ntnx_cluster
+        $myvar_ntnx_cluster_ha_reserved_hosts = $myvar_ntnx_cluster_rf - 1
+        $myvar_ntnx_cluster_ha_available_hosts = ($myvar_ntnx_cluster_hosts.entities).count - $myvar_ntnx_cluster_ha_reserved_hosts
+        #todo: for ntnx_remote_site_cluster
+
         #* cvm reserved (cpu/ram)
         #region cvm reserved (cpu/ram)
             #for ntnx_cluster
             if (!$myvar_cvm_cpu_reservation)
             {#no specific value for $myvar_cvm_cpu_reservation, so we assume add up all cvm vcpus
-                $myvar_ntnx_cluster_cvm_reserved_cpu = (($myvar_ntnx_cluster_vms.entities | Where-Object {$_.controllerVm -eq $true}) | Measure-Object numVCpus -sum).Sum
+                $myvar_ntnx_cluster_cvm_reserved_cpu = ($myvar_ntnx_cluster_cvms | Measure-Object numVCpus -sum).Sum - ($myvar_ntnx_cluster_cvms | Measure-Object numVCpus -Maximum).Maximum * $myvar_ntnx_cluster_ha_reserved_hosts
             }
             else 
             {#a value was specified for $myvar_cvm_cpu_reservation so we multiply that by the number of hosts in the cluster
-                $myvar_ntnx_cluster_cvm_reserved_cpu = $myvar_cvm_cpu_reservation * ($myvar_ntnx_cluster_hosts.count)
+                $myvar_ntnx_cluster_cvm_reserved_cpu = $myvar_cvm_cpu_reservation * $myvar_ntnx_cluster_ha_available_hosts
             }
             if (!$myvar_cvm_ram_gib_reservation)
             {#no specific value for $myvar_cvm_ram_gib_reservation, so we assume add up all cvm vram
-                $myvar_ntnx_cluster_cvm_reserved_ram = [math]::round((($myvar_ntnx_cluster_vms.entities | Where-Object {$_.controllerVm -eq $true}) | Measure-Object memoryCapacityInBytes -sum).Sum /1024/1024/1024,0)
+                $myvar_ntnx_cluster_cvm_reserved_ram = [math]::round((($myvar_ntnx_cluster_cvms | Measure-Object memoryCapacityInBytes -sum).Sum - (($myvar_ntnx_cluster_cvms | Measure-Object memoryCapacityInBytes -Maximum).Maximum * $myvar_ntnx_cluster_ha_reserved_hosts)) /1024/1024/1024,0)
             }
             else 
             {#a value was specified for $myvar_cvm_ram_gib_reservation so we multiply that by the number of hosts in the cluster
-                $myvar_ntnx_cluster_cvm_reserved_ram = [math]::round($myvar_cvm_cpu_reservation * ($myvar_ntnx_cluster_hosts.count) /1024/1024/1024,0)
+                $myvar_ntnx_cluster_cvm_reserved_ram = [math]::round($myvar_cvm_cpu_reservation * $myvar_ntnx_cluster_ha_available_hosts /1024/1024/1024,0)
             }
-            #for ntnx_remote_site_cluster
+            #todo: for ntnx_remote_site_cluster
         #endregion
         
-        #! resume coding effort here
         #* hypervisor overhead (cpu/ram)
-        #for ntnx_cluster
-        #for ntnx_remote_site_cluster
+        #region hypervisor overhead and ha reserved
+            #for ntnx_cluster
+            $myvar_ntnx_cluster_ha_cpu_reserved = ($myvar_ntnx_cluster_hosts_config | Measure-Object num_cpu_cores -Maximum).Maximum * $myvar_ntnx_cluster_ha_reserved_hosts
+            $myvar_ntnx_cluster_ha_ram_gib_reserved = [math]::round(($myvar_ntnx_cluster_hosts_config | Measure-Object memory_capacity_in_bytes -Maximum).Maximum * $myvar_ntnx_cluster_ha_reserved_hosts /1024/1024/1024,0)
+            $myvar_ntnx_cluster_hypervisor_overhead_cpu_total = $myvar_hypervisor_cpu_overhead * $myvar_ntnx_cluster_ha_available_hosts
+            $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total = $myvar_hypervisor_ram_gib_overhead * $myvar_ntnx_cluster_ha_available_hosts
+            #todo: for ntnx_remote_site_cluster
+        #endregion
 
         #* uvm clusters capacity (cpu/ram)
         #for ntnx_cluster
-        #for ntnx_remote_site_cluster
+        $myvar_ntnx_cluster_uvm_capacity_total_cpu = ($myvar_ntnx_cluster_cpu_capacity_total - $myvar_ntnx_cluster_cvm_reserved_cpu - $myvar_ntnx_cluster_hypervisor_overhead_cpu_total - $myvar_ntnx_cluster_ha_cpu_reserved) * $myvar_cpu_over_subscription_ratio
+        $myvar_ntnx_cluster_uvm_capacity_total_ram_gib = ($myvar_ntnx_cluster_ram_gib_capacity_total - $myvar_ntnx_cluster_cvm_reserved_ram - $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total - $myvar_ntnx_cluster_ha_ram_gib_reserved) * $myvar_ram_over_subscription_ratio
+        #todo: for ntnx_remote_site_cluster
 
         #* uvm allocated (cpu/ram)
         #for ntnx_cluster
-        #for ntnx_remote_site_cluster
+        $myvar_ntnx_cluster_uvm_allocated_cpu = ($myvar_ntnx_cluster_uvms | Measure-Object numVCpus -Sum).Sum
+        $myvar_ntnx_cluster_uvm_allocated_ram_gib = [math]::round(($myvar_ntnx_cluster_uvms | Measure-Object memoryCapacityInBytes -Sum).Sum /1024/1024/1024,0)
+        #todo: for ntnx_remote_site_cluster
 
         #* metro uvm allocated (cpu/ram)
         #for ntnx_cluster
-        #for ntnx_remote_site_cluster
+        if ($myvar_ntnx_cluster_ma_uvms)
+        {#there are powered on vms protected by metro availability
+            $myvar_ntnx_cluster_ma_uvm_allocated_cpu = ($myvar_ntnx_cluster_ma_uvms | Measure-Object numVCpus -Sum).Sum
+            $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib = [math]::round(($myvar_ntnx_cluster_ma_uvms | Measure-Object memoryCapacityInBytes -Sum).Sum /1024/1024/1024,0)
+        }
+        else 
+        {#there are no powered on vms protected by metro availability
+            Write-Host "$(get-date) [WARNING] Nutanix cluster $($myvar_ntnx_cluster_name) has no metro protected powered on UVM!" -ForegroundColor Yellow
+        }
+        #todo: for ntnx_remote_site_cluster
 
         #* uvm remaining (cpu/ram)
         #for ntnx_cluster
-        #for ntnx_remote_site_cluster
+        $myvar_ntnx_cluster_uvm_remaining_cpu = $myvar_ntnx_cluster_uvm_capacity_total_cpu - $myvar_ntnx_cluster_uvm_allocated_cpu
+        $myvar_ntnx_cluster_uvm_remaining_ram_gib = $myvar_ntnx_cluster_uvm_capacity_total_ram_gib - $myvar_ntnx_cluster_uvm_allocated_ram_gib
+        #todo: for ntnx_remote_site_cluster
     #endregion
 
     #* create output
     #region create output
-        #* html output
+        #todo: html output
         #region html output
 
         #endregion
         
+        #! resume coding effort here
         #* console output
+        #todo: color code this output
+        #todo: look into generating graphs in console
+        #todo: add remote site console output
         #region console output
+            Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) replication factor is $($myvar_ntnx_cluster_rf)" -ForegroundColor White
             Write-Host "$(get-date) [DATA] Total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cpu_capacity_total) cores" -ForegroundColor White
             Write-Host "$(get-date) [DATA] Total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ram_gib_capacity_total) GiB" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] CPU reserved for high availability for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ha_cpu_reserved) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] RAM reserved for high availability for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ha_ram_gib_reserved) GiB" -ForegroundColor White
             Write-Host "$(get-date) [DATA] CVM CPU reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_cpu)" -ForegroundColor White
             Write-Host "$(get-date) [DATA] CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_ram) GiB" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_cpu_total)" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total) GiB" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_cpu) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_ram_gib) GiB" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_cpu) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_ram_gib) GiB" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_cpu) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_ram_gib) GiB" -ForegroundColor White
+            if ($myvar_ntnx_cluster_ma_uvms)
+            {#there are powered on vms protected by metro availability
+                Write-Host "$(get-date) [DATA] Metro enabled UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB" -ForegroundColor White
+            }
         #endregion
 
-        #* smtp output
+        #todo: smtp output
         #region smtp output
             
         #endregion
 
-        #* zabbix output
+        #todo: zabbix output
         #region zabbix output
             
         #endregion
