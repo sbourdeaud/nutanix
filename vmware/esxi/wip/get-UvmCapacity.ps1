@@ -533,45 +533,75 @@ Date       By   Updates (newest updates at the top)
     #region create output
         #todo: html output
         #region html output
-        New-Html -TitleText "Capacity Report" {
+        New-Html -TitleText "Capacity Report" -ShowHtml -Online {
             New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor White -TextColor Black -TextAlign center -Type RowOdd
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor WhiteSmoke -TextColor Black -TextAlign center -Type RowEven
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowSelected
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHoverSelected
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHover
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor White -TextColor Black -TextAlign center -Type RowOdd
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor WhiteSmoke -TextColor Black -TextAlign center -Type RowEven
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowSelected
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHoverSelected
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHover
             New-HTMLTableStyle -Type Header -BorderLeftStyle dashed -BorderLeftColor "#4C4C4E" -BorderLeftWidthSize 1px
             New-HTMLTableStyle -Type Footer -BorderLeftStyle dotted -BorderLeftColor "#4C4C4E" -BorderleftWidthSize 1px
             New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
         
-            New-HtmlSection -HeaderText "Report Configuration Settings" -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White {
-                New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
+            New-HtmlSection -HeaderText "General Information" -Wrap wrap -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White -Direction Row {
+                New-HtmlSection -HeaderText "Report Configuration Settings" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
+                }
+                New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
+                }
             }
-            
-            New-HtmlSection -HeaderText "General Cluster Information for $($myvar_ntnx_cluster_name)" -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
-                New-HtmlTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
+
+            New-HtmlSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
+                }
+                if ($myvar_ntnx_cluster_ma_uvms)
+                {#there are powered on vms protected by metro availability
+                    New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
+                    }
+                }
+                if ($myvar_ntnx_cluster_ma_uvms)
+                {#there are powered on vms protected by metro availability
+                    New-HTMLPanel {
+                        New-HTMLChart {
+                            New-ChartToolbar -Download
+                            New-ChartBarOptions -Type barStacked
+                            New-ChartLegend -Name 'Free', 'Allocated', 'Metro'
+                            New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, ($myvar_ntnx_cluster_uvm_allocated_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_cluster_ma_uvm_allocated_cpu
+                            New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, ($myvar_ntnx_cluster_uvm_allocated_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib), $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib
+                        }
+                    }
+                }
+                else 
+                {#there are no powered on vms protected by metro availability
+                    New-HTMLPanel {
+                        New-HTMLChart {
+                            New-ChartToolbar -Download
+                            New-ChartBarOptions -Type barStacked
+                            New-ChartLegend -Name 'Free', 'Allocated'
+                            New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, $myvar_ntnx_cluster_uvm_allocated_cpu
+                            New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, $myvar_ntnx_cluster_uvm_allocated_ram_gib
+                        }
+                    }
+                }
             }
-            New-HtmlSection -HeaderText "Hosts Information for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
-            }
-            New-HtmlSection -HeaderText "Reserved Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                New-HtmlTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
-            }
-            New-HtmlSection -HeaderText "UVM Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
-                New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
-            }
+
             if ($myvar_ntnx_cluster_ma_uvms)
             {#there are powered on vms protected by metro availability
-                New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
-                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
-                }
-                New-HtmlSection -HeaderText "Metro enabled UVMs for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                New-HtmlSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
                     New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
                 }
             }
-        } -ShowHtml -Online
+            New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
+            }
+        }
         #endregion
         
         #* console output
