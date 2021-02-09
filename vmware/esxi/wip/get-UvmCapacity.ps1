@@ -103,6 +103,34 @@ Date       By   Updates (newest updates at the top)
     #endregion
     Set-PoSHSSLCerts
     Set-PoshTls
+
+    #region module PSWriteHTML
+    if (!(Get-Module -Name PSWriteHTML)) {
+        try
+        {#import the module
+            Import-Module -Name PSWriteHTML -ErrorAction Stop
+            Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
+        }#end try
+        catch #we couldn't import the module, so let's install it
+        {
+            Write-Host "$(get-date) [INFO] Installing module 'PSWriteHTML' from the Powershell Gallery..." -ForegroundColor Green
+            try {Install-Module -Name PSWriteHTML -Scope CurrentUser -Force -ErrorAction Stop}
+            catch {throw "$(get-date) [ERROR] Could not install module 'PSWriteHTML': $($_.Exception.Message)"}
+
+            try
+            {
+                Import-Module -Name PSWriteHTML -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
+            }#end try
+            catch #we couldn't import the module
+            {
+                Write-Host "$(get-date) [ERROR] Unable to import the module PSWriteHTML.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/PSWriteHTML/0.0.132" -ForegroundColor Yellow
+                Exit
+            }#end catch
+        }#end catch
+    }
+    #endregion
 #endregion
 
 #* constants and configuration here
@@ -225,14 +253,18 @@ Date       By   Updates (newest updates at the top)
             ForEach ($myvar_ntnx_cluster_host in $myvar_ntnx_cluster_hosts.entities)
             {#process each cluster host
                 $myvar_host_config = [ordered]@{
+                    "name" = $myvar_ntnx_cluster_host.name;
+                    "block_model_name" = $myvar_ntnx_cluster_host.block_model_name;
+                    "hypervisor_type" = $myvar_ntnx_cluster_host.hypervisor_type;
+                    "hypervisor_full_name" = $myvar_ntnx_cluster_host.hypervisor_full_name;
+                    "cpu_model" = $myvar_ntnx_cluster_host.cpu_model;
                     "num_cpu_sockets" = $myvar_ntnx_cluster_host.num_cpu_sockets;
                     "num_cpu_cores" = $myvar_ntnx_cluster_host.num_cpu_cores;
-                    "cpu_model" = $myvar_ntnx_cluster_host.cpu_model;
+                    "memory_capacity_in_GiB" = [math]::round($myvar_ntnx_cluster_host.memory_capacity_in_bytes /1024 /1024 /1024,0);
+                    "hypervisor_ip" = $myvar_ntnx_cluster_host.hypervisor_address;
+                    "ipmi_address" = $myvar_ntnx_cluster_host.ipmi_address;
                     "cpu_capacity_in_hz" = $myvar_ntnx_cluster_host.cpu_capacity_in_hz;
                     "memory_capacity_in_bytes" = $myvar_ntnx_cluster_host.memory_capacity_in_bytes;
-                    "hypervisor_full_name" = $myvar_ntnx_cluster_host.hypervisor_full_name;
-                    "hypervisor_type" = $myvar_ntnx_cluster_host.hypervisor_type;
-                    "block_model_name" = $myvar_ntnx_cluster_host.block_model_name
                 }
                 #store the results for this entity in our overall result variable
                 $myvar_ntnx_cluster_hosts_config.Add((New-Object PSObject -Property $myvar_host_config)) | Out-Null
@@ -304,10 +336,12 @@ Date       By   Updates (newest updates at the top)
                 {#collect specific information for each UVM
                     $myvar_ntnx_cluster_ma_active_ctr_uvm_info = [ordered]@{
                         "vm_name" = $myvar_ntnx_cluster_ma_active_ctr_uvm.vmName;
-                        "container_uuid" = $myvar_ntnx_cluster_ma_active_ctr.uuid;
-                        "container_name" = $myvar_ntnx_cluster_ma_active_ctr.name;
                         "numVCpus" = $myvar_ntnx_cluster_ma_active_ctr_uvm.numVCpus;
-                        "memoryCapacityInBytes" = $myvar_ntnx_cluster_ma_active_ctr_uvm.memoryCapacityInBytes
+                        "memoryCapacityInGiB" = [math]::round($myvar_ntnx_cluster_ma_active_ctr_uvm.memoryCapacityInBytes /1024 /1024 /1024,0);
+                        "host" = $myvar_ntnx_cluster_ma_active_ctr_uvm.hostName;
+                        "container_name" = $myvar_ntnx_cluster_ma_active_ctr.name;
+                        "memoryCapacityInBytes" = $myvar_ntnx_cluster_ma_active_ctr_uvm.memoryCapacityInBytes;
+                        "container_uuid" = $myvar_ntnx_cluster_ma_active_ctr.uuid;
                     }
                     #store the results for this entity in our overall result variable
                     $myvar_ntnx_cluster_ma_uvms.Add((New-Object PSObject -Property $myvar_ntnx_cluster_ma_active_ctr_uvm_info)) | Out-Null
@@ -369,7 +403,7 @@ Date       By   Updates (newest updates at the top)
         #* total clusters capacity (cpu/ram)
         #region total clusters capacity (cpu/ram)
             #for ntnx_cluster
-            $myvar_ntnx_cluster_cpu_capacity_total = ($myvar_ntnx_cluster_hosts_config | Measure-Object num_cpu_cores -sum).Sum
+            $myvar_ntnx_cluster_hosts_config |  ForEach-Object {$myvar_ntnx_cluster_cpu_capacity_total += $_.num_cpu_sockets * $_.num_cpu_cores}
             $myvar_ntnx_cluster_ram_gib_capacity_total = [math]::round(($myvar_ntnx_cluster_hosts_config | Measure-Object memory_capacity_in_bytes -sum).Sum / 1024 / 1024 / 1024,0)
             #todo: for ntnx_remote_site_cluster
         #endregion
@@ -405,7 +439,8 @@ Date       By   Updates (newest updates at the top)
         #* hypervisor overhead (cpu/ram)
         #region hypervisor overhead and ha reserved
             #for ntnx_cluster
-            $myvar_ntnx_cluster_ha_cpu_reserved = ($myvar_ntnx_cluster_hosts_config | Measure-Object num_cpu_cores -Maximum).Maximum * $myvar_ntnx_cluster_ha_reserved_hosts
+            $myvar_ntnx_cluster_largest_host_cpu_cores = $myvar_ntnx_cluster_hosts_config | Where-Object {$_.num_cpu_cores -eq (($myvar_ntnx_cluster_hosts_config | Measure-Object num_cpu_cores -Maximum).Maximum)} | Where-Object {$_.num_cpu_sockets -eq (($myvar_ntnx_cluster_hosts_config | Measure-Object num_cpu_sockets -Maximum).Maximum)} | Select-Object -First 1
+            $myvar_ntnx_cluster_ha_cpu_reserved = $myvar_ntnx_cluster_largest_host_cpu_cores.num_cpu_cores * $myvar_ntnx_cluster_largest_host_cpu_cores.num_cpu_sockets * $myvar_ntnx_cluster_ha_reserved_hosts
             $myvar_ntnx_cluster_ha_ram_gib_reserved = [math]::round(($myvar_ntnx_cluster_hosts_config | Measure-Object memory_capacity_in_bytes -Maximum).Maximum * $myvar_ntnx_cluster_ha_reserved_hosts /1024/1024/1024,0)
             $myvar_ntnx_cluster_hypervisor_overhead_cpu_total = $myvar_hypervisor_cpu_overhead * $myvar_ntnx_cluster_ha_available_hosts
             $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total = $myvar_hypervisor_ram_gib_overhead * $myvar_ntnx_cluster_ha_available_hosts
@@ -470,7 +505,9 @@ Date       By   Updates (newest updates at the top)
             "CPU cores Reserved for High Availability" = $myvar_ntnx_cluster_ha_cpu_reserved;
             "Memory GiB Reserved for High Availability" = $myvar_ntnx_cluster_ha_ram_gib_reserved;
             "CPU cores Reserved for Hypervisor Overhead" = $myvar_ntnx_cluster_hypervisor_overhead_cpu_total;
-            "Memory GiB Reserved for Hypervisor Overhead" = $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total
+            "Memory GiB Reserved for Hypervisor Overhead" = $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total;
+            "Total CPU cores Reserved" = $myvar_ntnx_cluster_cvm_reserved_cpu + $myvar_ntnx_cluster_ha_cpu_reserved + $myvar_ntnx_cluster_hypervisor_overhead_cpu_total;
+            "Total Memory GiB Reserved" = $myvar_ntnx_cluster_cvm_reserved_ram + $myvar_ntnx_cluster_ha_ram_gib_reserved + $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total
         }
         #uvm capacities
         $myvar_ntnx_cluster_uvm_capacity = [ordered]@{
@@ -490,15 +527,53 @@ Date       By   Updates (newest updates at the top)
             }
         }
     #endregion
-
+    
+    #! resume coding effort here
     #* create output
     #region create output
         #todo: html output
         #region html output
-
+        New-Html -TitleText "Capacity Report" {
+            New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor White -TextColor Black -TextAlign center -Type RowOdd
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor WhiteSmoke -TextColor Black -TextAlign center -Type RowEven
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowSelected
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHoverSelected
+            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 12 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHover
+            New-HTMLTableStyle -Type Header -BorderLeftStyle dashed -BorderLeftColor "#4C4C4E" -BorderLeftWidthSize 1px
+            New-HTMLTableStyle -Type Footer -BorderLeftStyle dotted -BorderLeftColor "#4C4C4E" -BorderleftWidthSize 1px
+            New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
+        
+            New-HtmlSection -HeaderText "Report Configuration Settings" -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White {
+                New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
+            }
+            
+            New-HtmlSection -HeaderText "General Cluster Information for $($myvar_ntnx_cluster_name)" -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                New-HtmlTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
+            }
+            New-HtmlSection -HeaderText "Hosts Information for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
+            }
+            New-HtmlSection -HeaderText "Reserved Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                New-HtmlTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
+            }
+            New-HtmlSection -HeaderText "UVM Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
+            }
+            if ($myvar_ntnx_cluster_ma_uvms)
+            {#there are powered on vms protected by metro availability
+                New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
+                }
+                New-HtmlSection -HeaderText "Metro enabled UVMs for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
+                }
+            }
+        } -ShowHtml -Online
         #endregion
         
-        #! resume coding effort here
         #* console output
         #todo: color code this output
         #todo: look into generating graphs in console
