@@ -231,7 +231,8 @@ Date       By   Updates (newest updates at the top)
                     "cpu_capacity_in_hz" = $myvar_ntnx_cluster_host.cpu_capacity_in_hz;
                     "memory_capacity_in_bytes" = $myvar_ntnx_cluster_host.memory_capacity_in_bytes;
                     "hypervisor_full_name" = $myvar_ntnx_cluster_host.hypervisor_full_name;
-                    "hypervisor_type" = $myvar_ntnx_cluster_host.hypervisor_type
+                    "hypervisor_type" = $myvar_ntnx_cluster_host.hypervisor_type;
+                    "block_model_name" = $myvar_ntnx_cluster_host.block_model_name
                 }
                 #store the results for this entity in our overall result variable
                 $myvar_ntnx_cluster_hosts_config.Add((New-Object PSObject -Property $myvar_host_config)) | Out-Null
@@ -302,7 +303,7 @@ Date       By   Updates (newest updates at the top)
                 ForEach ($myvar_ntnx_cluster_ma_active_ctr_uvm in $myvar_ntnx_cluster_ma_active_ctr_uvms)
                 {#collect specific information for each UVM
                     $myvar_ntnx_cluster_ma_active_ctr_uvm_info = [ordered]@{
-                        "vm_name" = $myvar_ntnx_cluster_ma_active_ctr_uvm_info.vmName;
+                        "vm_name" = $myvar_ntnx_cluster_ma_active_ctr_uvm.vmName;
                         "container_uuid" = $myvar_ntnx_cluster_ma_active_ctr.uuid;
                         "container_name" = $myvar_ntnx_cluster_ma_active_ctr.name;
                         "numVCpus" = $myvar_ntnx_cluster_ma_active_ctr_uvm.numVCpus;
@@ -441,6 +442,53 @@ Date       By   Updates (newest updates at the top)
         $myvar_ntnx_cluster_uvm_remaining_cpu = $myvar_ntnx_cluster_uvm_capacity_total_cpu - $myvar_ntnx_cluster_uvm_allocated_cpu
         $myvar_ntnx_cluster_uvm_remaining_ram_gib = $myvar_ntnx_cluster_uvm_capacity_total_ram_gib - $myvar_ntnx_cluster_uvm_allocated_ram_gib
         #todo: for ntnx_remote_site_cluster
+
+        #* building variables with all those results to facilitate output construction
+        #general cluster information
+        $myvar_ntnx_cluster_general_information = [ordered]@{
+            "Cluster Name" = $myvar_ntnx_cluster_name;
+            "Replication Factor" = $myvar_ntnx_cluster_rf;
+            "AOS Version" = $myvar_ntnx_cluster_info.version;
+            "Hypervisor" = ($myvar_ntnx_cluster_info.hypervisor_types)[0];
+            "Number of Nodes" = $myvar_ntnx_cluster_info.num_nodes;
+            "Total CPU cores Capacity" = $myvar_ntnx_cluster_cpu_capacity_total;
+            "Total RAM GiB Capacity" = $myvar_ntnx_cluster_ram_gib_capacity_total;
+        }
+        #report configuration
+        $myvar_report_configuration_settings = [ordered]@{
+            "CPU Oversubscription Ratio" = $myvar_cpu_over_subscription_ratio;
+            "Memory Oversubscription Ratio" = $myvar_ram_over_subscription_ratio;
+            "CVM CPU Reservation"  = $myvar_cvm_cpu_reservation;
+            "CVM RAM Reservation" = $myvar_cvm_ram_gib_reservation;
+            "Hypervisor CPU cores Overhead" = $myvar_hypervisor_cpu_overhead;
+            "Hypervisor RAM GiB Overhead" = $myvar_hypervisor_ram_gib_overhead
+        }
+        #reserved capacity
+        $myvar_ntnx_cluster_reserved_capacity = [ordered]@{
+            "CPU cores Reserved for CVMs" = $myvar_ntnx_cluster_cvm_reserved_cpu;
+            "Memory GiB Reserved for CVMs" = $myvar_ntnx_cluster_cvm_reserved_ram;
+            "CPU cores Reserved for High Availability" = $myvar_ntnx_cluster_ha_cpu_reserved;
+            "Memory GiB Reserved for High Availability" = $myvar_ntnx_cluster_ha_ram_gib_reserved;
+            "CPU cores Reserved for Hypervisor Overhead" = $myvar_ntnx_cluster_hypervisor_overhead_cpu_total;
+            "Memory GiB Reserved for Hypervisor Overhead" = $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total
+        }
+        #uvm capacities
+        $myvar_ntnx_cluster_uvm_capacity = [ordered]@{
+            "Total CPU cores Capacity for UVMs" = $myvar_ntnx_cluster_uvm_capacity_total_cpu;
+            "Total Memory GiB Capacity for UVMs" = $myvar_ntnx_cluster_uvm_capacity_total_ram_gib;
+            "CPU cores Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_cpu;
+            "Memory GiB Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_ram_gib;
+            "Remaining CPU cores for UVMs" = $myvar_ntnx_cluster_uvm_remaining_cpu;
+            "Remaining Memory GiB for UVMs" = $myvar_ntnx_cluster_uvm_remaining_ram_gib
+        }
+        #metro availability capacity
+        if ($myvar_ntnx_cluster_ma_uvms)
+        {#there are powered on vms protected by metro availability
+            $myvar_ntnx_cluster_ma_uvms_capacity_allocated = [ordered]@{
+                "CPU cores Allocated to metro protected UVMs" = $myvar_ntnx_cluster_ma_uvm_allocated_cpu;
+                "Memory GiB Allocated to metro protected UVMs" = $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib
+            }
+        }
     #endregion
 
     #* create output
