@@ -11,6 +11,8 @@
   Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
+.PARAMETER html
+  Produces an html output in addition to console output.
 .PARAMETER cluster
   Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER prismCreds
@@ -33,6 +35,7 @@ Connect to a Nutanix cluster of your choice:
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
+        [parameter(mandatory = $false)] [switch]$html,
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$prismCreds
     )
@@ -105,30 +108,34 @@ Date       By   Updates (newest updates at the top)
     Set-PoshTls
 
     #region module PSWriteHTML
-    if (!(Get-Module -Name PSWriteHTML)) {
-        try
-        {#import the module
-            Import-Module -Name PSWriteHTML -ErrorAction Stop
-            Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
-        }#end try
-        catch #we couldn't import the module, so let's install it
-        {
-            Write-Host "$(get-date) [INFO] Installing module 'PSWriteHTML' from the Powershell Gallery..." -ForegroundColor Green
-            try {Install-Module -Name PSWriteHTML -Scope CurrentUser -Force -ErrorAction Stop}
-            catch {throw "$(get-date) [ERROR] Could not install module 'PSWriteHTML': $($_.Exception.Message)"}
-
+    if ($html)
+    {#we need html output, so let's load the PSWriteHTML module
+        if (!(Get-Module -Name PSWriteHTML)) 
+        {#we could not get the module, let's try to load it
             try
-            {
+            {#import the module
                 Import-Module -Name PSWriteHTML -ErrorAction Stop
                 Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
             }#end try
-            catch #we couldn't import the module
-            {
-                Write-Host "$(get-date) [ERROR] Unable to import the module PSWriteHTML.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/PSWriteHTML/0.0.132" -ForegroundColor Yellow
-                Exit
+            catch 
+            {#we couldn't import the module, so let's install it
+                Write-Host "$(get-date) [INFO] Installing module 'PSWriteHTML' from the Powershell Gallery..." -ForegroundColor Green
+                try {Install-Module -Name PSWriteHTML -Scope CurrentUser -Force -ErrorAction Stop}
+                catch {throw "$(get-date) [ERROR] Could not install module 'PSWriteHTML': $($_.Exception.Message)"}
+
+                try
+                {#now that it is intalled, let's import it
+                    Import-Module -Name PSWriteHTML -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
+                }#end try
+                catch 
+                {#we couldn't import the module
+                    Write-Host "$(get-date) [ERROR] Unable to import the module PSWriteHTML.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/PSWriteHTML/0.0.132" -ForegroundColor Yellow
+                    Exit
+                }#end catch
             }#end catch
-        }#end catch
+        }
     }
     #endregion
 #endregion
@@ -176,7 +183,6 @@ Date       By   Updates (newest updates at the top)
     }
 #endregion
 
-#todo: make this hypervisor agnostic
 #* processing here
 #region processing	
     #* retrieve information from Prism
@@ -202,16 +208,8 @@ Date       By   Updates (newest updates at the top)
                 }
             }
             else 
-            {#cluster has single hypervisor: let's make sure it is vmware
-                if (($myvar_ntnx_cluster_info.hypervisor_types)[0] -eq "kVMware")
-                {#hypervisor is vSphere
-                    Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])" -ForegroundColor White    
-                }
-                else 
-                {#hypervisor is not vmware
-                    Write-Host "$(get-date) [ERROR] Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])" -ForegroundColor Red
-                    Throw "$(get-date) [ERROR] Hypervisor is not kVMware. Exiting!"    
-                }
+            {#cluster has single hypervisor
+                Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])" -ForegroundColor White
             }
 
             #region figure out vcenter ip
@@ -225,7 +223,7 @@ Date       By   Updates (newest updates at the top)
                     $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
                     Write-Host "$(get-date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor White
                 }
-                if (!$myvar_vcenter_ip) {Write-Host "$(get-date) [ERROR] vCenter registration is not done in Prism for cluster $cluster!" -ForegroundColor Red;exit}
+                if (!$myvar_vcenter_ip) {Write-Host "$(get-date) [WARNING] vCenter registration is not done in Prism for cluster $cluster!" -ForegroundColor Yellow}
             #endregion
 
             #let's make sure our current redundancy is at least 2
@@ -533,73 +531,76 @@ Date       By   Updates (newest updates at the top)
     #region create output
         #todo: html output
         #region html output
-        New-Html -TitleText "Capacity Report" -ShowHtml -Online {
-            New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor White -TextColor Black -TextAlign center -Type RowOdd
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor WhiteSmoke -TextColor Black -TextAlign center -Type RowEven
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowSelected
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHoverSelected
-            New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHover
-            New-HTMLTableStyle -Type Header -BorderLeftStyle dashed -BorderLeftColor "#4C4C4E" -BorderLeftWidthSize 1px
-            New-HTMLTableStyle -Type Footer -BorderLeftStyle dotted -BorderLeftColor "#4C4C4E" -BorderleftWidthSize 1px
-            New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
-        
-            New-HtmlSection -HeaderText "General Information" -Wrap wrap -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White -Direction Row {
-                New-HtmlSection -HeaderText "Report Configuration Settings" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                    New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
-                }
-                New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
-                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
-                }
-            }
-
-            New-HtmlSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
-                New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
-                }
-                if ($myvar_ntnx_cluster_ma_uvms)
-                {#there are powered on vms protected by metro availability
-                    New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
+        if ($html) 
+        {#we need html output
+            New-Html -TitleText "Capacity Report" -ShowHtml -Online {
+                New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor White -TextColor Black -TextAlign center -Type RowOdd
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor WhiteSmoke -TextColor Black -TextAlign center -Type RowEven
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowSelected
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHoverSelected
+                New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHover
+                New-HTMLTableStyle -Type Header -BorderLeftStyle dashed -BorderLeftColor "#4C4C4E" -BorderLeftWidthSize 1px
+                New-HTMLTableStyle -Type Footer -BorderLeftStyle dotted -BorderLeftColor "#4C4C4E" -BorderleftWidthSize 1px
+                New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
+            
+                New-HtmlSection -HeaderText "General Information" -Wrap wrap -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White -Direction Row {
+                    New-HtmlSection -HeaderText "Report Configuration Settings" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                        New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
+                    }
+                    New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
+                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
                     }
                 }
-                if ($myvar_ntnx_cluster_ma_uvms)
-                {#there are powered on vms protected by metro availability
-                    New-HTMLPanel {
-                        New-HTMLChart {
-                            New-ChartToolbar -Download
-                            New-ChartBarOptions -Type barStacked
-                            New-ChartLegend -Name 'Free', 'Allocated', 'Metro'
-                            New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, ($myvar_ntnx_cluster_uvm_allocated_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_cluster_ma_uvm_allocated_cpu
-                            New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, ($myvar_ntnx_cluster_uvm_allocated_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib), $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib
+
+                New-HtmlSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                    New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
+                    }
+                    if ($myvar_ntnx_cluster_ma_uvms)
+                    {#there are powered on vms protected by metro availability
+                        New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                            New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
+                        }
+                    }
+                    if ($myvar_ntnx_cluster_ma_uvms)
+                    {#there are powered on vms protected by metro availability
+                        New-HTMLPanel {
+                            New-HTMLChart {
+                                New-ChartToolbar -Download
+                                New-ChartBarOptions -Type barStacked
+                                New-ChartLegend -Name 'Free', 'Allocated', 'Metro'
+                                New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, ($myvar_ntnx_cluster_uvm_allocated_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_cluster_ma_uvm_allocated_cpu
+                                New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, ($myvar_ntnx_cluster_uvm_allocated_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib), $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib
+                            }
+                        }
+                    }
+                    else 
+                    {#there are no powered on vms protected by metro availability
+                        New-HTMLPanel {
+                            New-HTMLChart {
+                                New-ChartToolbar -Download
+                                New-ChartBarOptions -Type barStacked
+                                New-ChartLegend -Name 'Free', 'Allocated'
+                                New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, $myvar_ntnx_cluster_uvm_allocated_cpu
+                                New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, $myvar_ntnx_cluster_uvm_allocated_ram_gib
+                            }
                         }
                     }
                 }
-                else 
-                {#there are no powered on vms protected by metro availability
-                    New-HTMLPanel {
-                        New-HTMLChart {
-                            New-ChartToolbar -Download
-                            New-ChartBarOptions -Type barStacked
-                            New-ChartLegend -Name 'Free', 'Allocated'
-                            New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, $myvar_ntnx_cluster_uvm_allocated_cpu
-                            New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, $myvar_ntnx_cluster_uvm_allocated_ram_gib
-                        }
+
+                if ($myvar_ntnx_cluster_ma_uvms)
+                {#there are powered on vms protected by metro availability
+                    New-HtmlSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
                     }
                 }
-            }
-
-            if ($myvar_ntnx_cluster_ma_uvms)
-            {#there are powered on vms protected by metro availability
-                New-HtmlSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
+                New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
                 }
-            }
-            New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
             }
         }
         #endregion
