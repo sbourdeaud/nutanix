@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  This is a summary of what the script is.
+  This script retrieves allocated compute capacity information from a Nutanix cluster and produces an interactive html report.
 .DESCRIPTION
-  This is a detailed description of what the script does and how it is used.
+  Report will show remaining UVM capacity in a color coded output. Report configuration settings can be customized in the variables region.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
