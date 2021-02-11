@@ -140,6 +140,8 @@ Date       By   Updates (newest updates at the top)
     #endregion
 #endregion
 
+#todo: color code output when remaining capacity is too small
+#todo: look into sending metrics to influxdb using REST (https://github.com/markwragg/Powershell-Influx)
 #* constants and configuration here
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
@@ -151,6 +153,7 @@ Date       By   Updates (newest updates at the top)
     $myvar_cvm_ram_gib_reservation = 0 #if this is set to 0, we'll use the sum of cvm ram allocation, otherwise this number will be used on a per host basis
     $myvar_hypervisor_cpu_overhead = 1 #this is on a per host basis
     $myvar_hypervisor_ram_gib_overhead = 4 #this is on a per host basis
+    $myvar_desired_capacity_headroom_percentage = 10 #this is a percentage of UVM total capacity that you want available at all times. Report will alert if this is not currently met.
 
     #* configuration
     $myvar_smtp_server = ""
@@ -186,6 +189,7 @@ Date       By   Updates (newest updates at the top)
 #* processing here
 #region processing	
     #* retrieve information from Prism
+    Write-Host "$(get-date) [STEP] Retrieving information from Nutanix cluster $($cluster)..." -ForegroundColor Magenta
     #region retrieve information from Prism
         #* retrieve cluster information
         #region GET cluster
@@ -325,6 +329,24 @@ Date       By   Updates (newest updates at the top)
             $myvar_ntnx_cluster_cvms = $myvar_ntnx_cluster_vms.entities | Where-Object {$_.controllerVm -eq $true}
             $myvar_ntnx_cluster_uvms = $myvar_ntnx_cluster_vms.entities | Where-Object {$_.controllerVm -eq $false} | Where-Object {$_.powerState -eq "on"}
 
+            #building list of uvms
+            [System.Collections.ArrayList]$myvar_ntnx_cluster_uvms_info = New-Object System.Collections.ArrayList($null)
+            ForEach ($myvar_ntnx_cluster_uvm in $myvar_ntnx_cluster_uvms)
+            {#collect specific information for each UVM
+                $myvar_ntnx_cluster_uvm_info = [ordered]@{
+                    "vm_name" = $myvar_ntnx_cluster_uvm.vmName;
+                    "numVCpus" = $myvar_ntnx_cluster_uvm.numVCpus;
+                    "memoryCapacityInGiB" = [math]::round($myvar_ntnx_cluster_uvm.memoryCapacityInBytes /1024 /1024 /1024,0);
+                    "host" = $myvar_ntnx_cluster_uvm.hostName;
+                    "container_name" = ($myvar_ntnx_cluster_storage_containers.entities | Where-Object {$_.storage_container_uuid -eq $myvar_ntnx_cluster_uvm.containerUuids[0]}).name;
+                    "diskCapacityInGiB" = [math]::round($myvar_ntnx_cluster_uvm.diskCapacityInBytes /1024 /1024 /1024,0);
+                    "protectionType" = $myvar_ntnx_cluster_uvm.protectionType;
+                    "protectionDomainName" = $myvar_ntnx_cluster_uvm.protectionDomainName;
+                }
+                #store the results for this entity in our overall result variable
+                $myvar_ntnx_cluster_uvms_info.Add((New-Object PSObject -Property $myvar_ntnx_cluster_uvm_info)) | Out-Null
+            }
+
             #figure out which uvms are metro protected
             [System.Collections.ArrayList]$myvar_ntnx_cluster_ma_uvms = New-Object System.Collections.ArrayList($null)
             ForEach ($myvar_ntnx_cluster_ma_active_ctr in $myvar_ntnx_cluster_ma_active_ctrs)
@@ -395,7 +417,9 @@ Date       By   Updates (newest updates at the top)
             #endregion
         #endregion
     #endregion
+    Write-Host ""
 
+    Write-Host "$(get-date) [STEP] Computing numbers..." -ForegroundColor Magenta
     #* compute capacity numbers
     #region compute capacity numbers
         #* total clusters capacity (cpu/ram)
@@ -449,6 +473,8 @@ Date       By   Updates (newest updates at the top)
         #for ntnx_cluster
         $myvar_ntnx_cluster_uvm_capacity_total_cpu = ($myvar_ntnx_cluster_cpu_capacity_total - $myvar_ntnx_cluster_cvm_reserved_cpu - $myvar_ntnx_cluster_hypervisor_overhead_cpu_total - $myvar_ntnx_cluster_ha_cpu_reserved) * $myvar_cpu_over_subscription_ratio
         $myvar_ntnx_cluster_uvm_capacity_total_ram_gib = ($myvar_ntnx_cluster_ram_gib_capacity_total - $myvar_ntnx_cluster_cvm_reserved_ram - $myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total - $myvar_ntnx_cluster_ha_ram_gib_reserved) * $myvar_ram_over_subscription_ratio
+        $myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores = [math]::round(($myvar_desired_capacity_headroom_percentage * $myvar_ntnx_cluster_uvm_capacity_total_cpu) / 100,0)
+        $myvar_ntnx_cluster_desired_capacity_headroom_ram_gib = [math]::round(($myvar_desired_capacity_headroom_percentage * $myvar_ntnx_cluster_uvm_capacity_total_ram_gib) / 100,0)
         #todo: for ntnx_remote_site_cluster
 
         #* uvm allocated (cpu/ram)
@@ -494,7 +520,8 @@ Date       By   Updates (newest updates at the top)
             "CVM CPU Reservation"  = $myvar_cvm_cpu_reservation;
             "CVM RAM Reservation" = $myvar_cvm_ram_gib_reservation;
             "Hypervisor CPU cores Overhead" = $myvar_hypervisor_cpu_overhead;
-            "Hypervisor RAM GiB Overhead" = $myvar_hypervisor_ram_gib_overhead
+            "Hypervisor RAM GiB Overhead" = $myvar_hypervisor_ram_gib_overhead;
+            "Desired UVM Capacity Headroom Percentage" = $myvar_desired_capacity_headroom_percentage;
         }
         #reserved capacity
         $myvar_ntnx_cluster_reserved_capacity = [ordered]@{
@@ -525,6 +552,7 @@ Date       By   Updates (newest updates at the top)
             }
         }
     #endregion
+    Write-Host ""
     
     #! resume coding effort here
     #* create output
@@ -533,6 +561,7 @@ Date       By   Updates (newest updates at the top)
         #region html output
         if ($html) 
         {#we need html output
+            Write-Host "$(get-date) [STEP] Creating HTML report..." -ForegroundColor Magenta
             New-Html -TitleText "Capacity Report" -ShowHtml -Online {
                 New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
                 New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
@@ -557,6 +586,30 @@ Date       By   Updates (newest updates at the top)
                 }
 
                 New-HtmlSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                    New-HTMLPanel -Invisible {   
+                        if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
+                        {#there is enough remaining cpu capacity
+                            #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Good' -Percentage '100%'
+                            New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
+                        }
+                        else 
+                        {#there is not enough cpu capacity remaining
+                            #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Dead' -Percentage '0%'
+                            New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
+                        }
+
+                        if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
+                        {#there is enough remaining memory capacity
+                            #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Good' -Percentage '100%'
+                            New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
+                        }
+                        else 
+                        {#there is not enough memory capacity remaining
+                            #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Dead' -Percentage '0%'
+                            New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
+                        }
+                    }
+
                     New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
                         New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
                     }
@@ -601,13 +654,15 @@ Date       By   Updates (newest updates at the top)
                 New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
                     New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
                 }
+                New-HtmlSection -HeaderText "UVM details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                    New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvms_info) -HideFooter
+                }             
             }
+            Write-Host ""
         }
         #endregion
         
         #* console output
-        #todo: color code this output
-        #todo: look into generating graphs in console
         #todo: add remote site console output
         #region console output
             Write-Host "$(get-date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) replication factor is $($myvar_ntnx_cluster_rf)" -ForegroundColor White
@@ -629,6 +684,24 @@ Date       By   Updates (newest updates at the top)
             {#there are powered on vms protected by metro availability
                 Write-Host "$(get-date) [DATA] Metro enabled UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB" -ForegroundColor White
+            }
+
+            #* checking remaining capacity is sufficient
+            if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
+            {#there is enough remaining cpu capacity
+                Write-Host "$(get-date) [INFO] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) CPU cores still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) CPU cores." -ForegroundColor Green
+            }
+            else 
+            {#there is not enough cpu capacity remaining
+                Write-Host "$(get-date) [WARNING] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) CPU cores still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) CPU cores!" -ForegroundColor Yellow
+            }
+            if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
+            {#there is enough remaining memory capacity
+                Write-Host "$(get-date) [INFO] There are $($myvar_ntnx_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib) GiB." -ForegroundColor Green
+            }
+            else 
+            {#there is not enough memory capacity remaining
+                Write-Host "$(get-date) [WARNING] There are $($myvar_ntnx_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib) GiB!" -ForegroundColor Yellow
             }
         #endregion
 
