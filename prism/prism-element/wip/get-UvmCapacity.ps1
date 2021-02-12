@@ -512,6 +512,7 @@ Date       By   Updates (newest updates at the top)
             "Number of Nodes" = $myvar_ntnx_cluster_info.num_nodes;
             "Total CPU cores Capacity" = $myvar_ntnx_cluster_cpu_capacity_total;
             "Total RAM GiB Capacity" = $myvar_ntnx_cluster_ram_gib_capacity_total;
+            "Actual cores:vcpus ratio" = [math]::round(($myvar_ntnx_cluster_uvm_allocated_cpu + ($myvar_ntnx_cluster_cvms | Measure-Object numVCpus -sum).Sum) / $myvar_ntnx_cluster_cpu_capacity_total,1);
         }
         #report configuration
         $myvar_report_configuration_settings = [ordered]@{
@@ -541,7 +542,7 @@ Date       By   Updates (newest updates at the top)
             "CPU cores Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_cpu;
             "Memory GiB Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_ram_gib;
             "Remaining CPU cores for UVMs" = $myvar_ntnx_cluster_uvm_remaining_cpu;
-            "Remaining Memory GiB for UVMs" = $myvar_ntnx_cluster_uvm_remaining_ram_gib
+            "Remaining Memory GiB for UVMs" = $myvar_ntnx_cluster_uvm_remaining_ram_gib;
         }
         #metro availability capacity
         if ($myvar_ntnx_cluster_ma_uvms)
@@ -574,7 +575,7 @@ Date       By   Updates (newest updates at the top)
                 New-HTMLTableStyle -Type Header -BorderLeftStyle dashed -BorderLeftColor "#4C4C4E" -BorderLeftWidthSize 1px
                 New-HTMLTableStyle -Type Footer -BorderLeftStyle dotted -BorderLeftColor "#4C4C4E" -BorderleftWidthSize 1px
                 New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
-            
+
                 New-HtmlSection -HeaderText "General Information" -Wrap wrap -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White -Direction Row {
                     New-HtmlSection -HeaderText "Report Configuration Settings" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
                         New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
@@ -586,39 +587,47 @@ Date       By   Updates (newest updates at the top)
                 }
 
                 New-HtmlSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse  -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
-                    New-HTMLPanel -Invisible {   
-                        if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
-                        {#there is enough remaining cpu capacity
-                            #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Good' -Percentage '100%'
-                            New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
-                        }
-                        else 
-                        {#there is not enough cpu capacity remaining
-                            #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Dead' -Percentage '0%'
-                            New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
-                        }
+                    
+                    #showing capacity numbers for the queried cluster
+                    New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White -Wrap wrap {
+                        #showing capacity status widget
+                        New-HTMLPanel -Invisible {   
+                            if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
+                            {#there is enough remaining cpu capacity
+                                #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Good' -Percentage '100%'
+                                New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
+                            }
+                            else 
+                            {#there is not enough cpu capacity remaining
+                                #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Dead' -Percentage '0%'
+                                New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
+                            }
 
-                        if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
-                        {#there is enough remaining memory capacity
-                            #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Good' -Percentage '100%'
-                            New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
+                            if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
+                            {#there is enough remaining memory capacity
+                                #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Good' -Percentage '100%'
+                                New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
+                            }
+                            else 
+                            {#there is not enough memory capacity remaining
+                                #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Dead' -Percentage '0%'
+                                New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
+                            }
                         }
-                        else 
-                        {#there is not enough memory capacity remaining
-                            #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Dead' -Percentage '0%'
-                            New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
-                        }
-                    }
-
-                    New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                        
+                        #showing capacity numbers 
                         New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter
                     }
+                    
+                    #showing capacity details for metro protected uvms
                     if ($myvar_ntnx_cluster_ma_uvms)
                     {#there are powered on vms protected by metro availability
                         New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
                             New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
                         }
                     }
+
+                    #showing capacity graphs
                     if ($myvar_ntnx_cluster_ma_uvms)
                     {#there are powered on vms protected by metro availability
                         New-HTMLPanel {
@@ -645,15 +654,20 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
 
+                #showing details of metro enabled uvms
                 if ($myvar_ntnx_cluster_ma_uvms)
                 {#there are powered on vms protected by metro availability
                     New-HtmlSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
                         New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
                     }
                 }
+
+                #showing queried cluster hosts details
                 New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
                     New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
                 }
+                
+                #showing queried cluster uvms details
                 New-HtmlSection -HeaderText "UVM details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
                     New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvms_info) -HideFooter
                 }             
