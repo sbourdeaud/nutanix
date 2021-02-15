@@ -1194,11 +1194,11 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [DATA] CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_ram) GiB" -ForegroundColor White
             Write-Host "$(get-date) [DATA] Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_cpu_total)" -ForegroundColor White
             Write-Host "$(get-date) [DATA] Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total) GiB" -ForegroundColor White
-            Write-Host "$(get-date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_cpu) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_cpu) vCPUs" -ForegroundColor White
             Write-Host "$(get-date) [DATA] UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_ram_gib) GiB" -ForegroundColor White
-            Write-Host "$(get-date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_cpu) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_cpu) vCPUs" -ForegroundColor White
             Write-Host "$(get-date) [DATA] UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_ram_gib) GiB" -ForegroundColor White
-            Write-Host "$(get-date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_cpu) cores" -ForegroundColor White
+            Write-Host "$(get-date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs" -ForegroundColor White
             Write-Host "$(get-date) [DATA] UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_ram_gib) GiB" -ForegroundColor White
             if ($myvar_ntnx_cluster_ma_uvms)
             {#there are powered on vms protected by metro availability
@@ -1209,11 +1209,11 @@ Date       By   Updates (newest updates at the top)
             #* checking remaining capacity is sufficient
             if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
             {#there is enough remaining cpu capacity
-                Write-Host "$(get-date) [INFO] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) CPU cores still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) CPU cores." -ForegroundColor Green
+                Write-Host "$(get-date) [INFO] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) vCPUs." -ForegroundColor Green
             }
             else 
             {#there is not enough cpu capacity remaining
-                Write-Host "$(get-date) [WARNING] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) CPU cores still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) CPU cores!" -ForegroundColor Yellow
+                Write-Host "$(get-date) [WARNING] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) vCPUs!" -ForegroundColor Yellow
             }
             if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
             {#there is enough remaining memory capacity
@@ -1236,26 +1236,26 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [DATA] CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cvm_reserved_ram) GiB" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_hypervisor_overhead_cpu_total)" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_hypervisor_overhead_ram_gib_total) GiB" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_cpu) cores" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_cpu) vCPUs" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_ram_gib) GiB" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_cpu) cores" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_cpu) vCPUs" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_ram_gib) GiB" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) cores" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) GiB" -ForegroundColor White
                 if ($myvar_ntnx_remote_cluster_ma_uvms)
                 {#there are powered on vms protected by metro availability
-                    Write-Host "$(get-date) [DATA] Metro enabled UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) cores" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Metro enabled UVM allocated vCPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) vCPUs" -ForegroundColor White
                     Write-Host "$(get-date) [DATA] Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB" -ForegroundColor White
                 }
 
                 #* checking remaining capacity is sufficient
                 if ($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_remote_cluster_uvm_remaining_cpu)
                 {#there is enough remaining cpu capacity
-                    Write-Host "$(get-date) [INFO] There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) CPU cores still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) CPU cores." -ForegroundColor Green
+                    Write-Host "$(get-date) [INFO] There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) vCPUs." -ForegroundColor Green
                 }
                 else 
                 {#there is not enough cpu capacity remaining
-                    Write-Host "$(get-date) [WARNING] There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) CPU cores still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) CPU cores!" -ForegroundColor Yellow
+                    Write-Host "$(get-date) [WARNING] There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) vCPUs!" -ForegroundColor Yellow
                 }
                 if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
                 {#there is enough remaining memory capacity
@@ -1267,8 +1267,8 @@ Date       By   Updates (newest updates at the top)
                 }
 
                 Write-Host ""
-                Write-Host "$(get-date) Failover capacity for metro enabled cluster $($myvar_ntnx_cluster_name) is: $($myvar_ntnx_cluster_failover_capacity_status)" -ForegroundColor $myvar_ntnx_cluster_failover_capacity_color
-                Write-Host "$(get-date) Failover capacity for metro enabled cluster $($myvar_ntnx_remote_cluster_name) is: $($myvar_ntnx_remote_cluster_failover_capacity_status)" -ForegroundColor $myvar_ntnx_remote_cluster_failover_capacity_color
+                Write-Host "$(get-date) Cluster $($myvar_ntnx_cluster_name) Metro Failover capability is: $($myvar_ntnx_cluster_failover_capacity_status)" -ForegroundColor $myvar_ntnx_cluster_failover_capacity_color
+                Write-Host "$(get-date) Cluster $($myvar_ntnx_remote_cluster_name) Metro Failover capability is: $($myvar_ntnx_remote_cluster_failover_capacity_status)" -ForegroundColor $myvar_ntnx_remote_cluster_failover_capacity_color
                 Write-Host ""
             }
         #endregion
