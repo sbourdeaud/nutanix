@@ -739,13 +739,13 @@ Date       By   Updates (newest updates at the top)
             #for ntnx_cluster
             if (($myvar_ntnx_remote_cluster_uvm_remaining_cpu -lt $myvar_ntnx_cluster_ma_uvm_allocated_cpu) -and ($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib -lt $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib))
             {#remote site cpu and memory capacity is less than metro uvm allocated: there is insufficient capacity for failover
-                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores) and Memory ($($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_remote_cluster_name)"
+                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) vcpus) and Memory ($($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_remote_cluster_name)"
                 $myvar_ntnx_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_cluster_failover_capacity_icon = "bell"
             }
             elseif ($myvar_ntnx_remote_cluster_uvm_remaining_cpu -lt $myvar_ntnx_cluster_ma_uvm_allocated_cpu)
             {#remote site cpu capacity is less than metro uvm allocated: there is insufficient cpu capacity for failover
-                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores) on cluster $($myvar_ntnx_remote_cluster_name)"
+                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) vcpus) on cluster $($myvar_ntnx_remote_cluster_name)"
                 $myvar_ntnx_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_cluster_failover_capacity_icon = "bell"
             }
@@ -757,7 +757,7 @@ Date       By   Updates (newest updates at the top)
             }
             else 
             {#remote site cpu or memory capacity is more than metro uvm allocated: there is sufficient capacity for failover
-                $myvar_ntnx_cluster_failover_capacity_status = "Sufficient CPU and Memory on cluster $($myvar_ntnx_remote_cluster_name)"
+                $myvar_ntnx_cluster_failover_capacity_status = "Sufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) vcpus) and Memory ($($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_remote_cluster_name)"
                 $myvar_ntnx_cluster_failover_capacity_color = "Green"
                 $myvar_ntnx_cluster_failover_capacity_icon = "check"
             }
@@ -765,13 +765,13 @@ Date       By   Updates (newest updates at the top)
             #for ntnx_remote_cluster
             if (($myvar_ntnx_cluster_uvm_remaining_cpu -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) -and ($myvar_ntnx_cluster_uvm_remaining_ram_gib -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib))
             {#remote site cpu and memory capacity is less than metro uvm allocated: there is insufficient capacity for failover
-                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) cores) and Memory ($($myvar_ntnx_cluster_uvm_remaining_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_cluster_name)"
+                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) vcpus) and Memory ($($myvar_ntnx_cluster_uvm_remaining_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_cluster_name)"
                 $myvar_ntnx_remote_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_remote_cluster_failover_capacity_icon = "bell"
             }
             elseif ($myvar_ntnx_cluster_uvm_remaining_cpu -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu)
             {#remote site cpu capacity is less than metro uvm allocated: there is insufficient cpu capacity for failover
-                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) cores) on cluster $($myvar_ntnx_cluster_name)"
+                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) vcpus) on cluster $($myvar_ntnx_cluster_name)"
                 $myvar_ntnx_remote_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_remote_cluster_failover_capacity_icon = "bell"
             }
@@ -783,7 +783,7 @@ Date       By   Updates (newest updates at the top)
             }
             else 
             {#remote site cpu or memory capacity is more than metro uvm allocated: there is sufficient capacity for failover
-                $myvar_ntnx_remote_cluster_failover_capacity_status = "Sufficient CPU and Memory on cluster $($myvar_ntnx_cluster_name)"
+                $myvar_ntnx_remote_cluster_failover_capacity_status = "Sufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) vcpus) and Memory ($($myvar_ntnx_cluster_uvm_remaining_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_cluster_name)"
                 $myvar_ntnx_remote_cluster_failover_capacity_color = "Green"
                 $myvar_ntnx_remote_cluster_failover_capacity_icon = "check"
             }
@@ -855,22 +855,22 @@ Date       By   Updates (newest updates at the top)
 
         #uvm capacities
         $myvar_ntnx_cluster_uvm_capacity = [ordered]@{
-            "Total CPU cores Capacity for UVMs" = $myvar_ntnx_cluster_uvm_capacity_total_cpu;
+            "Total vCPUs Capacity for UVMs" = $myvar_ntnx_cluster_uvm_capacity_total_cpu;
             "Total Memory GiB Capacity for UVMs" = $myvar_ntnx_cluster_uvm_capacity_total_ram_gib;
-            "CPU cores Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_cpu;
+            "vCPUs Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_cpu;
             "Memory GiB Allocated to UVMs" = $myvar_ntnx_cluster_uvm_allocated_ram_gib;
-            "Remaining CPU cores for UVMs" = $myvar_ntnx_cluster_uvm_remaining_cpu;
+            "Remaining vCPUs for UVMs" = $myvar_ntnx_cluster_uvm_remaining_cpu;
             "Remaining Memory GiB for UVMs" = $myvar_ntnx_cluster_uvm_remaining_ram_gib;
         }
         #for ntnx_remote_site_cluster
         if ($myvar_ntnx_cluster_ma_active_ctrs_names)
         {#we have metro protected containers
             $myvar_ntnx_remote_cluster_uvm_capacity = [ordered]@{
-                "Total CPU cores Capacity for UVMs" = $myvar_ntnx_remote_cluster_uvm_capacity_total_cpu;
+                "Total vCPUs Capacity for UVMs" = $myvar_ntnx_remote_cluster_uvm_capacity_total_cpu;
                 "Total Memory GiB Capacity for UVMs" = $myvar_ntnx_remote_cluster_uvm_capacity_total_ram_gib;
-                "CPU cores Allocated to UVMs" = $myvar_ntnx_remote_cluster_uvm_allocated_cpu;
+                "vCPUs Allocated to UVMs" = $myvar_ntnx_remote_cluster_uvm_allocated_cpu;
                 "Memory GiB Allocated to UVMs" = $myvar_ntnx_remote_cluster_uvm_allocated_ram_gib;
-                "Remaining CPU cores for UVMs" = $myvar_ntnx_remote_cluster_uvm_remaining_cpu;
+                "Remaining vCPUs for UVMs" = $myvar_ntnx_remote_cluster_uvm_remaining_cpu;
                 "Remaining Memory GiB for UVMs" = $myvar_ntnx_remote_cluster_uvm_remaining_ram_gib;
             }
         }
@@ -879,7 +879,7 @@ Date       By   Updates (newest updates at the top)
         if ($myvar_ntnx_cluster_ma_uvms)
         {#there are powered on vms protected by metro availability
             $myvar_ntnx_cluster_ma_uvms_capacity_allocated = [ordered]@{
-                "CPU cores Allocated to metro protected UVMs" = $myvar_ntnx_cluster_ma_uvm_allocated_cpu;
+                "vCPUs Allocated to metro protected UVMs" = $myvar_ntnx_cluster_ma_uvm_allocated_cpu;
                 "Memory GiB Allocated to metro protected UVMs" = $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib
             }
         }
@@ -889,7 +889,7 @@ Date       By   Updates (newest updates at the top)
             if ($myvar_ntnx_remote_cluster_ma_uvms)
             {#there are powered on vms protected by metro availability
                 $myvar_ntnx_remote_cluster_ma_uvms_capacity_allocated = [ordered]@{
-                    "CPU cores Allocated to metro protected UVMs" = $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu;
+                    "vCPUs Allocated to metro protected UVMs" = $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu;
                     "Memory GiB Allocated to metro protected UVMs" = $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib
                 }
             }
@@ -943,8 +943,8 @@ Date       By   Updates (newest updates at the top)
                         $myvar_ntnx_remote_cluster_memory_color = "Red"
                     }
 
-                    $myvar_ntnx_cluster_widget_header = "Failover Capacity for Metro Enabled Cluster $myvar_ntnx_cluster_name"
-                    $myvar_ntnx_remote_cluster_widget_header = "Failover Capacity for Metro Enabled Cluster $myvar_ntnx_remote_cluster_name"
+                    $myvar_ntnx_cluster_widget_header = "$myvar_ntnx_cluster_name Metro Failover"
+                    $myvar_ntnx_remote_cluster_widget_header = "$myvar_ntnx_remote_cluster_name Metro Failover"
                 }
 
                 New-Html -TitleText "Capacity Report" -ShowHtml -Online {
@@ -979,7 +979,7 @@ Date       By   Updates (newest updates at the top)
 
                     if ($myvar_ntnx_cluster_ma_active_ctrs_names)
                     {#we have metro protected containers
-                        New-HtmlSection -HeaderText "Failover Capacity" -Wrap wrap -CanCollapse -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                        New-HtmlSection -HeaderText "Metro Failover Capability" -Wrap wrap -CanCollapse -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
                             #showing capacity status widget
                             New-HTMLPanel -Invisible {   
                                 New-HTMLToast -TextHeader $myvar_ntnx_cluster_widget_header -Text $myvar_ntnx_cluster_failover_capacity_status -TextColor $myvar_ntnx_cluster_failover_capacity_color -TextHeaderColor $myvar_ntnx_cluster_failover_capacity_color -BarColorLeft $myvar_ntnx_cluster_failover_capacity_color -BarColorRight $myvar_ntnx_cluster_failover_capacity_color -IconSolid $myvar_ntnx_cluster_failover_capacity_icon -IconColor $myvar_ntnx_cluster_failover_capacity_color
@@ -1021,7 +1021,7 @@ Date       By   Updates (newest updates at the top)
                             New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter {
                                 #New-HTMLTableCondition -Name 'HandleCount' -Type number -Operator gt -Value 300 -BackgroundColor Yellow
                                 #New-HTMLTableCondition -Name 'ID' -Type number -Operator gt -Value 16000 -BackgroundColor Green
-                                New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining CPU cores for UVMs' -BackgroundColor $myvar_ntnx_cluster_cpu_color -Row -Color White
+                                New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining vCPUs for UVMs' -BackgroundColor $myvar_ntnx_cluster_cpu_color -Row -Color White
                                 New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining Memory GiB for UVMs' -BackgroundColor $myvar_ntnx_cluster_memory_color -Row  -Color White
                             }
                         }
@@ -1042,7 +1042,7 @@ Date       By   Updates (newest updates at the top)
                                     New-ChartToolbar -Download
                                     New-ChartBarOptions -Type barStacked
                                     New-ChartLegend -Name 'Free', 'Allocated', 'Metro'
-                                    New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, ($myvar_ntnx_cluster_uvm_allocated_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_cluster_ma_uvm_allocated_cpu
+                                    New-ChartBar -Name 'vCPUs' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, ($myvar_ntnx_cluster_uvm_allocated_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_cluster_ma_uvm_allocated_cpu
                                     New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, ($myvar_ntnx_cluster_uvm_allocated_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib), $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib
                                 }
                             }
@@ -1054,7 +1054,7 @@ Date       By   Updates (newest updates at the top)
                                     New-ChartToolbar -Download
                                     New-ChartBarOptions -Type barStacked
                                     New-ChartLegend -Name 'Free', 'Allocated'
-                                    New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, $myvar_ntnx_cluster_uvm_allocated_cpu
+                                    New-ChartBar -Name 'vCPUs' -Value $myvar_ntnx_cluster_uvm_remaining_cpu, $myvar_ntnx_cluster_uvm_allocated_cpu
                                     New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_cluster_uvm_remaining_ram_gib, $myvar_ntnx_cluster_uvm_allocated_ram_gib
                                 }
                             }
@@ -1093,7 +1093,7 @@ Date       By   Updates (newest updates at the top)
                                 New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_uvm_capacity) -HideFooter {
                                     #New-HTMLTableCondition -Name 'HandleCount' -Type number -Operator gt -Value 300 -BackgroundColor Yellow
                                     #New-HTMLTableCondition -Name 'ID' -Type number -Operator gt -Value 16000 -BackgroundColor Green
-                                    New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining CPU cores for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_cpu_color -Row -Color White
+                                    New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining vCPUs for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_cpu_color -Row -Color White
                                     New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining Memory GiB for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_memory_color -Row  -Color White
                                 }
                             }
@@ -1114,7 +1114,7 @@ Date       By   Updates (newest updates at the top)
                                         New-ChartToolbar -Download
                                         New-ChartBarOptions -Type barStacked
                                         New-ChartLegend -Name 'Free', 'Allocated', 'Metro'
-                                        New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_remote_cluster_uvm_remaining_cpu, ($myvar_ntnx_remote_cluster_uvm_allocated_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu
+                                        New-ChartBar -Name 'vCPUs' -Value $myvar_ntnx_remote_cluster_uvm_remaining_cpu, ($myvar_ntnx_remote_cluster_uvm_allocated_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu), $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu
                                         New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_remote_cluster_uvm_remaining_ram_gib, ($myvar_ntnx_remote_cluster_uvm_allocated_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib), $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib
                                     }
                                 }
@@ -1126,7 +1126,7 @@ Date       By   Updates (newest updates at the top)
                                         New-ChartToolbar -Download
                                         New-ChartBarOptions -Type barStacked
                                         New-ChartLegend -Name 'Free', 'Allocated'
-                                        New-ChartBar -Name 'CPU Cores' -Value $myvar_ntnx_remote_cluster_uvm_remaining_cpu, $myvar_ntnx_remote_cluster_uvm_allocated_cpu
+                                        New-ChartBar -Name 'vCPUs' -Value $myvar_ntnx_remote_cluster_uvm_remaining_cpu, $myvar_ntnx_remote_cluster_uvm_allocated_cpu
                                         New-ChartBar -Name 'Memory GiB' -Value $myvar_ntnx_remote_cluster_uvm_remaining_ram_gib, $myvar_ntnx_remote_cluster_uvm_allocated_ram_gib
                                     }
                                 }
