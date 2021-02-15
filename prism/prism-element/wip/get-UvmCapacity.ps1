@@ -140,10 +140,13 @@ Date       By   Updates (newest updates at the top)
     #endregion
 #endregion
 
+#todo: move bar graphs under each cluster section
+#todo: if remote site is down, still show report with warning for remote site and assess current capacity
+#todo: add storage capacity data
 #todo: look into sending metrics to influxdb using REST (https://github.com/markwragg/Powershell-Influx)
 #todo: add smtp code
 #todo: add zabbix code
-#todo: if remote site is down, still show report with warning for remote site and assess current capacity
+
 #* constants and configuration here
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
@@ -736,19 +739,19 @@ Date       By   Updates (newest updates at the top)
             #for ntnx_cluster
             if (($myvar_ntnx_remote_cluster_uvm_remaining_cpu -lt $myvar_ntnx_cluster_ma_uvm_allocated_cpu) -and ($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib -lt $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib))
             {#remote site cpu and memory capacity is less than metro uvm allocated: there is insufficient capacity for failover
-                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU and Memory on cluster $($myvar_ntnx_remote_cluster_name)"
+                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores) and Memory ($($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_remote_cluster_name)"
                 $myvar_ntnx_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_cluster_failover_capacity_icon = "bell"
             }
             elseif ($myvar_ntnx_remote_cluster_uvm_remaining_cpu -lt $myvar_ntnx_cluster_ma_uvm_allocated_cpu)
             {#remote site cpu capacity is less than metro uvm allocated: there is insufficient cpu capacity for failover
-                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU on cluster $($myvar_ntnx_remote_cluster_name)"
+                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores) on cluster $($myvar_ntnx_remote_cluster_name)"
                 $myvar_ntnx_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_cluster_failover_capacity_icon = "bell"
             }
             elseif ($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib -lt $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) 
             {#remote site memory capacity is less than metro uvm allocated: there is insufficient memory capacity for failover
-                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient Memory on cluster $($myvar_ntnx_remote_cluster_name)"
+                $myvar_ntnx_cluster_failover_capacity_status = "Insufficient Memory ($($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_remote_cluster_name)"
                 $myvar_ntnx_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_cluster_failover_capacity_icon = "bell"
             }
@@ -762,19 +765,19 @@ Date       By   Updates (newest updates at the top)
             #for ntnx_remote_cluster
             if (($myvar_ntnx_cluster_uvm_remaining_cpu -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) -and ($myvar_ntnx_cluster_uvm_remaining_ram_gib -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib))
             {#remote site cpu and memory capacity is less than metro uvm allocated: there is insufficient capacity for failover
-                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU and Memory on cluster $($myvar_ntnx_cluster_name)"
+                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) cores) and Memory ($($myvar_ntnx_cluster_uvm_remaining_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_cluster_name)"
                 $myvar_ntnx_remote_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_remote_cluster_failover_capacity_icon = "bell"
             }
             elseif ($myvar_ntnx_cluster_uvm_remaining_cpu -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu)
             {#remote site cpu capacity is less than metro uvm allocated: there is insufficient cpu capacity for failover
-                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU on cluster $($myvar_ntnx_cluster_name)"
+                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient CPU ($($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) cores) on cluster $($myvar_ntnx_cluster_name)"
                 $myvar_ntnx_remote_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_remote_cluster_failover_capacity_icon = "bell"
             }
             elseif ($myvar_ntnx_cluster_uvm_remaining_ram_gib -lt $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) 
             {#remote site memory capacity is less than metro uvm allocated: there is insufficient memory capacity for failover
-                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient Memory on cluster $($myvar_ntnx_cluster_name)"
+                $myvar_ntnx_remote_cluster_failover_capacity_status = "Insufficient Memory ($($myvar_ntnx_cluster_uvm_remaining_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB) on cluster $($myvar_ntnx_cluster_name)"
                 $myvar_ntnx_remote_cluster_failover_capacity_color = "Red"
                 $myvar_ntnx_remote_cluster_failover_capacity_icon = "bell"
             }
