@@ -335,7 +335,27 @@ Date       By   Updates (newest updates at the top)
             $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/storage_containers/" -f $cluster
             $method = "GET"
             $myvar_ntnx_cluster_storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-            Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers information from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan    
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers information from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+            
+            [System.Collections.ArrayList]$myvar_ntnx_cluster_storage_containers_info = New-Object System.Collections.ArrayList($null)
+            ForEach ($myvar_ntnx_cluster_storage_container in $myvar_ntnx_cluster_storage_containers.entities)
+            {#collect specific information for each UVM
+                $myvar_ntnx_cluster_storage_container_info = [ordered]@{
+                    "name" = $myvar_ntnx_cluster_storage_container.name;
+                    "user_capacity_gib" = [math]::round($myvar_ntnx_cluster_storage_container.usage_stats."storage.user_capacity_bytes" /1024 /1024 /1024,0);
+                    "user_free_gib" = [math]::round($myvar_ntnx_cluster_storage_container.usage_stats."storage.user_free_bytes" /1024 /1024 /1024,0);
+                    "replication_factor" = $myvar_ntnx_cluster_storage_container.replication_factor;
+                    "erasure_code" = $myvar_ntnx_cluster_storage_container.erasure_code;
+                    "finger_print_on_write" = $myvar_ntnx_cluster_storage_container.finger_print_on_write;
+                    "on_disk_dedup" = $myvar_ntnx_cluster_storage_container.on_disk_dedup;
+                    "compression_enabled" = $myvar_ntnx_cluster_storage_container.compression_enabled;
+                    "compression_delay_in_secs" = $myvar_ntnx_cluster_storage_container.compression_delay_in_secs;
+                    "user_capacity_bytes" = $myvar_ntnx_cluster_storage_container.usage_stats."storage.user_capacity_bytes";
+                    "user_free_bytes" = $myvar_ntnx_cluster_storage_container.usage_stats."storage.user_free_bytes";
+                }
+                #store the results for this entity in our overall result variable
+                $myvar_ntnx_cluster_storage_containers_info.Add((New-Object PSObject -Property $myvar_ntnx_cluster_storage_container_info)) | Out-Null
+            }
         #endregion
         
         #* retrieve protection domains information
@@ -560,6 +580,26 @@ Date       By   Updates (newest updates at the top)
                         $method = "GET"
                         $myvar_ntnx_remote_cluster_storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                         Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers information from Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
+
+                        [System.Collections.ArrayList]$myvar_ntnx_remote_cluster_storage_containers_info = New-Object System.Collections.ArrayList($null)
+                        ForEach ($myvar_ntnx_remote_cluster_storage_container in $myvar_ntnx_cluster_storage_containers.entities)
+                        {#collect specific information for each UVM
+                            $myvar_ntnx_remote_cluster_storage_container_info = [ordered]@{
+                                "name" = $myvar_ntnx_remote_cluster_storage_container.name;
+                                "user_capacity_gib" = [math]::round($myvar_ntnx_remote_cluster_storage_container.usage_stats."storage.user_capacity_bytes" /1024 /1024 /1024,0);
+                                "user_free_gib" = [math]::round($myvar_ntnx_remote_cluster_storage_container.usage_stats."storage.user_free_bytes" /1024 /1024 /1024,0);
+                                "replication_factor" = $myvar_ntnx_remote_cluster_storage_container.replication_factor;
+                                "erasure_code" = $myvar_ntnx_remote_cluster_storage_container.erasure_code;
+                                "finger_print_on_write" = $myvar_ntnx_remote_cluster_storage_container.finger_print_on_write;
+                                "on_disk_dedup" = $myvar_ntnx_remote_cluster_storage_container.on_disk_dedup;
+                                "compression_enabled" = $myvar_ntnx_remote_cluster_storage_container.compression_enabled;
+                                "compression_delay_in_secs" = $myvar_ntnx_remote_cluster_storage_container.compression_delay_in_secs;
+                                "user_capacity_bytes" = $myvar_ntnx_remote_cluster_storage_container.usage_stats."storage.user_capacity_bytes";
+                                "user_free_bytes" = $myvar_ntnx_remote_cluster_storage_container.usage_stats."storage.user_free_bytes";
+                            }
+                            #store the results for this entity in our overall result variable
+                            $myvar_ntnx_remote_cluster_storage_containers_info.Add((New-Object PSObject -Property $myvar_ntnx_remote_cluster_storage_container_info)) | Out-Null
+                        }
                     #endregion
 
                     #* retrieve remote protection domains information
@@ -1254,6 +1294,19 @@ Date       By   Updates (newest updates at the top)
                     {#remote site is available
                         New-HtmlSection -HeaderText "UVM details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
                             New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_uvms_info) -HideFooter
+                        }
+                    }
+
+                    #showing queried cluster storage containers details
+                    New-HtmlSection -HeaderText "Storage containers details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_storage_containers_info) -HideFooter
+                    }
+
+                    #showing remote cluster storage containers details
+                    if ($myvar_remote_site_online)
+                    {#remote site is available
+                        New-HtmlSection -HeaderText "Storage containers details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                            New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_storage_containers_info) -HideFooter
                         }
                     }
                 }

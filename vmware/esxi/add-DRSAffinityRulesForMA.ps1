@@ -21,6 +21,9 @@
   Use this switch if you do NOT want to update DRS rules. Only groups will be updated. This can be useful when using the script within the context of a failback.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
+.PARAMETER vcenterCreds
+  Specifies a custom credentials file name for vCenter authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$vcenterCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
+  If you do not specify a credential file, the script will prompt you for this information, unless your logged in user already has access to vCenter.
 .EXAMPLE
 .\add-DRSAffinityRulesForMA.ps1 -ntnx_cluster1 ntnxc1.local -ntnx_cluster2 ntnxc2.local -vcenter vcenter1.local
 Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
@@ -28,7 +31,7 @@ Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: February 16th 2021
 #>
 
 #region A - parameters
@@ -43,6 +46,7 @@ Param
 	[parameter(mandatory = $false)] [string]$ntnx_cluster2,
     [parameter(mandatory = $false)] [string]$vcenter,
     [parameter(mandatory = $false)] $prismCreds,
+    [parameter(mandatory = $false)] $vcenterCreds,
     [parameter(mandatory = $false)] [switch]$noruleupdate
 )
 #endregion
@@ -915,6 +919,28 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
         }
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
+
+    if ($vcenterCreds) 
+    {#vcenterCreds was specified
+        try 
+        {
+            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
+            $vcenterUsername = $vcenterCredentials.UserName
+            $vcenterSecurePassword = $vcenterCredentials.Password
+        }
+        catch 
+        {
+            Set-CustomCredentials -credname $vcenterCreds
+            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
+            $vcenterUsername = $vcenterCredentials.UserName
+            $vcenterSecurePassword = $vcenterCredentials.Password
+        }
+        $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
+    }
+	else 
+	{#no vcenter creds were given
+		$vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
+	}
 #endregion
 
 #region E - processing
@@ -1049,7 +1075,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
     {#connect to vcenter now
         #region connect
 		OutputLogData -category "INFO" -message "Connecting to vCenter server $myvarvCenter..."
-		if (!($myvarvCenterObject = Connect-VIServer $myvarvCenter))
+		if (!($myvarvCenterObject = Connect-VIServer $myvarvCenter -Credential $vcenterCredentials))
 		{#make sure we can connect to the vCenter server
 			$myvarerror = $error[0].Exception.Message
 			OutputLogData -category "ERROR" -message "$myvarerror"
