@@ -1285,7 +1285,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                         else
                         {#vm group exists already, update it
                             OutputLogData -category "INFO" -message "Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster1..."
-                            Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $myvarNtnxC1_vms -groupVMName $myvarDRSVMGroupName
+                            Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $vm_objects -groupVMName $myvarDRSVMGroupName
                         }
 
                         $myvarDRSRuleName = "DRS_Rule_MA_" + $myvarDatastore
@@ -1336,7 +1336,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                         else
                         {#drs vm group is there, update it
                             OutputLogData -category "INFO" -message "Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster2..."
-                            Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $myvarNtnxC2_vms -groupVMName $myvarDRSVMGroupName
+                            Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $vm_objects -groupVMName $myvarDRSVMGroupName
                         }
 
 
