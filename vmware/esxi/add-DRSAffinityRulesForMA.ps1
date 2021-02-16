@@ -1280,7 +1280,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                         if (!($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName})) #the DRS VM Group does not exist, so let's create it
                         {#vm groups ain't there, create it
                             OutputLogData -category "INFO" -message "Creating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster1..."
-                            $myvarNtnxC1_vms | New-DrsVMGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
+                            $vm_objects | New-DrsVMGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
                         }
                         else
                         {#vm group exists already, update it
@@ -1331,7 +1331,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                         if (!($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName}))
                         {#drs vm group ain't there, create it
                             OutputLogData -category "INFO" -message "Creating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster2..."
-                            $myvarNtnxC2_vms | New-DrsVMGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
+                            $vm_objects | New-DrsVMGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
                         }
                         else
                         {#drs vm group is there, update it
