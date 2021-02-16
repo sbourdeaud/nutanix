@@ -513,7 +513,13 @@ Re-enable replication
  11/03/2020 sb   Initial release.
  11/06/2020 sb   Added -reEnableOnly switch.
  02/06/2021 sb   Replaced username with get-credential
- 02/16/2021 sb   Misc updates after first runs in production
+ 02/16/2021 sb   Misc updates after first runs in production: moved DRS check to
+                 PowerCLI commands as status in Prism cluster json object is
+                 sometimes incorrect. Added code to force migrate powered off
+                 virtual machines in a metro enabled container. Added code to
+                 keep track of remote site cluster hypervisor hosts.  Added code
+                 to display number of remaining virtual machines in a metro
+                 enabled container.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
