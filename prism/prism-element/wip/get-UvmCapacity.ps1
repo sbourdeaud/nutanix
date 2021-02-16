@@ -191,8 +191,8 @@ Date       By   Updates (newest updates at the top)
     #endregion
 #endregion
 
-#todo: add storage capacity data
 #todo: look into sending metrics to influxdb using REST (https://github.com/markwragg/Powershell-Influx)
+#todo: enable html report to file and/or open it automatically
 #todo: add smtp code
 #todo: add zabbix code
 #todo: change script structure to enable loop processing of multiple clusters (exp: with prism central as entry point)
@@ -339,7 +339,7 @@ Date       By   Updates (newest updates at the top)
             
             [System.Collections.ArrayList]$myvar_ntnx_cluster_storage_containers_info = New-Object System.Collections.ArrayList($null)
             ForEach ($myvar_ntnx_cluster_storage_container in $myvar_ntnx_cluster_storage_containers.entities)
-            {#collect specific information for each UVM
+            {#collect specific information for each storage container
                 $myvar_ntnx_cluster_storage_container_info = [ordered]@{
                     "name" = $myvar_ntnx_cluster_storage_container.name;
                     "user_capacity_gib" = [math]::round($myvar_ntnx_cluster_storage_container.usage_stats."storage.user_capacity_bytes" /1024 /1024 /1024,0);
@@ -434,6 +434,7 @@ Date       By   Updates (newest updates at the top)
                         "vm_name" = $myvar_ntnx_cluster_ma_active_ctr_uvm.vmName;
                         "numVCpus" = $myvar_ntnx_cluster_ma_active_ctr_uvm.numVCpus;
                         "memoryCapacityInGiB" = [math]::round($myvar_ntnx_cluster_ma_active_ctr_uvm.memoryCapacityInBytes /1024 /1024 /1024,0);
+                        "diskCapacityInGiB" = [math]::round($myvar_ntnx_cluster_ma_active_ctr_uvm.diskCapacityInBytes /1024 /1024 /1024,0);
                         "host" = $myvar_ntnx_cluster_ma_active_ctr_uvm.hostName;
                         "container_name" = $myvar_ntnx_cluster_ma_active_ctr.name;
                         "memoryCapacityInBytes" = $myvar_ntnx_cluster_ma_active_ctr_uvm.memoryCapacityInBytes;
@@ -583,7 +584,7 @@ Date       By   Updates (newest updates at the top)
 
                         [System.Collections.ArrayList]$myvar_ntnx_remote_cluster_storage_containers_info = New-Object System.Collections.ArrayList($null)
                         ForEach ($myvar_ntnx_remote_cluster_storage_container in $myvar_ntnx_cluster_storage_containers.entities)
-                        {#collect specific information for each UVM
+                        {#collect specific information for each storage container
                             $myvar_ntnx_remote_cluster_storage_container_info = [ordered]@{
                                 "name" = $myvar_ntnx_remote_cluster_storage_container.name;
                                 "user_capacity_gib" = [math]::round($myvar_ntnx_remote_cluster_storage_container.usage_stats."storage.user_capacity_bytes" /1024 /1024 /1024,0);
@@ -678,6 +679,7 @@ Date       By   Updates (newest updates at the top)
                                     "vm_name" = $myvar_ntnx_remote_cluster_ma_active_ctr_uvm.vmName;
                                     "numVCpus" = $myvar_ntnx_remote_cluster_ma_active_ctr_uvm.numVCpus;
                                     "memoryCapacityInGiB" = [math]::round($myvar_ntnx_remote_cluster_ma_active_ctr_uvm.memoryCapacityInBytes /1024 /1024 /1024,0);
+                                    "diskCapacityInGiB" = [math]::round($myvar_ntnx_remote_cluster_ma_active_ctr_uvm.diskCapacityInBytes /1024 /1024 /1024,0);
                                     "host" = $myvar_ntnx_remote_cluster_ma_active_ctr_uvm.hostName;
                                     "container_name" = $myvar_ntnx_remote_cluster_ma_active_ctr.name;
                                     "memoryCapacityInBytes" = $myvar_ntnx_remote_cluster_ma_active_ctr_uvm.memoryCapacityInBytes;

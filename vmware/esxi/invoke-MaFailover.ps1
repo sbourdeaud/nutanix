@@ -37,7 +37,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: February 16th 2021
 #>
 
 #region parameters
@@ -489,10 +489,21 @@ Function Set-NtnxVmhostsToMaintenanceMode
 }#end function Set-NtnxVmhostsToMaintenanceMode
 #endregion
 
+#todo: loop on VM power off status for x minutes (default: 3, but configurable with a parameter) and then force power off VMs instead.
+#todo: check for DRS overrides. By default, it will then prompt the user if that override can be disabled. With an additional parameter, that default behavior can be changed to disable overrides automatically.
+#todo: handle going out of maintenance mode where the script would:
+<# 
+Take ESXi hosts off maintenance mode
+Power on CVMs
+SSH into a CVM to start the cluster
+Migrate VMs back
+Re-enable replication
+#>
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
-#todo should this script include a start section? (already included re-enable for active protection domains)
 #region prepwork
+    $ErrorActionPreference = "Continue"
+
     Write-Host ""
     Write-Host "$(get-date) [STEP] Checking PowerShell configuration ..." -ForegroundColor Magenta
     $HistoryText = @'
@@ -502,6 +513,7 @@ Function Set-NtnxVmhostsToMaintenanceMode
  11/03/2020 sb   Initial release.
  11/06/2020 sb   Added -reEnableOnly switch.
  02/06/2021 sb   Replaced username with get-credential
+ 02/16/2021 sb   Misc updates after first runs in production
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -756,6 +768,7 @@ public class ServerCertificateValidationCallback
             {
                 $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
                 Write-Host "$(get-date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor White
+                <# this check does not work in some environments where vcenter may have clusters where DRS is not enabled
                 if (!$reEnableOnly) 
                 {#we don't really care if DRS is not enabled if all we're doing is re-enabling replication
                     if (!($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).drs_enabled) 
@@ -767,6 +780,7 @@ public class ServerCertificateValidationCallback
                         Write-Host "$(get-date) [DATA] DRS is enabled on vCenter $($myvar_vcenter_ip)" -ForegroundColor White
                     }
                 }
+                #>
             }
         #endregion
 
@@ -953,6 +967,23 @@ public class ServerCertificateValidationCallback
                     Write-Host "$(get-date) [DATA] Nutanix clusters $($myvar_ntnx_cluster_name) and $($myvar_ntnx_remote_cluster_name) have the same registered vCenter server." -ForegroundColor White
                 }
             }
+
+            #* getting remote site hosts information
+            #region GET hosts
+            Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $($myvar_remote_site_ip) ..." -ForegroundColor Green
+            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $myvar_remote_site_ip
+            $method = "GET"
+            try 
+            {
+                $myvar_remote_ntnx_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            }
+            catch
+            {
+                throw "$(get-date) [ERROR] Could not retrieve hosts information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
+            }
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
+            $myvar_remote_ntnx_hosts_ips = ($myvar_remote_ntnx_hosts.entities).hypervisor_address   
+        #endregion
         #endregion
 
         #* trying to connect to vcenter
@@ -961,11 +992,11 @@ public class ServerCertificateValidationCallback
             {
                 Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
                 try 
-                {
+                {#try connecting to vcenter
                     $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
                 }
                 catch 
-                {
+                {#could not connect to vcenter
                     throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
                 }
                 Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
@@ -1051,6 +1082,7 @@ public class ServerCertificateValidationCallback
     
                 #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
                 $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
+                $myvar_remote_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the remote Nutanix cluster
                 Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
                 try 
                 {#get all the vmhosts registered in vCenter
@@ -1083,6 +1115,14 @@ public class ServerCertificateValidationCallback
                                 $myvar_ntnx_vmhosts += $myvar_vmhost
                             }
                         }#end foreach IP loop
+                        foreach ($myvar_remote_host_ip in $myvar_remote_ntnx_hosts_ips) 
+                        {#compare to the host IP addresses we got from the Nutanix cluster
+                            if ($myvar_host_vmk.IP -eq $myvar_remote_host_ip)
+                            {#if we get a match, that vcenter host is in cluster 2
+                                Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor White
+                                $myvar_remote_ntnx_vmhosts += $myvar_vmhost
+                            }
+                        }#end foreach IP loop
                     }#end foreach VMK loop
                 }#end foreach VMhost loop
                 if (!$myvar_ntnx_vmhosts) 
@@ -1096,6 +1136,7 @@ public class ServerCertificateValidationCallback
                 {#we look at which cluster the first vmhost in cluster belongs to.
                     $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
                     $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
+
                     Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
 
                     foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
@@ -1126,10 +1167,14 @@ public class ServerCertificateValidationCallback
                 {
                     throw "$(get-date) [ERROR] HA is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
                 }
-                Write-Host "$(get-date) [INFO] Checking DRS is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
+                Write-Host "$(get-date) [INFO] Checking DRS is enabled and fully automated on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
                 if ($myvar_vsphere_cluster.DrsEnabled -ne $true)  
-                {
+                {#DRS is not enabled on this cluster
                     throw "$(get-date) [ERROR] DRS is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
+                }
+                if ($myvar_vsphere_cluster.DrsAutomationLevel -ne "FullyAutomated")
+                {#DRS is not fully automated on this cluster
+                    Throw "$(get-date) [ERROR] DRS is not fully automated on VMware cluster $($myvar_vsphere_cluster_name)"
                 }
             }
         #endregion
@@ -1181,32 +1226,53 @@ public class ServerCertificateValidationCallback
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Checking all VMs have moved to the remote site for datastore $($myvar_datastore)..." -ForegroundColor Magenta
                     $myvar_drs_done = $false
-                    Do {
+                    Do {#loop until all vms have been moved
                         #figure out which vmhosts have vms running in this datastore
                         try 
                         {
-                            $myvar_datastore_vmhosts = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop | get-vmhost -ErrorAction Stop | Select-Object -Unique -Property Name
+                            #$myvar_datastore_vmhosts = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop | get-vmhost -ErrorAction Stop | Select-Object -Unique -Property name
+                            $myvar_datastore_vms = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop
+                            $myvar_datastore_poweredoff_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOff"}
                         }
                         catch 
                         {
                             throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
                         }
+                        
                         $myvar_vmhost_found = $false
+                        $myvar_vms_to_move = (($myvar_datastore_vms.vmhost).Name | Where-Object {$_ -in $myvar_ntnx_vmhosts.Name}).count
                         foreach ($myvar_ntnx_vmhost in $myvar_ntnx_vmhosts) 
-                        {
-                            if ($myvar_datastore_vmhosts.Name -contains $myvar_ntnx_vmhost.Name) 
-                            {
+                        {#process each host on this site and make sure on this datastore, vms are not running on any of those hosts
+                            if (($myvar_datastore_vms.vmhost).Name -contains $myvar_ntnx_vmhost.Name) 
+                            {#a vm is running on a host on this site still
                                 $myvar_vmhost_found = $true
                             }
                         }
                         if ($myvar_vmhost_found) 
-                        {
-                            Write-Host "$(get-date) [WARNING] There are still virtual machines running on vmhosts from Nutanix cluster $($myvar_ntnx_cluster_name) in datastore $($myvar_datastore). Waiting 15 seconds..." -ForegroundColor Yellow
+                        {#at least one vm is running on a host on this site still
+                            Write-Host "$(get-date) [WARNING] There are still $($myvar_vms_to_move) virtual machines running on vmhosts from Nutanix cluster $($myvar_ntnx_cluster_name) in datastore $($myvar_datastore). Waiting 15 seconds..." -ForegroundColor Yellow
                             Start-Sleep 15
                         } 
                         else 
-                        {
+                        {#all vms in this datastore are running on hosts in the remote site
                             $myvar_drs_done = $true
+                        }
+
+                        #force migrate any powered off vms (which variable contains hosts in the remote site?)
+                        ForEach ($myvar_poweredoff_vm in $myvar_datastore_poweredoff_vms)
+                        {#process each powered off vm
+                            if (($myvar_poweredoff_vm.vmhost).Name -in $myvar_ntnx_vmhosts.Name)
+                            {#that powered off VM needs to be moved
+                                try 
+                                {
+                                    Write-Host "$(get-date) [WARNING] Moving powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name)" -ForegroundColor Yellow
+                                    $result = Move-VM -Location $myvar_remote_ntnx_vmhosts[0] -VM $myvar_poweredoff_vm -ErrorAction Stop
+                                }
+                                catch 
+                                {
+                                    Write-Host "$(get-date) [ERROR] Could not move powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name) : $($_.Exception.Message)" -ForegroundColor Red
+                                }
+                            }
                         }
                     } While (!$myvar_drs_done)
                     Write-Host "$(get-date) [DATA] All virtual machines on datastore $($myvar_datastore) have been moved to $($remote_site_name)..." -ForegroundColor White
