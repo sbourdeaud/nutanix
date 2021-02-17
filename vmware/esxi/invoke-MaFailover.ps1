@@ -517,6 +517,7 @@ Function Set-NtnxVmhostsToMaintenanceMode
 }#end function Set-NtnxVmhostsToMaintenanceMode
 #endregion
 
+#! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
 #todo: check for DRS overrides. By default, it will then prompt the user if that override can be disabled. With an additional parameter, that default behavior can be changed to disable overrides automatically.
 #todo: handle going out of maintenance mode where the script would:
 <# 
