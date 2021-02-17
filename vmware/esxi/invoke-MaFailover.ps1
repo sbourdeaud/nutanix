@@ -19,6 +19,8 @@
   Skip over migration of protection domains and only perform action specified on esxi hosts (maintenance or shutdown). This is useful to resume action if protection domains have already been migrated but there were still UVMs running on the cluster and it could not put hosts in maintenance mode and/or shut them down.
 .PARAMETER shutdownUvms
   ***WARNING*** Specifies that if any remaining user virtual machines are found on a vmhost, they should be powered off. Those would be VMs which were not protected by a metro protection domain or were running on the wrong hosts. Be careful with this parameter!
+.PARAMETER timer
+  Number of seconds you want to wait for VMs to shutdown cleanly (when using -shutdownUvms) before powering them off forcefully. Default is 300 seconds (5 minutes).
 .PARAMETER reEnableOnly
   Try to enable specified active but disabled metro protection domains. Do nothing else.
 .PARAMETER prismCreds
@@ -55,6 +57,7 @@ Param
     [parameter(mandatory = $false)] [string][ValidateSet("maintenance","shutdown")]$action,
     [parameter(mandatory = $false)] [switch]$skipfailover,
     [parameter(mandatory = $false)] [switch]$shutdownUvms,
+    [parameter(mandatory = $false)] [int]$timer,
     [parameter(mandatory = $false)] [switch]$reEnableOnly
 )
 #endregion
@@ -423,10 +426,14 @@ Function Set-NtnxVmhostsToMaintenanceMode
     #* check if there are running uvms on each host
     #check each host ($myvar_ntnx_vmhosts) to see if they have running vms other than cvms
     foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
-        try {
+        try 
+        {
             $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
         }
-        catch {throw "$(get-date) [ERROR] Could not retrieve VMs running on host $($myvar_vmhost.Name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not retrieve VMs running on host $($myvar_vmhost.Name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+        }
         ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}} #exclude CVMs
         if ($myvar_running_vms)
         {
@@ -440,8 +447,26 @@ Function Set-NtnxVmhostsToMaintenanceMode
                 try {$myvar_uvms_shutdown_command = $myvar_running_vms | Stop-VMGuest -ErrorAction Stop -Confirm:$False}
                 catch {throw "$(get-date) [ERROR] Could not shut down UVMs running on host $($myvar_vmhost.Name) : $($_.Exception.Message)"}
                 Write-Host "$(get-date) [SUCCESS] Successfully sent shut down on running UVMs on host $($myvar_vmhost.Name) : $($myvar_running_vms.Name)" -ForegroundColor Cyan
-                Write-Host "$(get-date) [INFO] Waiting for 3 minutes..." -ForegroundColor Green
-                Start-Sleep 180
+                Write-Host "$(get-date) [INFO] Waiting for $($timer) seconds..." -ForegroundColor Green
+                Start-Sleep $timer
+
+                try 
+                {#retrieve vms on this host which are still powered on
+                    $myvar_running_vms = $myvar_running_vms | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
+                }
+                catch
+                {#could not retrieve powered on vms from this host
+                    Throw "$(get-date) [ERROR] Could not retrieve powered on VMs from ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"
+                }
+                if ($myvar_running_vms)
+                {#there are still powered on vms: forcefully powering them off
+                    ForEach ($myvar_running_vm in $myvar_running_vms)
+                    {#force power off on each running vm
+                        Write-Host "$(get-date) [INFO] Forcefully powering off $($myvar_running_vm.Name)..." -ForegroundColor Green
+                        try {$stopVM = Stop-VM -Confirm:$False -ErrorAction Stop -VM $myvar_running_vm -RunAsync}
+                        catch {throw "$(get-date) [ERROR] Could not power off VM $($myvar_running_vm.Name) on ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"}
+                    }
+                }
             }
         }
         else {
@@ -489,7 +514,6 @@ Function Set-NtnxVmhostsToMaintenanceMode
 }#end function Set-NtnxVmhostsToMaintenanceMode
 #endregion
 
-#todo: loop on VM power off status for x minutes (default: 3, but configurable with a parameter) and then force power off VMs instead.
 #todo: check for DRS overrides. By default, it will then prompt the user if that override can be disabled. With an additional parameter, that default behavior can be changed to disable overrides automatically.
 #todo: handle going out of maintenance mode where the script would:
 <# 
@@ -646,7 +670,7 @@ public class ServerCertificateValidationCallback
     Write-Host ""       
     Write-Host "$(get-date) [STEP] Validating parameters ..." -ForegroundColor Magenta
     if ($action -and ($IsMacOS -or $IsLinux)) 
-    {
+    {#we need to connect to CVM using SSH but we're not running this script from a Windows machine (only platform where ssh module used works)
         Throw "$(get-date) [ERROR] You can only use -action on a Windows based system for now! Exiting."
     }
 
@@ -656,17 +680,19 @@ public class ServerCertificateValidationCallback
     }
 
     if (!$pd -and $action)
-    {
+    {#we have specidied an action but no protection domains, so all protection domains will be processed.
         Write-Host "$(get-date) [WARNING] You have specified an action $($action) but no protection domain. We will process ALL active metro availability protection domains!" -ForegroundColor Yellow
         $pd = "all"
     } elseif (!$pd) 
     {#prompt for the Nutanix protection domain name
         $pd = read-host "Enter the name of the protection domain to failover. You can also specify 'all' or a list of names separated by a comma"
     }
+
     if ($pd -ne "all") 
-    {
+    {#pd was specified but is not equal to all. Let's make sure we process it correctly if it is a list.
         $pd_names_list = $pd.Split(",")
     }
+
     if ($action -and ($pd -ne "all"))
     {#check that we are not trying to failover only some protection domains while putting esxi hosts in maintenance or shutting them down
         Throw "$(get-date) [ERROR] If you specify an action, you MUST use 'all' for protection domain as this otherwise would leave VMs on the cluster."
@@ -717,21 +743,22 @@ public class ServerCertificateValidationCallback
 	}
 
     if ($action -and !$cvmCreds) 
-    {
+    {#we have specified an action, but we did not specify cvm credentials
         $myvar_cvm_username = Read-Host "Enter the username to ssh into CVMs"
         $myvar_cvm_secure_password = Read-Host "Enter the CVM user $($myvar_cvm_username) password" -AsSecureString
         $myvar_cvm_credentials = New-Object PSCredential $myvar_cvm_username, $myvar_cvm_secure_password
     }
+
     if ($cvmCreds) 
-    {
+    {#we have specified cvm creds, so le's retrieve them
         try 
-        {
+        {#trying to retrieve from existing encrypted file
             $myvar_cvm_credentials = Get-CustomCredentials -credname $cvmCreds -ErrorAction Stop
             $myvar_cvm_username = $myvar_cvm_credentials.UserName
             $myvar_cvm_secure_password = $myvar_cvm_credentials.Password
         }
         catch 
-        {
+        {#we could not retrieve the creds from file, so prompting
             Set-CustomCredentials -credname $cvmCreds
             $myvar_cvm_credentials = Get-CustomCredentials -credname $cvmCreds -ErrorAction Stop
             $myvar_cvm_username = $myvar_cvm_credentials.UserName
@@ -739,6 +766,8 @@ public class ServerCertificateValidationCallback
         }
         $myvar_cvm_credentials = New-Object PSCredential $myvar_cvm_username, $myvar_cvm_secure_password
     }
+
+    if (!$timer) {$timer = 300}
 #endregion
 
 #region execute
