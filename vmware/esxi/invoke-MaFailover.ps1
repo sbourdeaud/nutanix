@@ -452,7 +452,8 @@ Function Set-NtnxVmhostsToMaintenanceMode
 
                 try 
                 {#retrieve vms on this host which are still powered on
-                    $myvar_running_vms = $myvar_running_vms | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
+                    $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
+                    ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}}
                 }
                 catch
                 {#could not retrieve powered on vms from this host
@@ -466,6 +467,8 @@ Function Set-NtnxVmhostsToMaintenanceMode
                         try {$stopVM = Stop-VM -Confirm:$False -ErrorAction Stop -VM $myvar_running_vm -RunAsync}
                         catch {throw "$(get-date) [ERROR] Could not power off VM $($myvar_running_vm.Name) on ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"}
                     }
+                    Write-Host "$(get-date) [INFO] Waiting for $($timer) seconds..." -ForegroundColor Green
+                    Start-Sleep $timer
                 }
             }
         }
@@ -480,7 +483,7 @@ Function Set-NtnxVmhostsToMaintenanceMode
         Write-Host "$(get-date) [STEP] Stopping Nutanix cluster $($myvar_ntnx_cluster_name) and shutting down CVMs..." -ForegroundColor Magenta
         #sending the cluster stop command
         Write-Host "$(get-date) [INFO] Sending cluster stop command to $($myvar_cvm_ips[0])..." -ForegroundColor Green
-        try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'y' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
+        try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'I agree' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
         catch {throw "$(get-date) [ERROR] Could not send cluster stop command to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
         Write-Host "$(get-date) [SUCCESS] Sent cluster stop command to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
     #endregion
