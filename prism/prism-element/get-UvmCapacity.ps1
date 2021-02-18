@@ -13,6 +13,10 @@
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER html
   Produces an html output in addition to console output.
+.PARAMETER viewnow
+  Means you want the script to open the html report in your default browser immediately after creation.
+.PARAMETER dir
+  Directory/path where to save the html report.  By default, it will be created in the current directory. Note that the name of the report is always capacity_report.html and that you can change this in the script variables section.
 .PARAMETER cluster
   Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER prismCreds
@@ -36,6 +40,8 @@ Connect to a Nutanix cluster of your choice:
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $false)] [switch]$html,
+        [parameter(mandatory = $false)] [switch]$viewnow,
+        [parameter(mandatory = $false)] [string]$dir,
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$prismCreds
     )
@@ -71,27 +77,26 @@ Connect to a Nutanix cluster of your choice:
 
 		process
 		{
-			Write-LogOutput -LogFile $myvarOutputLogFile -category "INFO" -message "Trying to ping IP $ip ..."
+			Write-Host "$(get-date) [INFO] Trying to ping IP $ip ..." -ForegroundColor Green
 			#$Timeout = 100
 			#$Ping = New-Object System.Net.NetworkInformation.Ping
 			#$Response = $Ping.Send($ip,$Timeout)
 			#if (($Response.Status -eq "Success"))
-			try 
-			{
-				$myvar_ping_output = Test-Connection $ip -Count 5 -ErrorAction Stop
-				$myvarPingTest = $true
-				Write-LogOutput -LogFile $myvarOutputLogFile -category "INFO" -message "Successfully pinged IP $ip ..."
-			}
-			catch 
-			{
-				$myvarPingTest = $false
-				Write-LogOutput -LogFile $myvarOutputLogFile -category "ERROR" -message "Could not ping IP $ip ..."
-			} 
+			if (Test-Connection $ip -Count 5 -Quiet)
+            {
+                $myvar_ping_test = $true
+				Write-Host "$(get-date) [INFO] Successfully pinged IP $ip ..." -ForegroundColor Green
+            }
+            else 
+            {
+                $myvar_ping_test = $false
+				Write-Host "$(get-date) [ERROR] Could not ping IP $ip ..." -ForegroundColor Red
+            }
 		}
 
 		end
 		{
-		return $myvarPingTest
+		return $myvar_ping_test
 		}
 	}#end function TestIp
 #endregion
@@ -192,7 +197,6 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #todo: look into sending metrics to influxdb using REST (https://github.com/markwragg/Powershell-Influx)
-#todo: enable html report to file and/or open it automatically
 #todo: add smtp code
 #todo: add zabbix code
 #todo: change script structure to enable loop processing of multiple clusters (exp: with prism central as entry point)
@@ -211,6 +215,7 @@ Date       By   Updates (newest updates at the top)
     $myvar_desired_capacity_headroom_percentage = 10 #this is a percentage of UVM total capacity that you want available at all times. Report will alert if this is not currently met.
 
     #* configuration
+    $myvar_html_report_name = "capacity_report.html"
     $myvar_smtp_server = ""
     $myvar_smtp_from = ""
     $myvar_smtp_to = ""
@@ -238,6 +243,24 @@ Date       By   Updates (newest updates at the top)
             $PrismSecurePassword = $prismCredentials.Password
         }
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    }
+
+    if (!$dir)
+    {#no report directory was specified, so we'll use the current directory
+        $dir = Get-Location | Select-Object -ExpandProperty Path
+    }
+
+    if (!$dir.EndsWith("\")) 
+    {#make sure given log path has a trailing \
+        $dir += "\"
+    }
+    if (Test-Path -path $dir)
+    {
+        $myvar_html_report_name = $dir + $myvar_html_report_name
+    }
+    else 
+    {
+        Throw "$(get-date) [ERROR] Specified log path $($dir) does not exist! Exiting."	
     }
 #endregion
 
@@ -1015,7 +1038,7 @@ Date       By   Updates (newest updates at the top)
         #region html output
             if ($html) 
             {#we need html output
-                Write-Host "$(get-date) [STEP] Creating HTML report..." -ForegroundColor Magenta
+                Write-Host "$(get-date) [STEP] Creating HTML report in file $($dir)$($myvar_html_report_name)..." -ForegroundColor Magenta
 
                 #region determine colors for status widgets
                     if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
@@ -1062,7 +1085,7 @@ Date       By   Updates (newest updates at the top)
                 #endregion
 
                 #* html report creation/formatting starts here
-                New-Html -TitleText "Capacity Report" -ShowHtml -Online {
+                $myvar_html_report = New-Html -TitleText "Capacity Report" -Online {
                     New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
                     New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
                     New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
@@ -1312,7 +1335,13 @@ Date       By   Updates (newest updates at the top)
                         }
                     }
                 }
+                $myvar_html_report | Out-File -FilePath $($myvar_html_report_name)
                 Write-Host ""
+
+                if ($viewnow)
+                {#open the html report now in the default browser
+                    Invoke-Item $myvar_html_report_name
+                }
             }
         #endregion
         

@@ -467,8 +467,8 @@ Function Set-NtnxVmhostsToMaintenanceMode
                         try {$stopVM = Stop-VM -Confirm:$False -ErrorAction Stop -VM $myvar_running_vm -RunAsync}
                         catch {throw "$(get-date) [ERROR] Could not power off VM $($myvar_running_vm.Name) on ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"}
                     }
-                    Write-Host "$(get-date) [INFO] Waiting for $($timer) seconds..." -ForegroundColor Green
-                    Start-Sleep $timer
+                    Write-Host "$(get-date) [INFO] Waiting for 60 seconds..." -ForegroundColor Green
+                    Start-Sleep 60
                 }
             }
         }
