@@ -32,6 +32,8 @@
 .PARAMETER cvmCreds
   Specifies a custom credentials file name for CVM ssh authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$cvmCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file, the script will prompt you for this information.
+.PARAMETER resetOverrides
+  Specifies that if a VM has a DRS override, you want to remove it automatically so that DRS can move the VM.
 .EXAMPLE
 .\invoke-MAFailover.ps1 -cluster c1.local -pd all -action maintenance
 Trigger a manual failover of all metro protection domains and put esxi hosts in maintenance mode:
@@ -57,6 +59,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         [parameter(mandatory = $false)] [string][ValidateSet("maintenance","shutdown")]$action,
         [parameter(mandatory = $false)] [switch]$skipfailover,
         [parameter(mandatory = $false)] [switch]$shutdownUvms,
+        [parameter(mandatory = $false)] [switch]$resetOverrides,
         [parameter(mandatory = $false)] [int]$timer,
         [parameter(mandatory = $false)] [switch]$reEnableOnly
     )
@@ -518,7 +521,6 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #endregion
 
 #! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
-#todo: check for DRS overrides. By default, it will then prompt the user if that override can be disabled. With an additional parameter, that default behavior can be changed to disable overrides automatically.
 #todo: handle going out of maintenance mode where the script would:
 <# 
 Take ESXi hosts off maintenance mode
@@ -527,6 +529,7 @@ SSH into a CVM to start the cluster
 Migrate VMs back
 Re-enable replication
 #>
+
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
 #region prepwork
@@ -1287,13 +1290,30 @@ public class ServerCertificateValidationCallback
                             if ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
                             {#this vm has a DRS override
                                 Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
-                                try 
-                                {#remove VM DRS override
-                                    $result = Set-VM -Name $myvar_datastore_poweredon_vm.Name -DrsAutomationLevel "AsSpecifiedByCluster" -ErrorAction Stop
+                                if (!$resetOverrides)
+                                {#user hasn't specified he want to remove DRS override by default, so prompting
+                                    $myvar_user_choice = Write-CustomPrompt
                                 }
-                                catch 
-                                {#could not remove VM DRS override
-                                    throw "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)"
+                                else 
+                                {#user has already said he wanted to remove DRS overrides by default
+                                    $myvar_user_choice = "y"
+                                }
+                                
+                                if ($myvar_user_choice -match '[yY]')
+                                {#user wants to remove drs override
+                                    try 
+                                    {#remove VM DRS override
+                                        $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
+                                    }
+                                    catch 
+                                    {#could not remove VM DRS override
+                                        Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
+                                        Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
+                                    }
+                                }
+                                else 
+                                {#user does not want to remove override
+                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
                                 }
                             }
                         }
