@@ -43,478 +43,478 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #>
 
 #region parameters
-Param
-(
-    #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
-    [parameter(mandatory = $false)] [switch]$help,
-    [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$debugme,
-    [parameter(mandatory = $false)] [string]$cluster,
-    [parameter(mandatory = $false)] [string]$pd,
-    [parameter(mandatory = $false)] $prismCreds,
-    [parameter(mandatory = $false)] $vcenterCreds,
-    [parameter(mandatory = $false)] $cvmCreds,
-    [parameter(mandatory = $false)] [string][ValidateSet("maintenance","shutdown")]$action,
-    [parameter(mandatory = $false)] [switch]$skipfailover,
-    [parameter(mandatory = $false)] [switch]$shutdownUvms,
-    [parameter(mandatory = $false)] [int]$timer,
-    [parameter(mandatory = $false)] [switch]$reEnableOnly
-)
+    Param
+    (
+        #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
+        [parameter(mandatory = $false)] [switch]$help,
+        [parameter(mandatory = $false)] [switch]$history,
+        [parameter(mandatory = $false)] [switch]$debugme,
+        [parameter(mandatory = $false)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$pd,
+        [parameter(mandatory = $false)] $prismCreds,
+        [parameter(mandatory = $false)] $vcenterCreds,
+        [parameter(mandatory = $false)] $cvmCreds,
+        [parameter(mandatory = $false)] [string][ValidateSet("maintenance","shutdown")]$action,
+        [parameter(mandatory = $false)] [switch]$skipfailover,
+        [parameter(mandatory = $false)] [switch]$shutdownUvms,
+        [parameter(mandatory = $false)] [int]$timer,
+        [parameter(mandatory = $false)] [switch]$reEnableOnly
+    )
 #endregion
 
 #region functions
-#this function is used to connect to Prism REST API
-Function Invoke-PrismRESTCall
-{
-	#input: username, password, url, method, body
-	#output: REST response
-<#
-.SYNOPSIS
-  Connects to Nutanix Prism REST API.
-.DESCRIPTION
-  This function is used to connect to Prism REST API.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER username
-  Specifies the Prism username.
-.PARAMETER password
-  Specifies the Prism password.
-.PARAMETER url
-  Specifies the Prism url.
-.EXAMPLE
-  PS> PrismRESTCall -username admin -password admin -url https://10.10.10.10:9440/PrismGateway/services/rest/v1/ 
-#>
-    param
-    (
-        [parameter(mandatory = $true)]
-        [ValidateSet("POST","GET","DELETE","PUT")]
-        [string] 
-        $method,
-        
-        [parameter(mandatory = $true)]
-        [string] 
-        $url,
-
-        [parameter(mandatory = $false)]
-        [string] 
-        $payload,
-        
-        [parameter(mandatory = $true)]
-        [System.Management.Automation.PSCredential]
-        $credential
-    )
-
-    begin
+    #this function is used to connect to Prism REST API
+    Function Invoke-PrismRESTCall
     {
- 
-    }
-    process
-    {
-        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-        try {
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-            if ($PSVersionTable.PSVersion.Major -gt 5) {
-                $headers = @{
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
-                }
-                if ($payload) {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+        #input: username, password, url, method, body
+        #output: REST response
+    <#
+    .SYNOPSIS
+    Connects to Nutanix Prism REST API.
+    .DESCRIPTION
+    This function is used to connect to Prism REST API.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER username
+    Specifies the Prism username.
+    .PARAMETER password
+    Specifies the Prism password.
+    .PARAMETER url
+    Specifies the Prism url.
+    .EXAMPLE
+    PS> PrismRESTCall -username admin -password admin -url https://10.10.10.10:9440/PrismGateway/services/rest/v1/ 
+    #>
+        param
+        (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string] 
+            $method,
+            
+            [parameter(mandatory = $true)]
+            [string] 
+            $url,
+
+            [parameter(mandatory = $false)]
+            [string] 
+            $payload,
+            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential
+        )
+
+        begin
+        {
+    
+        }
+        process
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+            try {
+                #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+                if ($PSVersionTable.PSVersion.Major -gt 5) {
+                    $headers = @{
+                        "Content-Type"="application/json";
+                        "Accept"="application/json"
+                    }
+                    if ($payload) {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    } else {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    }
                 } else {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    $headers = @{
+                        "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                        "Content-Type"="application/json";
+                        "Accept"="application/json"
+                    }
+                    if ($payload) {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                    } else {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                    }
                 }
-            } else {
-                $headers = @{
-                    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
-                }
-                if ($payload) {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-                } else {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
-                }
+                Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
             }
-            Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            catch {
+                $saved_error = $_.Exception.Message
+                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                Throw "$(get-date) [ERROR] $saved_error"
+            }
+            finally {
+                #add any last words here; this gets processed no matter what
+            }
         }
-        catch {
-            $saved_error = $_.Exception.Message
-            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-            Throw "$(get-date) [ERROR] $saved_error"
-        }
-        finally {
-            #add any last words here; this gets processed no matter what
-        }
-    }
-    end
-    {
-        return $resp
-    }
-}#end function Get-PrismRESTCall
-
-#Function Get-RESTError
-Function Get-RESTError 
-{
-    $global:helpme = $body
-    $global:helpmoref = $moref
-    $global:result = $_.Exception.Response.GetResponseStream()
-    $global:reader = New-Object System.IO.StreamReader($global:result)
-    $global:responseBody = $global:reader.ReadToEnd();
-
-    return $global:responsebody
-
-    break
-}#end function Get-RESTError
-
-#this function is used to create saved credentials for the current user
-function Set-CustomCredentials 
-{
-#input: path, credname
-	#output: saved credentials file
-<#
-.SYNOPSIS
-  Creates a saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to create a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
-Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
-#>
-	param
-	(
-		[parameter(mandatory = $false)]
-        [string] 
-        $path,
-		
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-	)
-
-    begin
-    {
-        if (!$path)
+        end
         {
-            if ($IsLinux -or $IsMacOS) 
+            return $resp
+        }
+    }#end function Get-PrismRESTCall
+
+    #Function Get-RESTError
+    Function Get-RESTError 
+    {
+        $global:helpme = $body
+        $global:helpmoref = $moref
+        $global:result = $_.Exception.Response.GetResponseStream()
+        $global:reader = New-Object System.IO.StreamReader($global:result)
+        $global:responseBody = $global:reader.ReadToEnd();
+
+        return $global:responsebody
+
+        break
+    }#end function Get-RESTError
+
+    #this function is used to create saved credentials for the current user
+    function Set-CustomCredentials 
+    {
+    #input: path, credname
+        #output: saved credentials file
+    <#
+    .SYNOPSIS
+    Creates a saved credential file using DAPI for the current user on the local machine.
+    .DESCRIPTION
+    This function is used to create a saved credential file using DAPI for the current user on the local machine.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER path
+    Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+    .PARAMETER credname
+    Specifies the credential file name.
+    .EXAMPLE
+    .\Set-CustomCredentials -path c:\creds -credname prism-apiuser
+    Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
+    #>
+        param
+        (
+            [parameter(mandatory = $false)]
+            [string] 
+            $path,
+            
+            [parameter(mandatory = $true)]
+            [string] 
+            $credname
+        )
+
+        begin
+        {
+            if (!$path)
             {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
-        #prompt for credentials
-        $credentialsFilePath = "$path\$credname.txt"
-		$credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
-		
-		#put details in hashed format
-		$user = $credentials.UserName
-		$securePassword = $credentials.Password
-        
-        #convert secureString to text
-        try 
-        {
-            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+                if ($IsLinux -or $IsMacOS) 
+                {
+                    $path = $home
+                }
+                else 
+                {
+                    $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                }
+                Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
+            } 
         }
-        catch 
+        process
         {
-            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
-        }
-
-        #create directory to store creds if it does not already exist
-        if(!(Test-Path $path))
-		{
+            #prompt for credentials
+            $credentialsFilePath = "$path\$credname.txt"
+            $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+            
+            #put details in hashed format
+            $user = $credentials.UserName
+            $securePassword = $credentials.Password
+            
+            #convert secureString to text
             try 
             {
-                $result = New-Item -type Directory $path -ErrorAction Stop
+                $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+            }
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
+            }
+
+            #create directory to store creds if it does not already exist
+            if(!(Test-Path $path))
+            {
+                try 
+                {
+                    $result = New-Item -type Directory $path -ErrorAction Stop
+                } 
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+                }
+            }
+
+            #save creds to file
+            try 
+            {
+                Set-Content $credentialsFilePath $user -ErrorAction Stop
             } 
             catch 
             {
-                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+                throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
             }
-		}
+            try 
+            {
+                Add-Content $credentialsFilePath $password -ErrorAction Stop
+            } 
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+            }
 
-        #save creds to file
-        try 
-        {
-            Set-Content $credentialsFilePath $user -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+            Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
         }
-        try 
-        {
-            Add-Content $credentialsFilePath $password -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
-        }
+        end
+        {}
+    }#end function Set-CustomCredentials
 
-        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
-    }
-    end
-    {}
-}#end function Set-CustomCredentials
-
-#this function is used to retrieve saved credentials for the current user
-function Get-CustomCredentials 
-{
-#input: path, credname
-	#output: credential object
-<#
-.SYNOPSIS
-  Retrieves saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
-Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
-#>
-	param
-	(
-        [parameter(mandatory = $false)]
-		[string] 
-        $path,
-		
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-	)
-
-    begin
+    #this function is used to retrieve saved credentials for the current user
+    function Get-CustomCredentials 
     {
-        if (!$path)
+    #input: path, credname
+        #output: credential object
+    <#
+    .SYNOPSIS
+    Retrieves saved credential file using DAPI for the current user on the local machine.
+    .DESCRIPTION
+    This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER path
+    Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+    .PARAMETER credname
+    Specifies the credential file name.
+    .EXAMPLE
+    .\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+    Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+    #>
+        param
+        (
+            [parameter(mandatory = $false)]
+            [string] 
+            $path,
+            
+            [parameter(mandatory = $true)]
+            [string] 
+            $credname
+        )
+
+        begin
         {
-            if ($IsLinux -or $IsMacOS) 
+            if (!$path)
             {
-                $path = $home
-            }
-            else 
+                if ($IsLinux -or $IsMacOS) 
+                {
+                    $path = $home
+                }
+                else 
+                {
+                    $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                }
+                Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+            } 
+        }
+        process
+        {
+            $credentialsFilePath = "$path\$credname.txt"
+            if(!(Test-Path $credentialsFilePath))
             {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
             }
-            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-        } 
-    }
-    process
+
+            $credFile = Get-Content $credentialsFilePath
+            $user = $credFile[0]
+            $securePassword = $credFile[1] | ConvertTo-SecureString
+
+            $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+            Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
+        }
+        end
+        {
+            return $customCredentials
+        }
+    }#end function Get-CustomCredentials
+
+    #this function is used to create a VM to host DRS rule
+    Function Update-DRSVMToHostRule
     {
-        $credentialsFilePath = "$path\$credname.txt"
-        if(!(Test-Path $credentialsFilePath))
-	    {
-            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
+    <#
+    .SYNOPSIS
+    Creates a new DRS VM to host rule
+    .DESCRIPTION
+    This function creates a new DRS vm to host rule
+    .NOTES
+    Author: Arnim van Lieshout
+    .PARAMETER VMGroup
+    The VMGroup name to include in the rule.
+    .PARAMETER HostGroup
+    The VMHostGroup name to include in the rule.
+    .PARAMETER Cluster
+    The cluster to create the new rule on.
+    .PARAMETER Name
+    The name for the new rule.
+    .PARAMETER AntiAffine
+    Switch to make the rule an AntiAffine rule. Default rule type is Affine.
+    .PARAMETER Mandatory
+    Switch to make the rule mandatory (Must run rule). Default rule is not mandatory (Should run rule)
+    .EXAMPLE
+    PS> New-DrsVMToHostRule -VMGroup "VMGroup01" -HostGroup "HostGroup01" -Name "VMToHostRule01" -Cluster CL01 -AntiAffine -Mandatory
+    #>
+
+        Param(
+            [parameter(mandatory = $true,
+            HelpMessage = "Enter a VM DRS group name")]
+                [String]$VMGroup,
+            [parameter(mandatory = $true,
+            HelpMessage = "Enter a DRS rule key")]
+                [String]$RuleKey,
+            [parameter(mandatory = $true,
+            HelpMessage = "Enter a DRS rule uuid")]
+                [String]$RuleUuid,
+            [parameter(mandatory = $true,
+            HelpMessage = "Enter a host DRS group name")]
+                [String]$HostGroup,
+            [parameter(mandatory = $true,
+            HelpMessage = "Enter a cluster entity")]
+                [PSObject]$Cluster,
+            [parameter(mandatory = $true,
+            HelpMessage = "Enter a name for the group")]
+                [String]$Name,
+                [Switch]$AntiAffine,
+                [Switch]$Mandatory)
+
+        switch ($Cluster.gettype().name) {
+            "String" {$cluster = Get-Cluster $cluster | Get-View}
+            "ClusterImpl" {$cluster = $cluster | Get-View}
+            "Cluster" {}
+            default {throw "No valid type for parameter -Cluster specified"}
         }
 
-        $credFile = Get-Content $credentialsFilePath
-		$user = $credFile[0]
-		$securePassword = $credFile[1] | ConvertTo-SecureString
-
-        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
-
-        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
-    }
-    end
-    {
-        return $customCredentials
-    }
-}#end function Get-CustomCredentials
-
-#this function is used to create a VM to host DRS rule
-Function Update-DRSVMToHostRule
-{
-<#
-.SYNOPSIS
-  Creates a new DRS VM to host rule
-.DESCRIPTION
-  This function creates a new DRS vm to host rule
-.NOTES
-  Author: Arnim van Lieshout
-.PARAMETER VMGroup
-  The VMGroup name to include in the rule.
-.PARAMETER HostGroup
-  The VMHostGroup name to include in the rule.
-.PARAMETER Cluster
-  The cluster to create the new rule on.
-.PARAMETER Name
-  The name for the new rule.
-.PARAMETER AntiAffine
-  Switch to make the rule an AntiAffine rule. Default rule type is Affine.
-.PARAMETER Mandatory
-  Switch to make the rule mandatory (Must run rule). Default rule is not mandatory (Should run rule)
-.EXAMPLE
-  PS> New-DrsVMToHostRule -VMGroup "VMGroup01" -HostGroup "HostGroup01" -Name "VMToHostRule01" -Cluster CL01 -AntiAffine -Mandatory
-#>
-
-    Param(
-        [parameter(mandatory = $true,
-        HelpMessage = "Enter a VM DRS group name")]
-            [String]$VMGroup,
-        [parameter(mandatory = $true,
-        HelpMessage = "Enter a DRS rule key")]
-            [String]$RuleKey,
-        [parameter(mandatory = $true,
-        HelpMessage = "Enter a DRS rule uuid")]
-            [String]$RuleUuid,
-        [parameter(mandatory = $true,
-        HelpMessage = "Enter a host DRS group name")]
-            [String]$HostGroup,
-        [parameter(mandatory = $true,
-        HelpMessage = "Enter a cluster entity")]
-            [PSObject]$Cluster,
-        [parameter(mandatory = $true,
-        HelpMessage = "Enter a name for the group")]
-            [String]$Name,
-            [Switch]$AntiAffine,
-            [Switch]$Mandatory)
-
-    switch ($Cluster.gettype().name) {
-        "String" {$cluster = Get-Cluster $cluster | Get-View}
-        "ClusterImpl" {$cluster = $cluster | Get-View}
-        "Cluster" {}
-        default {throw "No valid type for parameter -Cluster specified"}
-    }
-
-    $spec = New-Object VMware.Vim.ClusterConfigSpecEx
-    $rule = New-Object VMware.Vim.ClusterRuleSpec
-    $rule.operation = "edit"
-    $rule.info = New-Object VMware.Vim.ClusterVmHostRuleInfo
-    $rule.info.enabled = $true
-    $rule.info.name = $Name
-    $rule.info.mandatory = $Mandatory
-    $rule.info.vmGroupName = $VMGroup
-    $rule.info.Key = $RuleKey
-    $rule.info.RuleUuid = $RuleUuid
-    if ($AntiAffine) {
-        $rule.info.antiAffineHostGroupName = $HostGroup
-    }
-    else {
-        $rule.info.affineHostGroupName = $HostGroup
-    }
-    $spec.RulesSpec += $rule
-    $cluster.ReconfigureComputeResource_Task($spec,$true) | Out-Null
-}#end function Update-DRSVMToHostRule
-
-#this function puts all the Nutanix ESXi hosts in a given cluster in maintenance mode
-Function Set-NtnxVmhostsToMaintenanceMode
-{
-    #todo think about changes to make this "resumable" (assuming problems with vmotions, etc...)
-    #? params/variables required: $myvar_ntnx_vmhosts, $myvar_cvm_names, $myvar_ntnx_cluster_name, $myvar_cvm_ips
-
-    Write-Host ""
-    Write-Host "$(get-date) [STEP] Checking if there are still running UVMs on the Nutanix cluster ESXi hosts..." -ForegroundColor Magenta   
-
-    #* check if there are running uvms on each host
-    #check each host ($myvar_ntnx_vmhosts) to see if they have running vms other than cvms
-    foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
-        try 
-        {
-            $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
-        }
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not retrieve VMs running on host $($myvar_vmhost.Name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-        }
-        ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}} #exclude CVMs
-        if ($myvar_running_vms)
-        {
-            if (!$shutdownUvms)
-            {
-                Throw "$(get-date) [ERROR] There are still virtual machines (other than CVMs) running on ESXi host $($myvar_vmhost.Name): $($myvar_running_vms.Name)"
-            }
-            else 
-            {
-                Write-Host "$(get-date) [WARNING] Shutting down running UVMs on host $($myvar_vmhost.Name) : $($myvar_running_vms.Name)" -ForegroundColor Yellow
-                try {$myvar_uvms_shutdown_command = $myvar_running_vms | Stop-VMGuest -ErrorAction Stop -Confirm:$False}
-                catch {throw "$(get-date) [ERROR] Could not shut down UVMs running on host $($myvar_vmhost.Name) : $($_.Exception.Message)"}
-                Write-Host "$(get-date) [SUCCESS] Successfully sent shut down on running UVMs on host $($myvar_vmhost.Name) : $($myvar_running_vms.Name)" -ForegroundColor Cyan
-                Write-Host "$(get-date) [INFO] Waiting for $($timer) seconds..." -ForegroundColor Green
-                Start-Sleep $timer
-
-                try 
-                {#retrieve vms on this host which are still powered on
-                    $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
-                    ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}}
-                }
-                catch
-                {#could not retrieve powered on vms from this host
-                    Throw "$(get-date) [ERROR] Could not retrieve powered on VMs from ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"
-                }
-                if ($myvar_running_vms)
-                {#there are still powered on vms: forcefully powering them off
-                    ForEach ($myvar_running_vm in $myvar_running_vms)
-                    {#force power off on each running vm
-                        Write-Host "$(get-date) [INFO] Forcefully powering off $($myvar_running_vm.Name)..." -ForegroundColor Green
-                        try {$stopVM = Stop-VM -Confirm:$False -ErrorAction Stop -VM $myvar_running_vm -RunAsync}
-                        catch {throw "$(get-date) [ERROR] Could not power off VM $($myvar_running_vm.Name) on ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"}
-                    }
-                    Write-Host "$(get-date) [INFO] Waiting for 60 seconds..." -ForegroundColor Green
-                    Start-Sleep 60
-                }
-            }
+        $spec = New-Object VMware.Vim.ClusterConfigSpecEx
+        $rule = New-Object VMware.Vim.ClusterRuleSpec
+        $rule.operation = "edit"
+        $rule.info = New-Object VMware.Vim.ClusterVmHostRuleInfo
+        $rule.info.enabled = $true
+        $rule.info.name = $Name
+        $rule.info.mandatory = $Mandatory
+        $rule.info.vmGroupName = $VMGroup
+        $rule.info.Key = $RuleKey
+        $rule.info.RuleUuid = $RuleUuid
+        if ($AntiAffine) {
+            $rule.info.antiAffineHostGroupName = $HostGroup
         }
         else {
-            Write-Host "$(get-date) [DATA] There are no running UVMs on host $($myvar_vmhost.Name)" -ForegroundColor White
+            $rule.info.affineHostGroupName = $HostGroup
         }
-    }
-    
-    #* nutanix cluster stop
-    #region stopping the Nutanix cluster
-        Write-Host ""
-        Write-Host "$(get-date) [STEP] Stopping Nutanix cluster $($myvar_ntnx_cluster_name) and shutting down CVMs..." -ForegroundColor Magenta
-        #sending the cluster stop command
-        Write-Host "$(get-date) [INFO] Sending cluster stop command to $($myvar_cvm_ips[0])..." -ForegroundColor Green
-        try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'I agree' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
-        catch {throw "$(get-date) [ERROR] Could not send cluster stop command to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
-        Write-Host "$(get-date) [SUCCESS] Sent cluster stop command to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
-    #endregion
+        $spec.RulesSpec += $rule
+        $cluster.ReconfigureComputeResource_Task($spec,$true) | Out-Null
+    }#end function Update-DRSVMToHostRule
 
-    #* cvm shutdown
-    #todo: enhance this to do while cvm is poweredon
-    #region shutting down CVMs
-        Write-Host "$(get-date) [INFO] Shutting down CVMs in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
-        foreach ($myvar_cvm_name in $myvar_cvm_names) {
-            try {$myvar_cvm_vm = Get-VM -ErrorAction Stop -Name $myvar_cvm_name}
-            catch {throw "$(get-date) [ERROR] Could not retrieve VM object for CVM $($myvar_cvm_name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
-            try {$myvar_cvm_shutdown_command = Stop-VMGuest -ErrorAction Stop -VM $myvar_cvm_vm -Confirm:$False}
-            catch {throw "$(get-date) [ERROR] Could not stop CVM $($myvar_cvm_name) on vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
-        }
-        Write-Host "$(get-date) [SUCCESS] Sent the shutdown command to all CVMs." -ForegroundColor Cyan
-        Write-Host "$(get-date) [INFO] Waiting 3 minutes..." -ForegroundColor Green
-        Start-Sleep 180
-    #endregion
+    #this function puts all the Nutanix ESXi hosts in a given cluster in maintenance mode
+    Function Set-NtnxVmhostsToMaintenanceMode
+    {
+        #todo think about changes to make this "resumable" (assuming problems with vmotions, etc...)
+        #? params/variables required: $myvar_ntnx_vmhosts, $myvar_cvm_names, $myvar_ntnx_cluster_name, $myvar_cvm_ips
 
-    #* put hosts in maintenance
-    #region putting hosts in maintenance mode
         Write-Host ""
-        Write-Host "$(get-date) [STEP] Putting ESXi hosts in Nutanix cluster $($myvar_ntnx_cluster_name) in maintenance mode..." -ForegroundColor Magenta
+        Write-Host "$(get-date) [STEP] Checking if there are still running UVMs on the Nutanix cluster ESXi hosts..." -ForegroundColor Magenta   
+
+        #* check if there are running uvms on each host
+        #check each host ($myvar_ntnx_vmhosts) to see if they have running vms other than cvms
         foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
-            Write-Host "$(get-date) [INFO] Putting ESXi host $($myvar_vmhost.Name) in maintenance mode..." -ForegroundColor Green
-            try {$myvar_vmhost_maintenance_command = $myvar_vmhost | set-vmhost -State Maintenance -ErrorAction Stop}
-            catch {throw "$(get-date) [ERROR] Could not put ESXi host $($myvar_vmhost.Name) in maintenance mode : $($_.Exception.Message)"}
-            Write-Host "$(get-date) [SUCCESS] Successfully put ESXi host $($myvar_vmhost.Name) in maintenance mode!" -ForegroundColor Cyan
+            try 
+            {
+                $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
+            }
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not retrieve VMs running on host $($myvar_vmhost.Name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+            }
+            ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}} #exclude CVMs
+            if ($myvar_running_vms)
+            {
+                if (!$shutdownUvms)
+                {
+                    Throw "$(get-date) [ERROR] There are still virtual machines (other than CVMs) running on ESXi host $($myvar_vmhost.Name): $($myvar_running_vms.Name)"
+                }
+                else 
+                {
+                    Write-Host "$(get-date) [WARNING] Shutting down running UVMs on host $($myvar_vmhost.Name) : $($myvar_running_vms.Name)" -ForegroundColor Yellow
+                    try {$myvar_uvms_shutdown_command = $myvar_running_vms | Stop-VMGuest -ErrorAction Stop -Confirm:$False}
+                    catch {throw "$(get-date) [ERROR] Could not shut down UVMs running on host $($myvar_vmhost.Name) : $($_.Exception.Message)"}
+                    Write-Host "$(get-date) [SUCCESS] Successfully sent shut down on running UVMs on host $($myvar_vmhost.Name) : $($myvar_running_vms.Name)" -ForegroundColor Cyan
+                    Write-Host "$(get-date) [INFO] Waiting for $($timer) seconds..." -ForegroundColor Green
+                    Start-Sleep $timer
+
+                    try 
+                    {#retrieve vms on this host which are still powered on
+                        $myvar_running_vms = $myvar_vmhost | Get-VM -ErrorAction Stop | Where-Object {$_.PowerState -eq "PoweredOn"}
+                        ForEach ($myvar_cvm_name in $myvar_cvm_names) {$myvar_running_vms = $myvar_running_vms | Where-Object {$_.Name -ne $myvar_cvm_name}}
+                    }
+                    catch
+                    {#could not retrieve powered on vms from this host
+                        Throw "$(get-date) [ERROR] Could not retrieve powered on VMs from ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"
+                    }
+                    if ($myvar_running_vms)
+                    {#there are still powered on vms: forcefully powering them off
+                        ForEach ($myvar_running_vm in $myvar_running_vms)
+                        {#force power off on each running vm
+                            Write-Host "$(get-date) [INFO] Forcefully powering off $($myvar_running_vm.Name)..." -ForegroundColor Green
+                            try {$stopVM = Stop-VM -Confirm:$False -ErrorAction Stop -VM $myvar_running_vm -RunAsync}
+                            catch {throw "$(get-date) [ERROR] Could not power off VM $($myvar_running_vm.Name) on ESXi host $($myvar_vmhost.Name): $($_.Exception.Message)"}
+                        }
+                        Write-Host "$(get-date) [INFO] Waiting for 60 seconds..." -ForegroundColor Green
+                        Start-Sleep 60
+                    }
+                }
+            }
+            else {
+                Write-Host "$(get-date) [DATA] There are no running UVMs on host $($myvar_vmhost.Name)" -ForegroundColor White
+            }
         }
-    #endregion
-}#end function Set-NtnxVmhostsToMaintenanceMode
+        
+        #* nutanix cluster stop
+        #region stopping the Nutanix cluster
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] Stopping Nutanix cluster $($myvar_ntnx_cluster_name) and shutting down CVMs..." -ForegroundColor Magenta
+            #sending the cluster stop command
+            Write-Host "$(get-date) [INFO] Sending cluster stop command to $($myvar_cvm_ips[0])..." -ForegroundColor Green
+            try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'I agree' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
+            catch {throw "$(get-date) [ERROR] Could not send cluster stop command to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
+            Write-Host "$(get-date) [SUCCESS] Sent cluster stop command to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
+        #endregion
+
+        #* cvm shutdown
+        #todo: enhance this to do while cvm is poweredon
+        #region shutting down CVMs
+            Write-Host "$(get-date) [INFO] Shutting down CVMs in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
+            foreach ($myvar_cvm_name in $myvar_cvm_names) {
+                try {$myvar_cvm_vm = Get-VM -ErrorAction Stop -Name $myvar_cvm_name}
+                catch {throw "$(get-date) [ERROR] Could not retrieve VM object for CVM $($myvar_cvm_name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+                try {$myvar_cvm_shutdown_command = Stop-VMGuest -ErrorAction Stop -VM $myvar_cvm_vm -Confirm:$False}
+                catch {throw "$(get-date) [ERROR] Could not stop CVM $($myvar_cvm_name) on vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"}
+            }
+            Write-Host "$(get-date) [SUCCESS] Sent the shutdown command to all CVMs." -ForegroundColor Cyan
+            Write-Host "$(get-date) [INFO] Waiting 3 minutes..." -ForegroundColor Green
+            Start-Sleep 180
+        #endregion
+
+        #* put hosts in maintenance
+        #region putting hosts in maintenance mode
+            Write-Host ""
+            Write-Host "$(get-date) [STEP] Putting ESXi hosts in Nutanix cluster $($myvar_ntnx_cluster_name) in maintenance mode..." -ForegroundColor Magenta
+            foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) {
+                Write-Host "$(get-date) [INFO] Putting ESXi host $($myvar_vmhost.Name) in maintenance mode..." -ForegroundColor Green
+                try {$myvar_vmhost_maintenance_command = $myvar_vmhost | set-vmhost -State Maintenance -ErrorAction Stop}
+                catch {throw "$(get-date) [ERROR] Could not put ESXi host $($myvar_vmhost.Name) in maintenance mode : $($_.Exception.Message)"}
+                Write-Host "$(get-date) [SUCCESS] Successfully put ESXi host $($myvar_vmhost.Name) in maintenance mode!" -ForegroundColor Cyan
+            }
+        #endregion
+    }#end function Set-NtnxVmhostsToMaintenanceMode
 #endregion
 
 #! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
@@ -1115,7 +1115,7 @@ public class ServerCertificateValidationCallback
         #* identify HA/DRS cluster and making sure HA and DRS are enabled
         #region figure out vsphere cluster name ($myvar_vsphere_cluster_name)
             if (!$reEnableOnly)
-            {
+            {#we are not just renabling pds, so figure out the vcenter information
                 Write-Host ""
                 Write-Host "$(get-date) [STEP] Figuring out information required to move metro protected virtual machines from vmhosts in $($myvar_ntnx_cluster_name) to vmhosts in $($myvar_ntnx_remote_cluster_name) for specified metro availability protection domains..." -ForegroundColor Magenta
     
@@ -1132,6 +1132,7 @@ public class ServerCertificateValidationCallback
                 {#couldn't get all the vmhosts registered in vCenter
                     throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
                 }
+
                 foreach ($myvar_vmhost in $myvar_vmhosts) 
                 {#let's look at each host and determine which is which
                     Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
@@ -1196,14 +1197,14 @@ public class ServerCertificateValidationCallback
                     }
                 }
                 catch 
-                {
+                {#couldn't retrieve cluster
                     throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
                 }
 
                 #checking vsphere cluster configuration
                 Write-Host "$(get-date) [INFO] Checking HA is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
                 if ($myvar_vsphere_cluster.HaEnabled -ne $true) 
-                {
+                {#HA is not enabled on this cluster
                     throw "$(get-date) [ERROR] HA is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
                 }
                 Write-Host "$(get-date) [INFO] Checking DRS is enabled and fully automated on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
@@ -1219,7 +1220,7 @@ public class ServerCertificateValidationCallback
         #endregion
         
         if (!$skipfailover -and !$reEnableOnly)
-        {
+        {#we are not skipping failover nor reenabling pds only
             #* find matching drs groups and rule(s)
             #region matching drs groups and rules
                 Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
@@ -1268,14 +1269,33 @@ public class ServerCertificateValidationCallback
                     Do {#loop until all vms have been moved
                         #figure out which vmhosts have vms running in this datastore
                         try 
-                        {
+                        {#getting vms on this datastore
                             #$myvar_datastore_vmhosts = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop | get-vmhost -ErrorAction Stop | Select-Object -Unique -Property name
                             $myvar_datastore_vms = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop
                             $myvar_datastore_poweredoff_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOff"}
+                            $myvar_datastore_poweredon_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOn"}
                         }
                         catch 
-                        {
+                        {#could not get vms on datastore
                             throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                        }
+
+                        #* dealing with DRS overrides here
+                        ForEach ($myvar_datastore_poweredon_vm in $myvar_datastore_poweredon_vms)
+                        {#let's make sure none of the powered on vms have DRS override
+                            $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
+                            if ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
+                            {#this vm has a DRS override
+                                Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
+                                try 
+                                {#remove VM DRS override
+                                    $result = Set-VM -Name $myvar_datastore_poweredon_vm.Name -DrsAutomationLevel "AsSpecifiedByCluster" -ErrorAction Stop
+                                }
+                                catch 
+                                {#could not remove VM DRS override
+                                    throw "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)"
+                                }
+                            }
                         }
                         
                         $myvar_vmhost_found = $false
@@ -1297,18 +1317,18 @@ public class ServerCertificateValidationCallback
                             $myvar_drs_done = $true
                         }
 
-                        #force migrate any powered off vms (which variable contains hosts in the remote site?)
+                        #* force migrate any powered off vms
                         ForEach ($myvar_poweredoff_vm in $myvar_datastore_poweredoff_vms)
                         {#process each powered off vm
                             if (($myvar_poweredoff_vm.vmhost).Name -in $myvar_ntnx_vmhosts.Name)
                             {#that powered off VM needs to be moved
                                 try 
-                                {
+                                {#moving vm
                                     Write-Host "$(get-date) [WARNING] Moving powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name)" -ForegroundColor Yellow
                                     $result = Move-VM -Location $myvar_remote_ntnx_vmhosts[0] -VM $myvar_poweredoff_vm -ErrorAction Stop
                                 }
                                 catch 
-                                {
+                                {#couldn't move vm
                                     Write-Host "$(get-date) [ERROR] Could not move powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name) : $($_.Exception.Message)" -ForegroundColor Red
                                 }
                             }
@@ -1317,11 +1337,11 @@ public class ServerCertificateValidationCallback
                     Write-Host "$(get-date) [DATA] All virtual machines on datastore $($myvar_datastore) have been moved to $($remote_site_name)..." -ForegroundColor White
                 }
                 if ($pd -eq "all") 
-                {
+                {#we've been processing all pds
                     Write-Host "$(get-date) [DATA] All virtual machines on all active metro protected datastores have been moved to $($remote_site_name)..." -ForegroundColor White
                 } 
                 else 
-                {
+                {#we only processed some pds
                     Write-Host "$(get-date) [DATA] All virtual machines on specified active metro protected datastore(s) have been moved to $($remote_site_name)..." -ForegroundColor White
                 }
             #endregion
