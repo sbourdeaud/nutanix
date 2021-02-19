@@ -197,7 +197,7 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #todo: look into sending metrics to influxdb using REST (https://github.com/markwragg/Powershell-Influx)
-#todo: add smtp code
+#todo: add smtp code.
 #todo: add zabbix code
 #todo: change script structure to enable loop processing of multiple clusters (exp: with prism central as entry point)
 
