@@ -21,6 +21,10 @@
   Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER influxdb
+  Specifies you want to send data to influxdb server. You will need to configure the influxdb server URL and database instance in the variables section of this script.  The timeseries created by default is called uvm_capacity.
+.PARAMETER influxdbCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$influxdbCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
 .\get-UvmCapacity.ps1 -cluster ntnxc1.local
 Connect to a Nutanix cluster of your choice:
@@ -28,7 +32,7 @@ Connect to a Nutanix cluster of your choice:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 7th 2021
+  Revision: February 22nd 2021
 #>
 
 #region parameters
@@ -43,7 +47,9 @@ Connect to a Nutanix cluster of your choice:
         [parameter(mandatory = $false)] [switch]$viewnow,
         [parameter(mandatory = $false)] [string]$dir,
         [parameter(mandatory = $true)] [string]$cluster,
-        [parameter(mandatory = $false)] [string]$prismCreds
+        [parameter(mandatory = $false)] [string]$prismCreds,
+        [parameter(mandatory = $false)] [switch]$influxdb,
+        [parameter(mandatory = $false)] [string]$influxdbCreds
     )
 #endregion
 
@@ -99,6 +105,67 @@ Connect to a Nutanix cluster of your choice:
 		return $myvar_ping_test
 		}
 	}#end function TestIp
+    #this function loads a powershell module
+    Function LoadModule
+    {
+        <#
+	.SYNOPSIS
+	Tries to load the specified module and installs it if it can't.
+	.DESCRIPTION
+	Tries to load the specified module and installs it if it can't.
+	.NOTES
+	Author: Stephane Bourdeaud
+	.PARAMETER module
+	Name of PowerShell module to import.
+	.EXAMPLE
+	PS> LoadModule -module PSWriteHTML
+	#>
+		param 
+		(
+			[string] $module
+		)
+
+		begin
+		{
+			
+		}
+
+		process
+		{   
+            Write-Host "$(Get-Date) [INFO] Trying to get module $($module)..." -ForegroundColor Green
+			if (!(Get-Module -Name $module)) 
+            {#we could not get the module, let's try to load it
+                try
+                {#import the module
+                    Import-Module -Name $module -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] Imported module '$($module)'!" -ForegroundColor Cyan
+                }#end try
+                catch 
+                {#we couldn't import the module, so let's install it
+                    Write-Host "$(get-date) [INFO] Installing module '$($module)' from the Powershell Gallery..." -ForegroundColor Green
+                    try {Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop}
+                    catch {throw "$(get-date) [ERROR] Could not install module '$($module)': $($_.Exception.Message)"}
+
+                    try
+                    {#now that it is intalled, let's import it
+                        Import-Module -Name $module -ErrorAction Stop
+                        Write-Host "$(get-date) [SUCCESS] Imported module '$($module)'!" -ForegroundColor Cyan
+                    }#end try
+                    catch 
+                    {#we couldn't import the module
+                        Write-Host "$(get-date) [ERROR] Unable to import the module $($module).psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                        Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com" -ForegroundColor Yellow
+                        Exit
+                    }#end catch
+                }#end catch
+            }
+		}
+
+		end
+		{
+
+		}
+    }
 #endregion
 
 #region prepwork
@@ -107,6 +174,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 02/07/2021 sb   Initial release.
+02/22/2021 sb   Adding influxdb output.
 ################################################################################
 '@
     $myvarScriptName = ".\get-UvmCapacity.ps1"
@@ -164,35 +232,17 @@ Date       By   Updates (newest updates at the top)
     Set-PoshTls
 
     #region module PSWriteHTML
-    if ($html)
-    {#we need html output, so let's load the PSWriteHTML module
-        if (!(Get-Module -Name PSWriteHTML)) 
-        {#we could not get the module, let's try to load it
-            try
-            {#import the module
-                Import-Module -Name PSWriteHTML -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
-            }#end try
-            catch 
-            {#we couldn't import the module, so let's install it
-                Write-Host "$(get-date) [INFO] Installing module 'PSWriteHTML' from the Powershell Gallery..." -ForegroundColor Green
-                try {Install-Module -Name PSWriteHTML -Scope CurrentUser -Force -ErrorAction Stop}
-                catch {throw "$(get-date) [ERROR] Could not install module 'PSWriteHTML': $($_.Exception.Message)"}
-
-                try
-                {#now that it is intalled, let's import it
-                    Import-Module -Name PSWriteHTML -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
-                }#end try
-                catch 
-                {#we couldn't import the module
-                    Write-Host "$(get-date) [ERROR] Unable to import the module PSWriteHTML.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/PSWriteHTML/0.0.132" -ForegroundColor Yellow
-                    Exit
-                }#end catch
-            }#end catch
+        if ($html)
+        {#we need html output, so let's load the PSWriteHTML module
+            LoadModule -module PSWriteHTML
         }
-    }
+    #endregion
+
+    #region module Influx
+        if ($influxdb)
+        {#we need influxdb output, so let's load the Influx module
+        LoadModule -module Influx
+        }
     #endregion
 #endregion
 
@@ -220,6 +270,8 @@ Date       By   Updates (newest updates at the top)
     $myvar_smtp_from = ""
     $myvar_smtp_to = ""
     $myvar_zabbix_server = ""
+    $myvar_influxdb_url = "http://localhost:8096"
+    $myvar_influxdb_database = "ntnx"
 #endregion
 
 #region parameters validation
@@ -243,6 +295,28 @@ Date       By   Updates (newest updates at the top)
             $PrismSecurePassword = $prismCredentials.Password
         }
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    }
+
+    if (!$influxdbCreds -and $influxdb) 
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+       $influxdbCredentials = Get-Credential -Message "Please enter InfluxDB credentials"
+    } 
+    elseif ($influxdb) 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {
+            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+            $username = $influxdbCredentials.UserName
+            $InfluxDBSecurePassword = $influxdbCredentials.Password
+        }
+        catch 
+        {
+            Set-CustomCredentials -credname $influxdbCreds
+            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+            $username = $influxdbCredentials.UserName
+            $InfluxDBSecurePassword = $influxdbCredentials.Password
+        }
+        $influxdbCredentials = New-Object PSCredential $username, $InfluxDBSecurePassword
     }
 
     if (!$dir)
@@ -1432,6 +1506,62 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) Cluster $($myvar_ntnx_cluster_name) Metro Failover capability is: $($myvar_ntnx_cluster_failover_capacity_status)" -ForegroundColor $myvar_ntnx_cluster_failover_capacity_color
                 Write-Host "$(get-date) Cluster $($myvar_ntnx_remote_cluster_name) Metro Failover capability is: $($myvar_ntnx_remote_cluster_failover_capacity_status)" -ForegroundColor $myvar_ntnx_remote_cluster_failover_capacity_color
                 Write-Host ""
+            }
+        #endregion
+
+        #* influxdb output
+        #region influxdb output
+            if ($influxdb)
+            {#we need to insert data into influxdb database
+                try 
+                {#sending data to influxdb 
+                    Write-Host "$(Get-Date) [INFO] Sending UVM capacity data for cluster $($myvar_ntnx_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series uvm_capacity..." -ForegroundColor Green
+                    if ($myvar_ntnx_cluster_ma_uvms)
+                    {#there are powered on vms protected by metro availability
+                        Write-Influx -Measure uvm_capacity -Tags @{cluster=$myvar_ntnx_cluster_name} -Metrics @{
+                            cpu_failover_capacity=$($myvar_ntnx_remote_cluster_uvm_remaining_cpu - $myvar_ntnx_cluster_ma_uvm_allocated_cpu);
+                            ram_failover_capacity=$($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib - $myvar_ntnx_cluster_ma_uvm_allocated_ram_gib);
+                            cpu_remaining_capacity=$myvar_ntnx_cluster_uvm_remaining_cpu;
+                            ram_remaining_capacity=$myvar_ntnx_cluster_uvm_remaining_ram_gib;
+                            metro_uvm_allocated_cpu=$myvar_ntnx_cluster_ma_uvm_allocated_cpu;
+                            metro_uvm_allocated_ram_gib=$myvar_ntnx_cluster_ma_uvm_allocated_ram_gib;
+                        } -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
+                    }
+                    else 
+                    {#there no metro availability vms
+                        Write-Influx -Measure uvm_capacity -Tags @{cluster=$myvar_ntnx_cluster_name} -Metrics @{
+                            cpu_remaining_capacity=$myvar_ntnx_cluster_uvm_remaining_cpu;
+                            ram_remaining_capacity=$myvar_ntnx_cluster_uvm_remaining_ram_gib;
+                        } -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
+                    }
+
+                    if ($myvar_remote_site_online)
+                    {#remote site is available
+                        Write-Host "$(Get-Date) [INFO] Sending UVM capacity data for cluster $($myvar_ntnx_remote_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series uvm_capacity..." -ForegroundColor Green
+                        if ($myvar_ntnx_remote_cluster_ma_uvms)
+                        {#there are powered on vms protected by metro availability
+                            Write-Influx -Measure uvm_capacity -Tags @{cluster=$myvar_ntnx_remote_cluster_name} -Metrics @{
+                                cpu_failover_capacity=$($myvar_ntnx_cluster_uvm_remaining_cpu - $myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu);
+                                ram_failover_capacity=$($myvar_ntnx_cluster_uvm_remaining_ram_gib - $myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib);
+                                cpu_remaining_capacity=$myvar_ntnx_remote_cluster_uvm_remaining_cpu;
+                                ram_remaining_capacity=$myvar_ntnx_remote_cluster_uvm_remaining_ram_gib;
+                                metro_uvm_allocated_cpu=$myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu;
+                                metro_uvm_allocated_ram_gib=$myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib;
+                            } -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
+                        }
+                        else 
+                        {#there no metro availability vms
+                            Write-Influx -Measure uvm_capacity -Tags @{cluster=$myvar_ntnx_remote_cluster_name} -Metrics @{
+                                cpu_remaining_capacity=$myvar_ntnx_remote_cluster_uvm_remaining_cpu;
+                                ram_remaining_capacity=$myvar_ntnx_remote_cluster_uvm_remaining_ram_gib;
+                            } -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
+                        }
+                    }
+                }
+                catch 
+                {#could not send data to influxdb
+                    Write-Host "$(Get-Date) [WARNING] Could not send data to influxdb: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
             }
         #endregion
 
