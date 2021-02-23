@@ -363,7 +363,6 @@ Date       By   Updates (newest updates at the top)
     #* configuration   
     $myvar_smtp_server = "smtp.gmail.com"
     $myvar_smtp_server_port = 25
-    $myvar_smtp_from = "emeagso@gmail.com"
     $myvar_smtp_to = "stephane.bourdeaud@nutanix.com"
     $myvar_smtp_subject = "UVM Capacity Report"
     $myvar_smtp_body = "Attached report is for UVM Capacity of Nutanix cluster(s)"
@@ -1684,7 +1683,7 @@ Date       By   Updates (newest updates at the top)
         #* smtp output
         #region smtp output
             #sender ([MimeKit.MailboxAddress] http://www.mimekit.net/docs/html/T_MimeKit_MailboxAddress.htm, required)
-            $From=[MimeKit.MailboxAddress]$myvar_smtp_from
+            $From=[MimeKit.MailboxAddress]$emailCredentials.UserName
 
             #recipient list ([MimeKit.InternetAddressList] http://www.mimekit.net/docs/html/T_MimeKit_InternetAddressList.htm, required)
             $RecipientList=[MimeKit.InternetAddressList]::new()
