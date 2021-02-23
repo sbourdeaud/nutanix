@@ -25,6 +25,10 @@
   Specifies you want to send data to influxdb server. You will need to configure the influxdb server URL and database instance in the variables section of this script.  The timeseries created by default is called uvm_capacity.
 .PARAMETER influxdbCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$influxdbCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER email
+  Specifies that you want to send an email with the html report attached. This will require that you add smtp configuration in the variables section.
+.PARAMETER emailCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$emailCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
 .\get-UvmCapacity.ps1 -cluster ntnxc1.local
 Connect to a Nutanix cluster of your choice:
@@ -49,7 +53,9 @@ Connect to a Nutanix cluster of your choice:
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$prismCreds,
         [parameter(mandatory = $false)] [switch]$influxdb,
-        [parameter(mandatory = $false)] [string]$influxdbCreds
+        [parameter(mandatory = $false)] [string]$influxdbCreds,
+        [parameter(mandatory = $false)] [switch]$email,
+        [parameter(mandatory = $false)] [string]$emailCreds
     )
 #endregion
 
@@ -262,10 +268,19 @@ Date       By   Updates (newest updates at the top)
 
     if (!$dir.EndsWith("\")) 
     {#make sure given log path has a trailing \
-        $dir += "\"
+        if ($IsMacOS -or $IsLinux)
+        {#we are on Mac or Linux
+            $dir += "/"
+        }
+        else 
+        {#we are on Windows
+            $dir += "\"
+        }
     }
     if (Test-Path -path $dir)
     {#specified path exists
+        $myvar_html_report_name = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
+        $myvar_html_report_name += "$($cluster)_capacity_report.html"
         $myvar_html_report_name = $dir + $myvar_html_report_name
     }
     else 
@@ -330,7 +345,6 @@ Date       By   Updates (newest updates at the top)
     #endregion
 #endregion
 
-#todo: add smtp code.
 #todo: change script structure to enable loop processing of multiple clusters (exp: with prism central as entry point)
 
 #* constants and configuration here
@@ -346,12 +360,14 @@ Date       By   Updates (newest updates at the top)
     $myvar_hypervisor_ram_gib_overhead = 4 #this is on a per host basis
     $myvar_desired_capacity_headroom_percentage = 10 #this is a percentage of UVM total capacity that you want available at all times. Report will alert if this is not currently met.
 
-    #* configuration
-    $myvar_html_report_name = "capacity_report.html"
-    $myvar_smtp_server = ""
-    $myvar_smtp_from = ""
-    $myvar_smtp_to = ""
-    $myvar_zabbix_server = ""
+    #* configuration   
+    $myvar_smtp_server = "smtp.gmail.com"
+    $myvar_smtp_server_port = 25
+    $myvar_smtp_from = "emeagso@gmail.com"
+    $myvar_smtp_to = "stephane.bourdeaud@nutanix.com"
+    $myvar_smtp_subject = "UVM Capacity Report"
+    $myvar_smtp_body = "Attached report is for UVM Capacity of Nutanix cluster(s)"
+
     $myvar_influxdb_url = "http://10.68.97.46:8086"
     $myvar_influxdb_database = "ntnx"
 #endregion
@@ -399,6 +415,32 @@ Date       By   Updates (newest updates at the top)
             $InfluxDBSecurePassword = $influxdbCredentials.Password
         }
         $influxdbCredentials = New-Object PSCredential $username, $InfluxDBSecurePassword
+    }
+
+    if (!$emailCreds -and $email)
+    {#we want to send email
+        $emailCredentials = Get-Credential -Message "Please enter email credentials"
+    }
+    elseif ($email) 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {#Get-CustomCredentials
+            $emailCredentials = Get-CustomCredentials -credname $emailCreds -ErrorAction Stop
+            $username = $emailCredentials.UserName
+            $emailSecurePassword = $emailCredentials.Password
+        }
+        catch 
+        {#could not Get-CustomeCredentials, so Set-CustomCredentials
+            Set-CustomCredentials -credname $emailCreds
+            $emailCredentials = Get-CustomCredentials -credname $emailCreds -ErrorAction Stop
+            $username = $emailCredentials.UserName
+            $emailSecurePassword = $emailCredentials.Password
+        }
+        $emailCredentials = New-Object PSCredential $username, $emailSecurePassword
+
+        #make sure we'll use html
+        $html = $true
+        LoadModule Send-MailKitMessage
     }
 #endregion
 
@@ -1171,7 +1213,7 @@ Date       By   Updates (newest updates at the top)
         #region html output
             if ($html) 
             {#we need html output
-                Write-LogOutput -Category "STEP" -LogFile $myvar_log_file -Message "Creating HTML report in file $($dir)$($myvar_html_report_name)..."
+                Write-LogOutput -Category "STEP" -LogFile $myvar_log_file -Message "Creating HTML report in file $($myvar_html_report_name)..."
 
                 #region determine colors for status widgets
                     if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
@@ -1639,9 +1681,30 @@ Date       By   Updates (newest updates at the top)
             }
         #endregion
 
-        #todo: smtp output
+        #* smtp output
         #region smtp output
-            
+            #sender ([MimeKit.MailboxAddress] http://www.mimekit.net/docs/html/T_MimeKit_MailboxAddress.htm, required)
+            $From=[MimeKit.MailboxAddress]$myvar_smtp_from
+
+            #recipient list ([MimeKit.InternetAddressList] http://www.mimekit.net/docs/html/T_MimeKit_InternetAddressList.htm, required)
+            $RecipientList=[MimeKit.InternetAddressList]::new()
+            $RecipientList.Add([MimeKit.InternetAddress]$myvar_smtp_to)
+
+            #attachment list ([System.Collections.Generic.List[string]], optional)
+            $AttachmentList=[System.Collections.Generic.List[string]]::new()
+            $AttachmentList.Add($myvar_html_report_name)
+
+            #send message
+            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending email message to $($myvar_smtp_to)..."
+            try
+            {#sending mail
+                Send-MailKitMessage -UseSecureConnectionIfAvailable -Credential $emailCredentials -SMTPServer $myvar_smtp_server -Port $myvar_smtp_server_port -From $From -RecipientList $RecipientList -Subject $myvar_smtp_subject -TextBody $myvar_smtp_subject -AttachmentList $AttachmentList -ErrorAction Stop
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Successfully sent email message to $($myvar_smtp_to)"
+            }
+            catch
+            {#could not send mail
+                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not send email message to $($myvar_smtp_to): $($_.Exception.Message)"
+            }
         #endregion
     #endregion
 #endregion
