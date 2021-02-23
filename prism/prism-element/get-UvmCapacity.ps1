@@ -364,8 +364,6 @@ Date       By   Updates (newest updates at the top)
     $myvar_smtp_server = "smtp.gmail.com"
     $myvar_smtp_server_port = 25
     $myvar_smtp_to = "stephane.bourdeaud@nutanix.com"
-    $myvar_smtp_subject = "UVM Capacity Report"
-    $myvar_smtp_body = "Attached report is for UVM Capacity of Nutanix cluster(s)"
 
     $myvar_influxdb_url = "http://10.68.97.46:8086"
     $myvar_influxdb_database = "ntnx"
@@ -1693,11 +1691,39 @@ Date       By   Updates (newest updates at the top)
             $AttachmentList=[System.Collections.Generic.List[string]]::new()
             $AttachmentList.Add($myvar_html_report_name)
 
+            #* putting together mail content (as html)
+            $myvar_smtp_subject = "UVM Capacity Report for Nutanix Cluster $($myvar_ntnx_cluster_name)"
+            $myvar_smtp_html_body = EmailBody {
+                EmailTextBox -FontFamily 'Calibri' -Size 22 -TextDecoration underline -Color Blue -Alignment center {
+                    'Virtual Machine Capacity Report'
+                }
+                EmailText -LineBreak
+                if ($myvar_remote_site_online)
+                {#remote site is available
+                    EmailText -FontSize 20 -Text "Metro Failover Capacity" -Color Blue -FontFamily 'Calibri'
+                    EmailText -FontSize 17 -Text $myvar_ntnx_cluster_widget_header -Color $myvar_ntnx_cluster_failover_capacity_color -FontFamily 'Calibri'
+                    EmailText -FontSize 15 -Text $myvar_ntnx_cluster_failover_capacity_status -Color $myvar_ntnx_cluster_failover_capacity_color -FontFamily 'Calibri'
+                    EmailText -FontSize 17 -Text $myvar_ntnx_remote_cluster_widget_header -Color $myvar_ntnx_remote_cluster_failover_capacity_color -FontFamily 'Calibri'
+                    EmailText -FontSize 15 -Text $myvar_ntnx_remote_cluster_failover_capacity_status -Color $myvar_ntnx_remote_cluster_failover_capacity_color -FontFamily 'Calibri'
+                    EmailText -LineBreak
+                }
+                else 
+                {
+                    EmailText -FontSize 20 -Text "Remaining Virtual Machine Capacity" -Color Blue -FontFamily 'Calibri'
+                    EmailTable -Table $myvar_ntnx_cluster_uvm_capacity -HideFooter -Title "Remaining Virtual Machine Capacity"
+                    EmailText -LineBreak
+                }
+                
+                EmailText -FontSize 20 -Text "Report configuration settings" -Color Blue -FontFamily 'Calibri'
+                EmailTable -Table $myvar_report_configuration_settings -HideFooter -Title "Report configuration settings"
+                EmailText -LineBreak
+            }
+
             #send message
             Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending email message to $($myvar_smtp_to)..."
             try
             {#sending mail
-                Send-MailKitMessage -UseSecureConnectionIfAvailable -Credential $emailCredentials -SMTPServer $myvar_smtp_server -Port $myvar_smtp_server_port -From $From -RecipientList $RecipientList -Subject $myvar_smtp_subject -TextBody $myvar_smtp_subject -AttachmentList $AttachmentList -ErrorAction Stop
+                Send-MailKitMessage -UseSecureConnectionIfAvailable -Credential $emailCredentials -SMTPServer $myvar_smtp_server -Port $myvar_smtp_server_port -From $From -RecipientList $RecipientList -Subject $myvar_smtp_subject -HtmlBody $myvar_smtp_html_body -AttachmentList $AttachmentList -ErrorAction Stop
                 Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Successfully sent email message to $($myvar_smtp_to)"
             }
             catch
