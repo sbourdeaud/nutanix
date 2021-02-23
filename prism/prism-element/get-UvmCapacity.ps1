@@ -270,7 +270,7 @@ Date       By   Updates (newest updates at the top)
     $myvar_smtp_from = ""
     $myvar_smtp_to = ""
     $myvar_zabbix_server = ""
-    $myvar_influxdb_url = "http://localhost:8096"
+    $myvar_influxdb_url = "http://10.68.97.46:8086"
     $myvar_influxdb_database = "ntnx"
 #endregion
 
