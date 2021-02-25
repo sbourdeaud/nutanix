@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Use this script to test a rang of IPs.
+  Use this script to test a range of IPs.
 .DESCRIPTION
   You can test IPs with ping as well as any tcp port you want to add.
 .PARAMETER help
