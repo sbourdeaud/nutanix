@@ -273,7 +273,7 @@ Date       By   Updates (newest updates at the top)
             }
             else 
             {
-                Write-Host "IP $($myvar_ip) is not available" -ForeGroundColor Red
+                Write-Host "IP $($myvar_ip) is not available because it responds to ICMP" -ForeGroundColor Red
             }
             continue
         }
@@ -285,6 +285,7 @@ Date       By   Updates (newest updates at the top)
             $myvar_tcp_result = Test-Connection -IPv4 -TcpPort $myvar_tcp_port -Timeout $timeout -TargetName $myvar_ip
             if ($myvar_tcp_result) 
             {#a port tested positive, so we break out of the loop
+                $myvar_tcp_active_port = $myvar_tcp_port
                 break
             }
         }
@@ -297,7 +298,7 @@ Date       By   Updates (newest updates at the top)
             }
             else 
             {
-                Write-Host "IP $($myvar_ip) is not available" -ForeGroundColor Red
+                Write-Host "IP $($myvar_ip) is not available because it responded on TCP port $($myvar_tcp_active_port)" -ForeGroundColor Red
             }
         }
         else
