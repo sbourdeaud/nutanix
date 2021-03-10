@@ -1,5 +1,5 @@
 *.csv
 set-EsxPortGroup.ps1
 .vscode
-capacity_report.html
+*.html
 *.log
