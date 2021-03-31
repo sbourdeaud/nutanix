@@ -365,8 +365,8 @@ Date       By   Updates (newest updates at the top)
     $myvar_smtp_server_port = 25
     $myvar_smtp_to = "stephane.bourdeaud@nutanix.com"
 
-    $myvar_influxdb_url = "http://10.68.97.46:8086"
-    $myvar_influxdb_database = "ntnx"
+    $myvar_influxdb_url = "http://localhost:8086"
+    $myvar_influxdb_database = "prism"
 #endregion
 
 #region parameters validation

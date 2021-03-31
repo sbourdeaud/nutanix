@@ -24,7 +24,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the hardware c
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th
+  Revision: March 31st
 #>
 
 #region parameters
@@ -50,6 +50,7 @@ Date       By   Updates (newest updates at the top)
 01/17/2020 sb   Initial release.
 04/20/2020 sb   Do over with sbourdeaud module
 02/06/2021 sb   Replaced username with get-credential
+03/31/2021 sb   Fixing an issue with a GET API call sending a payload...
 ################################################################################
 '@
     $myvarScriptName = ".\get-ntnxHwConfig.ps1"
@@ -234,7 +235,7 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
         Do {
             try {
-                $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 
                 $listLength = 0
                 if ($resp.metadata.offset) {

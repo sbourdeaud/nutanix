@@ -36,7 +36,10 @@
   Will generate csvs for each of the following metrics: controller_avg_io_latency_usecs, controller_io_bandwidth_kBps, num_iops, hypervisor_cpu_usage_ppm, hypervisor_memory_usage_ppm.
 .PARAMETER graph
   Will generate bar graphs in the console in addition to the csv files (using this parameter will install an external module from the PowerShell library).
-
+.PARAMETER influxdb
+  Specifies you want to send data to influxdb server. You will need to configure the influxdb server URL and database instance in the variables section of this script.  The timeseries created by default is called ntnx_cluster_stats.
+.PARAMETER influxdbCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$influxdbCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
 .\get-ntnxStats.ps1 -cluster ntnxc1.local -overview -week
 Generate one csv file per overview metric for the last 7 days.
@@ -204,9 +207,199 @@ Generate one csv file per overview metric for the last 7 days.
             "storage.reserved_capacity_bytes"
         )]
         [string]$metric,
+        [parameter(mandatory = $false)] [switch]$influxdb,
+        [parameter(mandatory = $false)] [string]$influxdbCreds,
         
         [parameter(mandatory = $false)] [switch]$graph
     )
+#endregion
+
+#region functions
+    #this function is used to process output to console (timestamped and color coded) and log file
+    function Write-LogOutput
+    {
+    <#
+    .SYNOPSIS
+    Outputs color coded messages to the screen and/or log file based on the category.
+
+    .DESCRIPTION
+    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+
+    .PARAMETER Category
+    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+
+    .PARAMETER Message
+    This is the actual message you want to display.
+
+    .PARAMETER LogFile
+    If you want to log output to a file as well, use logfile to pass the log file full path name.
+
+    .NOTES
+    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+    .EXAMPLE
+    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
+    Displays an error message.
+
+    .LINK
+    https://github.com/sbourdeaud
+    #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param
+        (
+            [Parameter(Mandatory)]
+            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
+            [string]
+            $Category,
+
+            [string]
+            $Message,
+
+            [string]
+            $LogFile
+        )
+
+        process
+        {
+            $Date = get-date #getting the date so we can timestamp the output entry
+            $FgColor = "Gray" #resetting the foreground/text color
+            switch ($Category) #we'll change the text color depending on the selected category
+            {
+                "INFO" {$FgColor = "Green"}
+                "WARNING" {$FgColor = "Yellow"}
+                "ERROR" {$FgColor = "Red"}
+                "SUM" {$FgColor = "Magenta"}
+                "SUCCESS" {$FgColor = "Cyan"}
+                "STEP" {$FgColor = "Magenta"}
+                "DEBUG" {$FgColor = "White"}
+                "DATA" {$FgColor = "Gray"}
+            }
+
+            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+            if ($LogFile) #add the entry to the log file if -LogFile has been specified
+            {
+                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+            }
+        }
+
+    }#end function Write-LogOutput
+    #this function is used to test a given IP address
+	Function TestIp 
+	{#ping an ip address, return true or false
+		#input: ip
+		#output: boolean
+	<#
+	.SYNOPSIS
+	Tries to ping the IP address provided and returns true or false.
+	.DESCRIPTION
+	Tries to ping the IP address provided and returns true or false.
+	.NOTES
+	Author: Stephane Bourdeaud
+	.PARAMETER ip
+	An IP address to test.
+	.EXAMPLE
+	PS> TestIp -ip 10.10.1.1
+	#>
+		param 
+		(
+			[string] $ip
+		)
+
+		begin
+		{
+			
+		}
+
+		process
+		{
+            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to ping IP $($ip)..."
+			if (Test-Connection $ip -Count 5 -Quiet)
+            {
+                $myvar_ping_test = $true
+                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Successfully pinged IP $($ip)..."
+            }
+            else 
+            {
+                $myvar_ping_test = $false
+                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not ping IP $($ip)..."
+            }
+		}
+
+		end
+		{
+		return $myvar_ping_test
+		}
+	}#end function TestIp
+    #this function loads a powershell module
+    Function LoadModule
+    {#tries to load a module, import it, install it if necessary
+    <#
+	.SYNOPSIS
+	Tries to load the specified module and installs it if it can't.
+	.DESCRIPTION
+	Tries to load the specified module and installs it if it can't.
+	.NOTES
+	Author: Stephane Bourdeaud
+	.PARAMETER module
+	Name of PowerShell module to import.
+	.EXAMPLE
+	PS> LoadModule -module PSWriteHTML
+	#>
+		param 
+		(
+			[string] $module
+		)
+
+		begin
+		{
+			
+		}
+
+		process
+		{   
+            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
+			if (!(Get-Module -Name $module)) 
+            {#we could not get the module, let's try to load it
+                try
+                {#import the module
+                    Import-Module -Name $module -ErrorAction Stop
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+                }#end try
+                catch 
+                {#we couldn't import the module, so let's install it
+                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
+                    try 
+                    {#install module
+                        Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
+                    }
+                    catch 
+                    {#could not install module
+                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
+                        exit 1
+                    }
+
+                    try
+                    {#now that it is intalled, let's import it
+                        Import-Module -Name $module -ErrorAction Stop
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+                    }#end try
+                    catch 
+                    {#we couldn't import the module
+                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
+                        Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
+                        Exit 1
+                    }#end catch
+                }#end catch
+            }
+		}
+
+		end
+		{
+
+		}
+    }
 #endregion
 
 #region prepwork
@@ -269,6 +462,13 @@ Generate one csv file per overview metric for the last 7 days.
     #endregion
     Set-PoSHSSLCerts
     Set-PoshTls
+
+    #region module Influx
+    if ($influxdb)
+    {#we need influxdb output, so let's load the Influx module
+        LoadModule -module Influx
+    }
+    #endregion
 #endregion
 
 #region variables
@@ -279,6 +479,10 @@ Generate one csv file per overview metric for the last 7 days.
     $myvar_metrics_results = @{}
 
     $api_server_port = "9440"
+
+    #* configuration
+    $myvar_influxdb_url = "http://localhost:8086"
+    $myvar_influxdb_database = "prism"
 #endregion
 
 #region parameters validation
@@ -318,6 +522,27 @@ Generate one csv file per overview metric for the last 7 days.
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
     
+    if (!$influxdbCreds -and $influxdb) 
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+       $influxdbCredentials = Get-Credential -Message "Please enter InfluxDB credentials"
+    } 
+    elseif ($influxdb) 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {#Get-CustomCredentials
+            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+            $username = $influxdbCredentials.UserName
+            $InfluxDBSecurePassword = $influxdbCredentials.Password
+        }
+        catch 
+        {#could not Get-CustomeCredentials, so Set-CustomCredentials
+            Set-CustomCredentials -credname $influxdbCreds
+            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+            $username = $influxdbCredentials.UserName
+            $InfluxDBSecurePassword = $influxdbCredentials.Password
+        }
+        $influxdbCredentials = New-Object PSCredential $username, $InfluxDBSecurePassword
+    }
 #endregion
 
 #region processing	
@@ -487,6 +712,40 @@ Generate one csv file per overview metric for the last 7 days.
                     Write-Host "-----------------------------------------------------------" -ForegroundColor Green
                 }
             #endregion
+        }
+    #endregion
+
+    #* influxdb output
+    #region influxdb output
+        if ($influxdb)
+        {#we need to insert data into influxdb database
+            #* retrieve cluster information
+            #region GET cluster
+                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving cluster information from Nutanix cluster $($cluster)..."
+                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $cluster
+                $method = "GET"
+                $myvar_ntnx_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                $myvar_ntnx_cluster_name = $myvar_ntnx_cluster_info.name
+                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster name is $($myvar_ntnx_cluster_name)"
+            #endregion
+
+            ForEach ($metric in $myvar_metrics_results.keys) {
+                $myvar_csv_filename = "{0}_{1}_fromdate-{2}_todate-{3}.csv" -f $cluster,$metric,$(Get-Date -Date $startdate -UFormat "%Y.%m.%d.%H.%M"),$(Get-Date -Date $enddate -UFormat "%Y.%m.%d.%H.%M")
+                $myvar_csv_data = Import-Csv -Path $myvar_csv_filename
+                try 
+                {#sending data to influxdb
+                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending $($metric) data for cluster $($myvar_ntnx_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series ntnx_cluster_stats..."
+                    ForEach ($myvar_line in $myvar_csv_data)
+                    {
+                        Write-Influx -Measure ntnx_cluster_stats -Tags @{cluster=$myvar_ntnx_cluster_name} -Metrics @{$metric=$myvar_line.$metric;} -TimeStamp $(Get-Date $myvar_line.timestamp) -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
+                    }
+                }
+                catch 
+                {#could not send data to influxdb
+                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Could not send data to influxdb: $($_.Exception.Message)"
+                }
+            }
         }
     #endregion
 
