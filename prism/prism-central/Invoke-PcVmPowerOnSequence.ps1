@@ -283,7 +283,7 @@ Date       By   Updates (newest updates at the top)
                 }
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
-            While ($cluster_list.metadata.length -eq $length)
+            While ($resp.metadata.length -eq $length)
         #endregion
 
         if ($cluster) {#a specific cluster was specified, so we need to make sure it exists in Prism Central before we do anything else 
