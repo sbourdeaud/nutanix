@@ -41,7 +41,7 @@ Connect myvm to the mynetwork AHV network:
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
-        [parameter(mandatory = $true)] [string]$vms,
+        [parameter(mandatory = $true)] $vms,
         [parameter(mandatory = $true)] [string]$network,
         [parameter(mandatory = $false)] [switch]$skiptaskstatuscheck
     )
