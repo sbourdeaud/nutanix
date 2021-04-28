@@ -41,7 +41,7 @@
 .PARAMETER influxdbCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$influxdbCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
-.\get-ntnxStats.ps1 -cluster ntnxc1.local -overview -week
+.\get-ntnxClusterStats.ps1 -cluster ntnxc1.local -overview -week
 Generate one csv file per overview metric for the last 7 days.
 
 .LINK
@@ -410,9 +410,11 @@ Generate one csv file per overview metric for the last 7 days.
  ---------- ---- ---------------------------------------------------------------
  05/12/2020 sb   Initial release.
  02/06/2021 sb   Replaced username with get-credential
+ 04/28/2021 sb   Fixed some incorrect script name references in the code 
+                (thx Aritro!)
 ################################################################################
 '@
-    $myvarScriptName = ".\get-ntnxStats.ps1"
+    $myvarScriptName = ".\get-ntnxClusterStats.ps1"
     
     if ($help) {get-help $myvarScriptName; exit}
     if ($History) {$HistoryText; exit}
