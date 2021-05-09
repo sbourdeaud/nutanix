@@ -518,6 +518,58 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             }
         #endregion
     }#end function Set-NtnxVmhostsToMaintenanceMode
+
+    #this function is used to prompt the user for a yes/no/skip response in order to control the workflow of a script
+    function Write-CustomPrompt 
+    {
+    <#
+    .SYNOPSIS
+    Creates a user prompt with a yes/no/skip response. Returns the response.
+
+    .DESCRIPTION
+    Creates a user prompt with a yes/no/skip response. Returns the response in lowercase. Valid responses are "y" for yes, "n" for no, "s" for skip.
+
+    .NOTES
+    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+    .EXAMPLE
+    .\Write-CustomPrompt
+    Creates the prompt.
+
+    .LINK
+    https://github.com/sbourdeaud
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param 
+    (
+        [Switch]$skip
+    )
+
+    begin 
+    {
+        [String]$userChoice = "" #initialize our returned variable
+    }
+    process 
+    {
+        if ($skip)
+        {
+            do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o]/S[kip])"} #display the user prompt
+            while ($userChoice -notmatch '[ynsYNS]') #loop until the user input is valid
+        }
+        else 
+        {
+            do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o])"} #display the user prompt
+            while ($userChoice -notmatch '[ynYN]') #loop until the user input is valid
+        }
+        $userChoice = $userChoice.ToLower() #change to lowercase
+    }
+    end 
+    {
+        return $userChoice
+    }
+
+    } #end Write-CustomPrompt function
 #endregion
 
 #! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
