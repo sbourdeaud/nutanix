@@ -41,7 +41,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 16th 2021
+  Revision: May 9th 2021
 #>
 
 #region parameters
@@ -1337,47 +1337,44 @@ public class ServerCertificateValidationCallback
                             throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
                         }
 
-                        #* dealing with DRS overrides here
+                        #* process powered on vms; dealing with DRS overrides here
                         ForEach ($myvar_datastore_poweredon_vm in $myvar_datastore_poweredon_vms)
                         {#let's make sure none of the powered on vms have DRS override
                             $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
-                            if ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
+                            if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_ntnx_vmhosts)
+                            {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
+                                Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is not part of this Nutanix cluster. This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
+                            }
+                            elseif ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
                             {#this vm has a DRS override
                                 #check vmhost for that vm
-                                if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_ntnx_vmhosts)
-                                {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
-                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is not part of this Nutanix cluster. This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
+                                Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
+                                if (!$resetOverrides)
+                                {#user hasn't specified he want to remove DRS override by default, so prompting
+                                    $myvar_user_choice = Write-CustomPrompt
                                 }
                                 else 
-                                {
-                                    Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
-                                    if (!$resetOverrides)
-                                    {#user hasn't specified he want to remove DRS override by default, so prompting
-                                        $myvar_user_choice = Write-CustomPrompt
+                                {#user has already said he wanted to remove DRS overrides by default
+                                    $myvar_user_choice = "y"
+                                }
+                                
+                                if ($myvar_user_choice -match '[yY]')
+                                {#user wants to remove drs override
+                                    try 
+                                    {#remove VM DRS override
+                                        $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
                                     }
-                                    else 
-                                    {#user has already said he wanted to remove DRS overrides by default
-                                        $myvar_user_choice = "y"
+                                    catch 
+                                    {#could not remove VM DRS override
+                                        Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
+                                        Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
                                     }
-                                    
-                                    if ($myvar_user_choice -match '[yY]')
-                                    {#user wants to remove drs override
-                                        try 
-                                        {#remove VM DRS override
-                                            $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
-                                        }
-                                        catch 
-                                        {#could not remove VM DRS override
-                                            Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
-                                            Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
-                                        }
-                                    }
-                                    else 
-                                    {#user does not want to remove override
-                                        Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
-                                    }
-                                }                                
-                            }
+                                }
+                                else 
+                                {#user does not want to remove override
+                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
+                                }
+                            }                                
                         }
                         
                         $myvar_vmhost_found = $false
@@ -1413,6 +1410,10 @@ public class ServerCertificateValidationCallback
                                 {#couldn't move vm
                                     Write-Host "$(get-date) [ERROR] Could not move powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name) : $($_.Exception.Message)" -ForegroundColor Red
                                 }
+                            }
+                            else 
+                            {#that vm is not in the same cluster
+                                Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_poweredoff_vm.Name) is powered off, on a metro datastore we need to move but is not part of this Nutanix cluster. This should not prevent failover completion but is unexpected." -ForegroundColor Yellow
                             }
                         }
                     } While (!$myvar_drs_done)
