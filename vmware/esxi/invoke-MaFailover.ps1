@@ -603,6 +603,8 @@ Re-enable replication
                  keep track of remote site cluster hypervisor hosts.  Added code
                  to display number of remaining virtual machines in a metro
                  enabled container.
+ 05/09/2021 sb   Added check for VM with DRS override that it is in the same
+                 cluster and changed message accordingly.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1341,32 +1343,40 @@ public class ServerCertificateValidationCallback
                             $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
                             if ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
                             {#this vm has a DRS override
-                                Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
-                                if (!$resetOverrides)
-                                {#user hasn't specified he want to remove DRS override by default, so prompting
-                                    $myvar_user_choice = Write-CustomPrompt
+                                #check vmhost for that vm
+                                if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_ntnx_vmhosts)
+                                {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
+                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is not part of this Nutanix cluster. This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
                                 }
                                 else 
-                                {#user has already said he wanted to remove DRS overrides by default
-                                    $myvar_user_choice = "y"
-                                }
-                                
-                                if ($myvar_user_choice -match '[yY]')
-                                {#user wants to remove drs override
-                                    try 
-                                    {#remove VM DRS override
-                                        $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
+                                {
+                                    Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
+                                    if (!$resetOverrides)
+                                    {#user hasn't specified he want to remove DRS override by default, so prompting
+                                        $myvar_user_choice = Write-CustomPrompt
                                     }
-                                    catch 
-                                    {#could not remove VM DRS override
-                                        Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
-                                        Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
+                                    else 
+                                    {#user has already said he wanted to remove DRS overrides by default
+                                        $myvar_user_choice = "y"
                                     }
-                                }
-                                else 
-                                {#user does not want to remove override
-                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
-                                }
+                                    
+                                    if ($myvar_user_choice -match '[yY]')
+                                    {#user wants to remove drs override
+                                        try 
+                                        {#remove VM DRS override
+                                            $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
+                                        }
+                                        catch 
+                                        {#could not remove VM DRS override
+                                            Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
+                                            Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
+                                        }
+                                    }
+                                    else 
+                                    {#user does not want to remove override
+                                        Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
+                                    }
+                                }                                
                             }
                         }
                         
