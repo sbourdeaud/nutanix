@@ -1,8 +1,83 @@
+# region headers
+# * author:       stephane.bourdeaud@nutanix.com
+# * version:      2021/05/10
+# task_name:      n/a
+# description:    This is a collection of functions meant to be used in escript
+#                 for interfacing with Prism Central.  Note that some functions
+#                 require other functions in this library, so make sure you copy
+#                 all the ones you need in your escript.
+# endregion
+
+#region base request function (required by all other functions)
+
+import requests
+
+def process_request(url, method, user, password, headers, payload=None, secure=False):
+    if payload is not None:
+        payload = json.dumps(payload)
+    
+    #configuring web request behavior
+    timeout=10
+    retries = 5
+    sleep_between_retries = 5
+    
+    while retries > 0:
+        try:
+
+            if method == 'POST':
+                    r = requests.post(
+                    url,
+                    headers=headers,
+                    data=payload,
+                    auth=(user, password),
+                    verify=secure,
+                    timeout=timeout
+                )
+            elif method == 'DELETE':
+                r = requests.delete(
+                    url,
+                    headers=headers,
+                    data=payload,
+                    auth=(user, password),
+                    verify=secure,
+                    timeout=timeout
+                )
+            elif method == 'GET':
+                r = requests.get(
+                    url,
+                    headers=headers,
+                    auth=(user, password),
+                    verify=secure,
+                    timeout=timeout
+            )
+            elif method == 'PUT':
+                    r = requests.put(
+                    url,
+                    headers=headers,
+                    data=payload,
+                    auth=(user, password),
+                    verify=secure,
+                    timeout=timeout
+            )
+        except Exception as e:
+            if retries == 1:
+                raise
+            else:
+                print('Error! Code: {c}, Message: {m}'.format(c = type(e).__name__, m = str(e)))
+                sleep(sleep_between_retries)
+                retries -= 1
+                print ("retries left: {}".format(retries))
+                continue
+        break
+    
+    return r
+
+#endregion
+
 #region functions
 
-
-def prism_get_vms(api_server,username,secret):
-    """Retrieve the list of VMs from Prism.
+def prism_get_vms(api_server,username,secret,secure=False):
+    """Retrieve the list of VMs from Prism Central.
 
     Args:
         api_server: The IP or FQDN of Prism.
@@ -26,7 +101,7 @@ def prism_get_vms(api_server,username,secret):
         api_server_endpoint
     )
     method = "POST"
-    length = 50
+    length = 200
 
     # Compose the json payload
     payload = {
@@ -36,17 +111,8 @@ def prism_get_vms(api_server,username,secret):
     }
     #endregion
     while True:
-        print("Making a {} API call to {}".format(method, url))
-        resp = urlreq(
-            url,
-            verb=method,
-            auth='BASIC',
-            user=username,
-            passwd=secret,
-            params=json.dumps(payload),
-            headers=headers,
-            verify=False
-        )
+        print("Making a {} API call to {} with secure set to {}".format(method, url, secure))
+        resp = process_request(url,method,username,secret,headers,payload,secure)
 
         # deal with the result/response
         if resp.ok:
@@ -71,19 +137,24 @@ def prism_get_vms(api_server,username,secret):
                 return entities
                 break
         else:
-            print("Request failed")
-            print("Headers: {}".format(headers))
-            print("Payload: {}".format(json.dumps(payload)))
-            print('Status code: {}'.format(resp.status_code))
-            print('Response: {}'.format(
-                json.dumps(
-                    json.loads(resp.content), 
-                    indent=4)))
-            exit(1)
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
 
 
-def prism_get_vm(api_server,username,secret,vm_name):
-    """Returns from Prism the uuid and details of a given VM name.
+def prism_get_vm(api_server,username,secret,vm_name,vm_uuid=None,secure=False):
+    """Returns from Prism Central the uuid and details of a given VM name.
+       If a vm_uuid is specified, it will skip retrieving all vms (faster).
 
     Args:
         api_server: The IP or FQDN of Prism.
@@ -95,21 +166,52 @@ def prism_get_vm(api_server,username,secret,vm_name):
         A string containing the UUID of the VM (vm_uuid) and the json content
         of the VM details (vm_details)
     """
-    vm_uuid = ""
     vm_details = {}
 
-    #get the list vms from Prism
-    vm_list = prism_get_vms(api_server,username,secret)
-    for vm in vm_list:
-        if vm['spec']['name'] == vm_name:
-            vm_uuid = vm['metadata']['uuid']
-            vm_details = vm.copy()
-            break
+    if vm_uuid is None:
+        #get the list vms from Prism
+        vm_list = prism_get_vms(api_server,username,secret,secure)
+        for vm in vm_list:
+            if vm['spec']['name'] == vm_name:
+                vm_uuid = vm['metadata']['uuid']
+                vm_details = vm.copy()
+                break
+    else:
+        headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+        }
+        api_server_port = "9440"
+        api_server_endpoint = "/api/nutanix/v3/vms/{0}".format(vm_uuid)
+        url = "https://{}:{}{}".format(
+            api_server,
+            api_server_port,
+            api_server_endpoint
+        )
+        method = "GET"
+        print("Making a {} API call to {} with secure set to {}".format(method, url, secure))
+        resp = process_request(url,method,username,secret,headers,secure)
+        if resp.ok:
+            vm_details = json.loads(resp.content)
+        else:
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
     return vm_uuid, vm_details
 
 
-def prism_get_clusters(api_server,username,secret):
-    """Retrieve the list of clusters from Prism.
+def prism_get_clusters(api_server,username,secret,secure=False):
+    """Retrieve the list of clusters from Prism Central.
 
     Args:
         api_server: The IP or FQDN of Prism.
@@ -137,23 +239,14 @@ def prism_get_clusters(api_server,username,secret):
 
     # Compose the json payload
     payload = {
-        "kind": "vm",
+        "kind": "cluster",
         "offset": 0,
         "length": length
     }
     #endregion
     while True:
         print("Making a {} API call to {}".format(method, url))
-        resp = urlreq(
-            url,
-            verb=method,
-            auth='BASIC',
-            user=username,
-            passwd=secret,
-            params=json.dumps(payload),
-            headers=headers,
-            verify=False
-        )
+        resp = process_request(url,method,username,secret,headers,payload,secure)
 
         # deal with the result/response
         if resp.ok:
@@ -178,19 +271,24 @@ def prism_get_clusters(api_server,username,secret):
                 return entities
                 break
         else:
-            print("Request failed")
-            print("Headers: {}".format(headers))
-            print("Payload: {}".format(json.dumps(payload)))
-            print('Status code: {}'.format(resp.status_code))
-            print('Response: {}'.format(
-                json.dumps(
-                    json.loads(resp.content), 
-                    indent=4)))
-            exit(1)
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
 
 
-def prism_get_cluster(api_server,username,secret,cluster_name):
-    """Returns from Prism the uuid and details of a given cluster name.
+def prism_get_cluster(api_server,username,secret,cluster_name,cluster_uuid=None,secure=False):
+    """Returns from Prism Central the uuid and details of a given cluster name.
+    If a cluster_uuid is specified, it will skip retrieving all clusters (faster).
 
     Args:
         api_server: The IP or FQDN of Prism.
@@ -202,21 +300,53 @@ def prism_get_cluster(api_server,username,secret,cluster_name):
         A string containing the UUID of the VM (vm_uuid) and the json content
         of the VM details (vm_details)
     """
-    cluster_uuid = ""
     cluster_details = {}
 
-    #get the list vms from Prism
-    cluster_list = prism_get_clusters(api_server,username,secret)
-    for cluster in cluster_list:
-        if cluster['spec']['name'] == cluster_name:
-            cluster_uuid = cluster['metadata']['uuid']
-            cluster_details = cluster.copy()
-            break
+    if cluster_uuid is None:
+        #get the list of clusters from Prism Central
+        cluster_list = prism_get_clusters(api_server,username,secret)
+        for cluster in cluster_list:
+            if cluster['spec']['name'] == cluster_name:
+                cluster_uuid = cluster['metadata']['uuid']
+                cluster_details = cluster.copy()
+                break
+    else:
+        headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+        }
+        api_server_port = "9440"
+        api_server_endpoint = "/api/nutanix/v3/clusters/{0}".format(cluster_uuid)
+        url = "https://{}:{}{}".format(
+            api_server,
+            api_server_port,
+            api_server_endpoint
+        )
+        method = "GET"
+        print("Making a {} API call to {}".format(method, url))
+        resp = process_request(url,method,username,secret,headers,secure)
+        if resp.ok:
+            cluster_details = json.loads(resp.content)
+        else:
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
+
     return cluster_uuid, cluster_details
 
 
-def prism_get_images(api_server,username,secret):
-    """Retrieve the list of images from Prism.
+def prism_get_images(api_server,username,secret,secure=False):
+    """Retrieve the list of images from Prism Central.
 
     Args:
         api_server: The IP or FQDN of Prism.
@@ -251,16 +381,7 @@ def prism_get_images(api_server,username,secret):
     #endregion
     while True:
         print("Making a {} API call to {}".format(method, url))
-        resp = urlreq(
-            url,
-            verb=method,
-            auth='BASIC',
-            user=username,
-            passwd=secret,
-            params=json.dumps(payload),
-            headers=headers,
-            verify=False
-        )
+        resp = process_request(url,method,username,secret,headers,payload,secure)
 
         # deal with the result/response
         if resp.ok:
@@ -285,19 +406,24 @@ def prism_get_images(api_server,username,secret):
                 return entities
                 break
         else:
-            print("Request failed")
-            print("Headers: {}".format(headers))
-            print("Payload: {}".format(json.dumps(payload)))
-            print('Status code: {}'.format(resp.status_code))
-            print('Response: {}'.format(
-                json.dumps(
-                    json.loads(resp.content), 
-                    indent=4)))
-            exit(1)
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
 
 
-def prism_get_image(api_server,username,secret,image_name):
-    """Returns from Prism the uuid and details of a given image name.
+def prism_get_image(api_server,username,secret,image_name,image_uuid=None,secure=False):
+    """Returns from Prism Cnetral the uuid and details of a given image name.
+       If an image_uuid is specified, it will skip retrieving all images (faster).
 
     Args:
         api_server: The IP or FQDN of Prism.
@@ -309,17 +435,127 @@ def prism_get_image(api_server,username,secret,image_name):
         A string containing the UUID of the image (image_uuid) and the json content
         of the image details (image_details)
     """
-    image_uuid = ""
     image_details = {}
 
-    #get the list vms from Prism
-    image_list = prism_get_images(api_server,username,secret)
-    for image in image_list:
-        if image['spec']['name'] == image_name:
-            image_uuid = image['metadata']['uuid']
-            image_details = image.copy()
-            break
+    if image_uuid is None:
+        #get the list vms from Prism
+        image_list = prism_get_images(api_server,username,secret,secure)
+        for image in image_list:
+            if image['spec']['name'] == image_name:
+                image_uuid = image['metadata']['uuid']
+                image_details = image.copy()
+                break
+    else:
+        headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+        }
+        api_server_port = "9440"
+        api_server_endpoint = "/api/nutanix/v3/images/{0}".format(image_uuid)
+        url = "https://{}:{}{}".format(
+            api_server,
+            api_server_port,
+            api_server_endpoint
+        )
+        method = "GET"
+        print("Making a {} API call to {}".format(method, url))
+        resp = process_request(url,method,username,secret,headers,secure)
+        if resp.ok:
+            image_details = json.loads(resp.content)
+        else:
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
+
     return image_uuid, image_details
 
+
+def prism_mount_ngt(api_server,username,secret,vm_name,vm_uuid=None,cluster_uuid=None,secure=False):
+    """Mounts the NGT iso image for the given vm.
+       If a vm_uuid is specified, it will skip over retrieving all vms (faster)
+       If a cluster_uuid is specified, it will skip over retrieving all clusters (faster)
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        vm: Name of the virtual machine.
+        
+    Returns:
+        A boolean (true/false) based on success.
+    """
+    
+    #get vm details to figure out its uuid and its cluster uuid
+    if vm_uuid is None:
+        print("Retrieving details for virtual machine {}...".format(vm_name))
+        vm_uuid, vm_details=prism_get_vm(api_server,username,secret,vm_name)
+        print("Uuid of virtual machine {0} is {1}".format(vm_name,vm_uuid))
+        cluster_name=vm_details['status']['cluster_reference']['name']
+        print("Virtual machine {0} is hosted on cluster {1}".format(vm_name,cluster_name))
+    elif cluster_uuid is None:
+        print("Retrieving details for virtual machine {}...".format(vm_name))
+        vm_uuid, vm_details=prism_get_vm(api_server,username,secret,vm_name,vm_uuid)
+        cluster_name=vm_details['status']['cluster_reference']['name']
+        print("Virtual machine {0} is hosted on cluster {1}".format(vm_name,cluster_name))
+    else:
+        cluster_name=cluster_uuid
+    
+    #get the cluster details to figure out its ip
+    print("Retrieving details for cluster {}...".format(cluster_name))
+    cluster_uuid, cluster_details = prism_get_cluster(api_server,username,secret,cluster_name,cluster_uuid)
+    cluster_ip=cluster_details['spec']['resources']['network']['external_ip']
+    cluster_name=cluster_details['spec']['name']
+    print("Cluster {0} has ip {1}".format(cluster_name,cluster_ip))
+
+    #send the mount request to the cluster ip for the given vm
+    print("Sending request to mount NGT iso for virtual machine {0} on cluster {1}...".format(vm_name,cluster_name))
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/PrismGateway/services/rest/v1/vms/{}/guest_tools/mount".format(vm_uuid)
+    url = "https://{}:{}{}".format(
+        cluster_ip,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "POST"
+    print("Making a {} API call to {}".format(method, url))
+    resp = process_request(url,method,username,secret,headers,secure=False)
+
+    if resp.ok:
+        # print the content of the response
+        print(json.dumps(
+            json.loads(resp.content),
+            indent=4
+        ))
+        print("Successfully mounted NGT iso for virtual machine {0} on cmuster {1}".format(vm_name,cluster_name))
+        return True
+    else:
+        # print the content of the response (which should have the error message)
+        print("Request failed!")
+        print("status code: {}".format(resp.status_code))
+        print("reason: {}".format(resp.reason))
+        print("text: {}".format(resp.text))
+        print("raise_for_status: {}".format(resp.raise_for_status()))
+        print("elapsed: {}".format(resp.elapsed))
+        print("headers: {}".format(resp.headers))
+        print("payload: {}".format(payload))
+        print(json.dumps(
+            json.loads(resp.content),
+            indent=4
+        ))
+        return False
 
 # endregion
