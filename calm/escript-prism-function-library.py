@@ -49,7 +49,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
-            )
+                )
             elif method == 'PUT':
                     r = requests.put(
                     url,
@@ -58,19 +58,84 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
-            )
-        except Exception as e:
+                )
+            elif method == 'PATCH':
+                    r = requests.put(
+                    url,
+                    headers=headers,
+                    data=payload,
+                    auth=(user, password),
+                    verify=secure,
+                    timeout=timeout
+                )
+        except requests.exceptions.HTTPError as e:
+            print ("Http Error!")
+            print("status code: {}".format(r.status_code))
+            print("reason: {}".format(r.reason))
+            print("text: {}".format(r.text))
+            print("elapsed: {}".format(r.elapsed))
+            print("headers: {}".format(r.headers))
+            if payload is not None:
+                print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(r.content),
+                indent=4
+            ))
+            exit(r.status_code)
+        except requests.exceptions.ConnectionError as e:
+            print ("Connection Error!")
             if retries == 1:
-                raise
+                print('Error: {c}, Message: {m}'.format(c = type(e).__name__, m = str(e)))
+                exit(1)
+            else:
+                print('Error: {c}, Message: {m}'.format(c = type(e).__name__, m = str(e)))
+                sleep(sleep_between_retries)
+                retries -= 1
+                print ("retries left: {}".format(retries))
+                continue
+            print('Error: {c}, Message: {m}'.format(c = type(e).__name__, m = str(e)))
+            exit(1)
+        except requests.exceptions.Timeout as e:
+            print ("Timeout Error!")
+            if retries == 1:
+                raise Exception(e)
             else:
                 print('Error! Code: {c}, Message: {m}'.format(c = type(e).__name__, m = str(e)))
                 sleep(sleep_between_retries)
                 retries -= 1
                 print ("retries left: {}".format(retries))
                 continue
+        except requests.exceptions.RequestException as e:
+            print ("Error!")
+            exit(r.status_code)
         break
     
-    return r
+    if r.ok:
+        return r
+    if r.status_code == 401:
+        print("status code: {0}".format(r.status_code))
+        print("reason: {0}".format(r.reason))
+        exit(r.status_code)
+    elif r.status_code == 500:
+        print("status code: {0}".format(r.status_code))
+        print("reason: {0}".format(r.reason))
+        print("text: {0}".format(r.text))
+        exit(r.status_code)
+    else:
+        print("Request failed!")
+        print("status code: {0}".format(r.status_code))
+        print("reason: {0}".format(r.reason))
+        print("text: {0}".format(r.text))
+        print("raise_for_status: {0}".format(r.raise_for_status()))
+        print("elapsed: {0}".format(r.elapsed))
+        print("headers: {0}".format(r.headers))
+        if payload is not None:
+            print("payload: {0}".format(payload))
+        print(json.dumps(
+            json.loads(r.content),
+            indent=4
+        ))
+        exit(r.status_code)
 
 #endregion
 
@@ -283,7 +348,7 @@ def prism_get_clusters(api_server,username,secret,secure=False):
                 json.loads(resp.content),
                 indent=4
             ))
-            raise
+            exit(resp.status_code)
 
 
 def prism_get_cluster(api_server,username,secret,cluster_name,cluster_uuid=None,secure=False):
@@ -340,7 +405,7 @@ def prism_get_cluster(api_server,username,secret,cluster_name,cluster_uuid=None,
                 json.loads(resp.content),
                 indent=4
             ))
-            raise
+            exit(resp.status_code)
 
     return cluster_uuid, cluster_details
 
@@ -418,7 +483,7 @@ def prism_get_images(api_server,username,secret,secure=False):
                 json.loads(resp.content),
                 indent=4
             ))
-            raise
+            exit(resp.status_code)
 
 
 def prism_get_image(api_server,username,secret,image_name,image_uuid=None,secure=False):
@@ -475,7 +540,7 @@ def prism_get_image(api_server,username,secret,image_name,image_uuid=None,secure
                 json.loads(resp.content),
                 indent=4
             ))
-            raise
+            exit(resp.status_code)
 
     return image_uuid, image_details
 
