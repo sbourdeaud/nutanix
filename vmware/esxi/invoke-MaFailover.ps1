@@ -1323,9 +1323,9 @@ public class ServerCertificateValidationCallback
                     }
                     else 
                     {
-                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
-                        $myvar_drs_rule_name = $drs_rule2_name
-                        $myvar_drs_vm_group_name = $drs_vm2_name
+                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
+                        $myvar_drs_rule_name = $drs_rule1_name
+                        $myvar_drs_vm_group_name = $drs_vm1_name
                     }
 
                     Write-Host ""
@@ -1350,9 +1350,9 @@ public class ServerCertificateValidationCallback
                     }
                     else 
                     {
-                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
-                        $myvar_drs_rule_name = $drs_rule1_name
-                        $myvar_drs_vm_group_name = $drs_vm1_name
+                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
+                        $myvar_drs_rule_name = $drs_rule2_name
+                        $myvar_drs_vm_group_name = $drs_vm2_name
                     }
 
                     Write-Host ""
