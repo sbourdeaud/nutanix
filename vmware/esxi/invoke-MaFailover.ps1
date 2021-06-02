@@ -1315,9 +1315,18 @@ public class ServerCertificateValidationCallback
                 #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
                 if ($myvar_ntnx_remote_cluster_name -eq $ntnx1_cluster_name)
                 {
-                    $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
-                    $myvar_drs_rule_name = $drs_rule2_name
-                    $myvar_drs_vm_group_name = $drs_vm2_name
+                    if ($pd -eq "all")
+                    {
+                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
+                        $myvar_drs_rule_name = $drs_rule2_name
+                        $myvar_drs_vm_group_name = $drs_vm2_name
+                    }
+                    else 
+                    {
+                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
+                        $myvar_drs_rule_name = $drs_rule2_name
+                        $myvar_drs_vm_group_name = $drs_vm2_name
+                    }
 
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
@@ -1333,9 +1342,18 @@ public class ServerCertificateValidationCallback
                     }
                 }
                 elseif ($myvar_ntnx_remote_cluster_name -eq $ntnx2_cluster_name) {
-                    $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
-                    $myvar_drs_rule_name = $drs_rule1_name
-                    $myvar_drs_vm_group_name = $drs_vm1_name
+                    if ($pd -eq "all")
+                    {
+                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
+                        $myvar_drs_rule_name = $drs_rule1_name
+                        $myvar_drs_vm_group_name = $drs_vm1_name
+                    }
+                    else 
+                    {
+                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
+                        $myvar_drs_rule_name = $drs_rule1_name
+                        $myvar_drs_vm_group_name = $drs_vm1_name
+                    }
 
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
@@ -1538,12 +1556,12 @@ public class ServerCertificateValidationCallback
                 } While ($myvar_remote_pd_role -ne "Active")
                 Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) has active role now." -ForegroundColor White
 
-                <#
+                
                 #* step 2 of 3: if necessary, disable pd
                 if ($myvar_pd.failure_handling -ne "Witness")
                 {
                     Write-Host "$(get-date) [INFO] Witness is not in use, so disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/metro_avail_disable" -f $myvar_site_ip,$myvar_pd.name
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/metro_avail_disable" -f $cluster,$myvar_pd.name
                     $method = "POST"
                     try 
                     {
@@ -1560,7 +1578,7 @@ public class ServerCertificateValidationCallback
                 Do 
                 {
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_site_ip
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
                     $method = "GET"
                     try 
                     {
@@ -1580,7 +1598,7 @@ public class ServerCertificateValidationCallback
                     }
                 } While ($myvar_pd_status -ne "Disabled")
                 Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
-                #>
+                
 
                 #* step 3 of 3: re-enable pd on remote
                 Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
