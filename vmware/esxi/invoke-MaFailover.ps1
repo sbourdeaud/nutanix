@@ -41,7 +41,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: May 9th 2021
+  Revision: June 2nd 2021
 #>
 
 #region parameters
@@ -605,6 +605,10 @@ Re-enable replication
                  enabled container.
  05/09/2021 sb   Added check for VM with DRS override that it is in the same
                  cluster and changed message accordingly.
+ 06/02/2021 sb   Adding check on failure handling method and adding step to
+                 disable the protection domain if a Witness is not being used.
+                 Added CUSTOMIZE markers to facilitate changing DRS naming
+                 convention.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1296,9 +1300,11 @@ public class ServerCertificateValidationCallback
             #* update matching drs rule(s)
             #region update drs rule(s)
                 #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                #! CUSTOMIZE: you can customize drs host group names here
                 $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
                 foreach ($myvar_datastore in $ctr_list.name)
                 {#process each datastore
+                    #! CUSTOMIZE: you can customize drs rules and vm group names here
                     $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
                     $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
                     Write-Host ""
@@ -1434,13 +1440,14 @@ public class ServerCertificateValidationCallback
     #region planned failover of the protection domain(s)
         if (!$skipfailover -and !$reEnableOnly)
         {
-            foreach ($myvar_pd in $pd_list.name) 
+            foreach ($myvar_pd in $pd_list) 
             {
                 Write-Host ""
-                Write-Host "$(get-date) [STEP] Failing over protection domain $($myvar_pd) from $($myvar_ntnx_cluster_name) to $($remote_site_name) ..." -ForegroundColor Magenta
-                #* trigger pd promotion on remote
-                Write-Host "$(get-date) [INFO] Promoting protection domain $($myvar_pd) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
-                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/promote?force=true" -f $myvar_remote_site_ip,$myvar_pd
+                Write-Host "$(get-date) [STEP] Failing over protection domain $($myvar_pd.name) from $($myvar_ntnx_cluster_name) to $($remote_site_name) ..." -ForegroundColor Magenta
+                
+                #* step 1 of 3: trigger pd promotion on remote
+                Write-Host "$(get-date) [INFO] Promoting protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
+                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/promote?force=true" -f $myvar_remote_site_ip,$myvar_pd.name
                 $method = "POST"
                 try 
                 {
@@ -1448,11 +1455,12 @@ public class ServerCertificateValidationCallback
                 }
                 catch
                 {
-                    throw "$(get-date) [ERROR] Could not promote protection domain $($myvar_pd) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
+                    throw "$(get-date) [ERROR] Could not promote protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                 }
-                Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd) on $($myvar_ntnx_remote_cluster_name)." -ForegroundColor Cyan
+                Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name)." -ForegroundColor Cyan
                 
                 #Start-Sleep 30
+                #* check remote pd is active
                 Do 
                 {
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
@@ -1468,18 +1476,62 @@ public class ServerCertificateValidationCallback
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
 
-                    $myvar_remote_pd_role = ($myvar_remote_pds.entities | Where-Object {$_.name -eq $myvar_pd}).metro_avail.role
+                    $myvar_remote_pd_role = ($myvar_remote_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.role
                     if ($myvar_remote_pd_role -ne "Active") 
                     {
-                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd) on cluster $($myvar_ntnx_remote_cluster_name) does not have active role yet but role $($myvar_remote_pd_role). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) does not have active role yet but role $($myvar_remote_pd_role). Waiting 15 seconds..." -ForegroundColor Yellow
                         Start-Sleep 15
                     }
                 } While ($myvar_remote_pd_role -ne "Active")
-                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd) on cluster $($myvar_ntnx_remote_cluster_name) has active role now." -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) has active role now." -ForegroundColor White
 
-                #* re-enable pd on remote
-                Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
-                $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_enable?re_enable=true" -f $myvar_remote_site_ip,$myvar_pd
+
+                #* step 2 of 3: if necessary, disable pd
+                if ($myvar_pd.failure_handling -ne "Witness")
+                {
+                    Write-Host "$(get-date) [INFO] Witness is not in use, so disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/metro_avail_disable" -f $myvar_site_ip,$myvar_pd.name
+                    $method = "POST"
+                    try 
+                    {
+                        $myvar_pd_disable = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not disable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully disabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)." -ForegroundColor Cyan
+                }
+
+                #* check pd status is disabled
+                Do 
+                {
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_site_ip
+                    $method = "GET"
+                    try 
+                    {
+                        $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                    $myvar_pd_status = ($myvar_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
+                    if ($myvar_pd_status -ne "Disabled") 
+                    {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not disabled yet but has status $($myvar_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Start-Sleep 15
+                    }
+                } While ($myvar_pd_status -ne "Disabled")
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
+
+
+                #* step 3 of 3: re-enable pd on remote
+                Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
+                $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_enable?re_enable=true" -f $myvar_remote_site_ip,$myvar_pd.name
                 $method = "POST"
                 $content = @{}
                 $body = (ConvertTo-Json $content)
@@ -1489,11 +1541,12 @@ public class ServerCertificateValidationCallback
                 }
                 catch
                 {
-                    throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
+                    throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                 }
-                Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd) on $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
+                Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
                 
                 #Start-Sleep 30
+                #* check remote pd is enabled
                 Do 
                 {
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
@@ -1509,14 +1562,14 @@ public class ServerCertificateValidationCallback
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
 
-                    $myvar_remote_pd_status = ($myvar_remote_pds.entities | Where-Object {$_.name -eq $myvar_pd}).metro_avail.status
+                    $myvar_remote_pd_status = ($myvar_remote_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
                     if ($myvar_remote_pd_status -ne "Enabled") 
                     {
-                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd) on cluster $($myvar_ntnx_remote_cluster_name) is not enabled yet. Current status is $($myvar_remote_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) is not enabled yet. Current status is $($myvar_remote_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
                         Start-Sleep 15
                     }
                 } While ($myvar_remote_pd_status -ne "Enabled")
-                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd) on cluster $($myvar_ntnx_remote_cluster_name) is enabled now." -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) is enabled now." -ForegroundColor White
             }
         }
     #endregion
