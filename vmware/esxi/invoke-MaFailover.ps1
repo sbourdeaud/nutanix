@@ -1316,8 +1316,8 @@ public class ServerCertificateValidationCallback
                 if ($myvar_ntnx_remote_cluster_name -eq $ntnx1_cluster_name)
                 {
                     $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
-                    $myvar_drs_rule_name = $drs_rule1_name
-                    $myvar_drs_vm_group_name = $drs_vm1_name
+                    $myvar_drs_rule_name = $drs_rule2_name
+                    $myvar_drs_vm_group_name = $drs_vm2_name
 
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
@@ -1334,8 +1334,8 @@ public class ServerCertificateValidationCallback
                 }
                 elseif ($myvar_ntnx_remote_cluster_name -eq $ntnx2_cluster_name) {
                     $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
-                    $myvar_drs_rule_name = $drs_rule2_name
-                    $myvar_drs_vm_group_name = $drs_vm2_name
+                    $myvar_drs_rule_name = $drs_rule1_name
+                    $myvar_drs_vm_group_name = $drs_vm1_name
 
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
