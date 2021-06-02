@@ -1156,7 +1156,7 @@ public class ServerCertificateValidationCallback
                     }
                     catch 
                     {
-                        Throw "$(get-date) [ERROR] Could not retrieve vCenter VM from $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                        Write-Host "$(get-date) [WARNING] Could not retrieve vCenter VM from $($myvar_vcenter_ip) : $($_.Exception.Message)" -ForegroundColor Yellow
                     }
                 }
             }
