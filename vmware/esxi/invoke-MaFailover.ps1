@@ -1538,7 +1538,7 @@ public class ServerCertificateValidationCallback
                 } While ($myvar_remote_pd_role -ne "Active")
                 Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) has active role now." -ForegroundColor White
 
-
+                <#
                 #* step 2 of 3: if necessary, disable pd
                 if ($myvar_pd.failure_handling -ne "Witness")
                 {
@@ -1580,7 +1580,7 @@ public class ServerCertificateValidationCallback
                     }
                 } While ($myvar_pd_status -ne "Disabled")
                 Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
-
+                #>
 
                 #* step 3 of 3: re-enable pd on remote
                 Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
