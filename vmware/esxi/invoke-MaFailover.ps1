@@ -731,6 +731,19 @@ public class ServerCertificateValidationCallback
 
 #endregion
 
+#! customize here
+#region customization
+    $ntnx1_cluster_name = "LABCL101"
+    $drs_hg1_name = "MB_hosts"
+    $drs_vm1_name = "MB_VMs"
+    $drs_rule1_name = "VMs_Should_In_MB"
+
+    $ntnx2_cluster_name = "LABCL201"
+    $drs_hg2_name = "GS_hosts"
+    $drs_vm2_name = "GS_VMs"
+    $drs_rule2_name = "VMs_Should_In_GS"
+#endregion
+
 #region parameters validation
     Write-Host ""       
     Write-Host "$(get-date) [STEP] Validating parameters ..." -ForegroundColor Magenta
@@ -1300,13 +1313,12 @@ public class ServerCertificateValidationCallback
             #* update matching drs rule(s)
             #region update drs rule(s)
                 #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-                #! CUSTOMIZE: you can customize drs host group names here
-                $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
-                foreach ($myvar_datastore in $ctr_list.name)
-                {#process each datastore
-                    #! CUSTOMIZE: you can customize drs rules and vm group names here
-                    $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
-                    $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
+                if ($myvar_ntnx_remote_cluster_name -eq $ntnx1_cluster_name)
+                {
+                    $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
+                    $myvar_drs_rule_name = $drs_rule1_name
+                    $myvar_drs_vm_group_name = $drs_vm1_name
+
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
 
@@ -1320,6 +1332,47 @@ public class ServerCertificateValidationCallback
                         Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
                     }
                 }
+                elseif ($myvar_ntnx_remote_cluster_name -eq $ntnx2_cluster_name) {
+                    $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
+                    $myvar_drs_rule_name = $drs_rule2_name
+                    $myvar_drs_vm_group_name = $drs_vm2_name
+
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+
+                    if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                    {#houston we have a problem: DRS rule does not exist
+                        throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                    } else {
+                        #update drs rule
+                        Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                        Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                        Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                    }
+                }
+                else 
+                {
+                    $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
+                    foreach ($myvar_datastore in $ctr_list.name)
+                    {#process each datastore
+                        #! CUSTOMIZE: you can customize drs rules and vm group names here
+                        $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
+                        $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
+                        Write-Host ""
+                        Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+
+                        if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                        {#houston we have a problem: DRS rule does not exist
+                            throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                        } else {
+                            #update drs rule
+                            Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                            Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                            Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                        }
+                    }                    
+                }
+            
             #endregion
 
             #* loop until all vms in each datastore have been moved
