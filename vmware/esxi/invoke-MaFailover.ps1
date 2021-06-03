@@ -41,7 +41,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 2nd 2021
+  Revision: June 3rd 2021
 #>
 
 #region parameters
@@ -575,11 +575,11 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
 #todo: handle going out of maintenance mode where the script would:
 <# 
-Take ESXi hosts off maintenance mode
-Power on CVMs
-SSH into a CVM to start the cluster
-Migrate VMs back
-Re-enable replication
+    Take ESXi hosts off maintenance mode
+    Power on CVMs
+    SSH into a CVM to start the cluster
+    Migrate VMs back
+    Re-enable replication
 #>
 
 #todo find a way to deal with ssh on non-windows systems
@@ -609,6 +609,10 @@ Re-enable replication
                  disable the protection domain if a Witness is not being used.
                  Added CUSTOMIZE markers to facilitate changing DRS naming
                  convention.
+ 06/03/2021 sb   Added the ability to use custom DRS object names where there is
+                 1 rule per cluster (as opposed to 1 DRS rule per container).
+                 Added code to export processed pd list and ability to specify
+                 a csv file for -pd parameter (in order to facilitate failback).
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -733,6 +737,37 @@ public class ServerCertificateValidationCallback
 
 #! customize here
 #region customization
+    #* You can add your specific DRS object names to the switch case in the
+    #* function below if you do not have a DRS rule per container but one per
+    #* storage cluster. Note that when you do this, you can only failover all
+    #* the pds of a given cluster at a time. When you specify a list of pds,
+    #* (such as during failback) you will have to make sure that this lists 
+    #* includes all the metro pds in the cluster.
+    Function GetDrsObjectNames
+    {
+        param
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $cluster_name
+        )
+
+        $drs_object_names = switch ($cluster_name)
+        {
+            "LABCL101" {@{
+                drs_hg_name = "MB_hosts"
+                drs_vmg_name = "MB_VMs"
+                drs_rule_name = "VMs_Should_In_MB"
+            }}
+            "LABCL201" {@{
+                drs_hg_name = "GS_hosts"
+                drs_vmg_name = "GS_VMs"
+                drs_rule_name = "VMs_Should_In_GS"
+            }}
+        }
+        return $drs_object_names
+    }
+    <#
     $ntnx1_cluster_name = "LABCL101"
     $drs_hg1_name = "MB_hosts"
     $drs_vm1_name = "MB_VMs"
@@ -742,6 +777,7 @@ public class ServerCertificateValidationCallback
     $drs_hg2_name = "GS_hosts"
     $drs_vm2_name = "GS_VMs"
     $drs_rule2_name = "VMs_Should_In_GS"
+    #>
 #endregion
 
 #region parameters validation
@@ -768,7 +804,22 @@ public class ServerCertificateValidationCallback
 
     if ($pd -ne "all") 
     {#pd was specified but is not equal to all. Let's make sure we process it correctly if it is a list.
-        $pd_names_list = $pd.Split(",")
+        #see if we have a csv file to import
+        if ($pd.contains(".csv")) 
+        {#-pd is a csv file
+            if (Test-Path -Path $pd) 
+            {#file exists
+                $pd_names_list = (Import-Csv -Path $pd).name
+            }
+            else 
+            {#file does not exist
+                throw "The specified csv file $($pd) does not exist!"
+            }
+        } 
+        else 
+        {#-pd is not a csv file
+            $pd_names_list = $pd.Split(",")
+        }
     }
 
     if ($action -and ($pd -ne "all"))
@@ -1313,46 +1364,23 @@ public class ServerCertificateValidationCallback
             #* update matching drs rule(s)
             #region update drs rule(s)
                 #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-                if ($myvar_ntnx_remote_cluster_name -eq $ntnx1_cluster_name)
-                {
+                $source_drs_objects_names, $remote_drs_objects_names = @{}
+                $source_drs_objects_names = GetDrsObjectNames($myvar_ntnx_cluster_name)
+                $remote_drs_objects_names = GetDrsObjectNames($myvar_ntnx_remote_cluster_name)
+
+                if ($source_drs_objects_names -and $remote_drs_objects_names)
+                {#we found a match for custom DRS rule names
                     if ($pd -eq "all")
-                    {
-                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
-                        $myvar_drs_rule_name = $drs_rule2_name
-                        $myvar_drs_vm_group_name = $drs_vm2_name
+                    {#I am moving all pds with custom DRS rule names, so this is a failover: updating source rule with remote hostgroup
+                        $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                        $myvar_drs_rule_name = $source_drs_objects_names.drs_rule_name
+                        $myvar_drs_vm_group_name = $source_drs_objects_names.drs_vmg_name
                     }
                     else 
-                    {
-                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg1_name
-                        $myvar_drs_rule_name = $drs_rule1_name
-                        $myvar_drs_vm_group_name = $drs_vm1_name
-                    }
-
-                    Write-Host ""
-                    Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
-
-                    if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
-                    {#houston we have a problem: DRS rule does not exist
-                        throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
-                    } else {
-                        #update drs rule
-                        Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
-                        Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
-                        Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
-                    }
-                }
-                elseif ($myvar_ntnx_remote_cluster_name -eq $ntnx2_cluster_name) {
-                    if ($pd -eq "all")
-                    {
-                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
-                        $myvar_drs_rule_name = $drs_rule1_name
-                        $myvar_drs_vm_group_name = $drs_vm1_name
-                    }
-                    else 
-                    {
-                        $myvar_ntnx_remote_drs_host_group_name = $drs_hg2_name
-                        $myvar_drs_rule_name = $drs_rule2_name
-                        $myvar_drs_vm_group_name = $drs_vm2_name
+                    {#I am moving some pds with custom DRS rule names, so this is a failback: updating remote rule with remote hostgroup
+                        $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                        $myvar_drs_rule_name = $remote_drs_objects_names.drs_rule_name
+                        $myvar_drs_vm_group_name = $remote_drs_objects_names.drs_vmg_name
                     }
 
                     Write-Host ""
@@ -1369,7 +1397,7 @@ public class ServerCertificateValidationCallback
                     }
                 }
                 else 
-                {
+                {#I don't have custom DRS rules matching, so assuming one DRS rule per container
                     $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
                     foreach ($myvar_datastore in $ctr_list.name)
                     {#process each datastore
@@ -1511,8 +1539,14 @@ public class ServerCertificateValidationCallback
     #region planned failover of the protection domain(s)
         if (!$skipfailover -and !$reEnableOnly)
         {
+            #export pd_list to csv here
+            $myvar_csv_export = $myvar_ntnx_cluster_name + "_pd_list.csv"
+            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $() in the current directory..." -ForegroundColor Green
+            try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
+            catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
+
             foreach ($myvar_pd in $pd_list) 
-            {
+            {#processing each metro availability protection domain (promote/disable/re-enable)
                 Write-Host ""
                 Write-Host "$(get-date) [STEP] Failing over protection domain $($myvar_pd.name) from $($myvar_ntnx_cluster_name) to $($remote_site_name) ..." -ForegroundColor Magenta
                 
