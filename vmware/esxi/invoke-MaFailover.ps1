@@ -581,9 +581,11 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
     Migrate VMs back
     Re-enable replication
 #>
-
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
+
+#todo does an incorrect check on VM membership into the cluster. This results in red error messages which are incorrect, but does not break functionality at this stage: this will be corrected in a future version of the script.
+#todo protection domains are processed sequentially at the moment when they could be processed in parallel with a 2 minutes delay between each (as recommended by Nutanix engineering). How many can be processed in parallel and the delay used between each should be configurable. This will be implemented in a future version of the script.
 #region prepwork
     $ErrorActionPreference = "Continue"
 
