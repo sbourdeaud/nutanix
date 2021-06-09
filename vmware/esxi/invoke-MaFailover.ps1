@@ -23,6 +23,8 @@
   Number of seconds you want to wait for VMs to shutdown cleanly (when using -shutdownUvms) before powering them off forcefully. Default is 300 seconds (5 minutes).
 .PARAMETER reEnableOnly
   Try to enable specified active but disabled metro protection domains. Do nothing else.
+.PARAMETER reEnableDelay
+  Specifies in seconds how long the script should wait between each protection domain re-enablement. Default and minimum is 120 seconds (2 minutes). You can specify more if you want, but not less.
 .PARAMETER prismCreds
   Specifies a custom credentials file name for Prism authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file and do not use username or password, the script will prompt you for this information.
@@ -41,7 +43,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 3rd 2021
+  Revision: June 9th 2021
 #>
 
 #region parameters
@@ -61,7 +63,8 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         [parameter(mandatory = $false)] [switch]$shutdownUvms,
         [parameter(mandatory = $false)] [switch]$resetOverrides,
         [parameter(mandatory = $false)] [int]$timer,
-        [parameter(mandatory = $false)] [switch]$reEnableOnly
+        [parameter(mandatory = $false)] [switch]$reEnableOnly,
+        [parameter(mandatory = $false)] [int]$reEnableDelay
     )
 #endregion
 
@@ -584,8 +587,6 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
 
-#todo does an incorrect check on VM membership into the cluster. This results in red error messages which are incorrect, but does not break functionality at this stage: this will be corrected in a future version of the script.
-#todo protection domains are processed sequentially at the moment when they could be processed in parallel with a 2 minutes delay between each (as recommended by Nutanix engineering). How many can be processed in parallel and the delay used between each should be configurable. This will be implemented in a future version of the script.
 #region prepwork
     $ErrorActionPreference = "Continue"
 
@@ -615,6 +616,13 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
                  1 rule per cluster (as opposed to 1 DRS rule per container).
                  Added code to export processed pd list and ability to specify
                  a csv file for -pd parameter (in order to facilitate failback).
+ 06/09/2021 sb   Changed if statement on line 1451 to add debug information when
+                 cmhost comparison appears incorrect.
+                 When re-enabling pds, moved the sync status outside of the main
+                 processing loop to speed up execution of the process (now
+                 multiple pds can sync in parallel). Added the reEnableDelay
+                 parameter to wait a minimum of 2 minutes between each re-enable
+                 as recommended by engineering.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -899,6 +907,8 @@ public class ServerCertificateValidationCallback
     }
 
     if (!$timer) {$timer = 300}
+
+    if ((!$reEnableDelay) -or ($reEnableDelay -lt 120)) {$reEnableDelay = 120}
 #endregion
 
 #region execute
@@ -1450,7 +1460,8 @@ public class ServerCertificateValidationCallback
                             $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
                             if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_ntnx_vmhosts)
                             {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
-                                Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is not part of this Nutanix cluster. This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
+                                Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is running on vmhost $(($myvar_datastore_poweredon_vm_details.VMHost).Name) which is not part of Nutanix cluster $($cluster). This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
+                                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of Nutanix cluster hosts:" -ForegroundColor White; $myvar_ntnx_vmhosts}
                             }
                             elseif ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
                             {#this vm has a DRS override
@@ -1650,9 +1661,12 @@ public class ServerCertificateValidationCallback
                 {
                     throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                 }
-                Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
-                
-                #Start-Sleep 30
+                Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name). Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
+                Start-Sleep $reEnableDelay
+            }
+
+            foreach ($myvar_pd in $pdlist)
+            {#waiting for all pds to be in sync after habing been re-enabled. This has been moved out of the other main loop in order to enable parallel processing of pd re-enablement.
                 #* check remote pd is enabled
                 Do 
                 {
@@ -1684,8 +1698,9 @@ public class ServerCertificateValidationCallback
     #region reEnableOnly
         if ($reEnableOnly)
         {
+            [System.Collections.ArrayList]$myvar_processed_pd_list = New-Object System.Collections.ArrayList($null)
             foreach ($myvar_pd in $pd_list) 
-            {
+            {#main processing loop
                 if (($myvar_pd.role -eq "Active") -and ($myvar_pd.status -eq "Disabled")) 
                 {
                     Write-Host ""
@@ -1699,15 +1714,30 @@ public class ServerCertificateValidationCallback
                     try 
                     {
                         $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
+                        $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd)) | Out-Null
                     }
                     catch
                     {
                         throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
-                    Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
-                    
-                    #Start-Sleep 30
-                    Do 
+                    Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name).  Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
+                    Start-Sleep $reEnableDelay
+                }
+                else 
+                {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
+                    if ($myvar_pd.role -ne "Active")
+                    {
+                        Write-Host "$(get-date) [INFO] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not active. Skipping." -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in disabled status so we will NOT try to re-enable it. Current status is $($myvar_pd.status)." -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            foreach ($myvar_pd in $myvar_processed_pd_list)
+            {#checking for enablement status outside of main processing loop to speed up processing
+                Do 
                     {
                         Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
                         $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
@@ -1730,17 +1760,6 @@ public class ServerCertificateValidationCallback
                         }
                     } While ($myvar_cluster_pd_status -ne "Enabled")
                     Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is enabled now." -ForegroundColor White
-                }
-                else 
-                {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
-                    if ($myvar_pd.role -ne "Active")
-                    {
-                        Write-Host "$(get-date) [INFO] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not active. Skipping." -ForegroundColor Yellow
-                    }
-                    else {
-                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in disabled status so we will NOT try to re-enable it. Current status is $($myvar_pd.status)." -ForegroundColor Yellow
-                    }
-                }
             }
         }
     #endregion
