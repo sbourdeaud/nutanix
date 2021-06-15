@@ -617,12 +617,16 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
                  Added code to export processed pd list and ability to specify
                  a csv file for -pd parameter (in order to facilitate failback).
  06/09/2021 sb   Changed if statement on line 1451 to add debug information when
-                 cmhost comparison appears incorrect.
+                 vmhost comparison appears incorrect.
                  When re-enabling pds, moved the sync status outside of the main
                  processing loop to speed up execution of the process (now
                  multiple pds can sync in parallel). Added the reEnableDelay
                  parameter to wait a minimum of 2 minutes between each re-enable
                  as recommended by engineering.
+ 06/15/2021      Fixing missing underscore in the $pd_list variable name on line 
+                 1668.
+                 Modified code that keeps track of processed protection domains
+                 when using -reEnableOnly.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1665,7 +1669,7 @@ public class ServerCertificateValidationCallback
                 Start-Sleep $reEnableDelay
             }
 
-            foreach ($myvar_pd in $pdlist)
+            foreach ($myvar_pd in $pd_list)
             {#waiting for all pds to be in sync after habing been re-enabled. This has been moved out of the other main loop in order to enable parallel processing of pd re-enablement.
                 #* check remote pd is enabled
                 Do 
@@ -1714,12 +1718,20 @@ public class ServerCertificateValidationCallback
                     try 
                     {
                         $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
-                        $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd)) | Out-Null
                     }
                     catch
                     {
                         throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
+                    $myvar_pd_info = [ordered]@{
+                        "name" = $myvar_pd.name;
+                        "role" = $myvar_pd.role;
+                        "remote_site" = $myvar_pd.remote_site;
+                        "storage_container" = $myvar_pd.storage_container;
+                        "status" = $myvar_pd.status;
+                        "failure_handling" = $myvar_pd.failure_handling
+                    }
+                    $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
                     Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name).  Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
                     Start-Sleep $reEnableDelay
                 }
