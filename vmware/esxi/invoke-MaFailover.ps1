@@ -43,7 +43,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 9th 2021
+  Revision: June 15th 2021
 #>
 
 #region parameters
