@@ -57,69 +57,6 @@ Adds the category mycategory:myvalue to myvm.
   )
 #endregion
 
-#region prep-work
-  #check if we need to display help and/or history
-  $HistoryText = @'
-Maintenance Log
-Date       By   Updates (newest updates at the top)
----------- ---- ---------------------------------------------------------------
-01/14/2020 sb   Initial release.
-04/07/2020 sb   Added sourcecsv + do over with sbourdeaud module.
-04/21/2020 sb   Do over with sbourdeaud module.
-08/01/2021 sb   Imported Invoke-PrismApiCall function to be able to deal with 
-                return code 409 correctly.
-02/06/2021 sb   Replaced username with get-credential
-################################################################################
-'@
-  $myvarScriptName = ".\set-category.ps1"
-  if ($help) {get-help $myvarScriptName; exit}
-  if ($History) {$HistoryText; exit}
-
-  #region module sbourdeaud is used for facilitating Prism REST calls
-    $required_version = "3.0.8"
-    if (!(Get-Module -Name sbourdeaud)) {
-      Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-      try
-      {
-          Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-          Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-      }#end try
-      catch #we couldn't import the module, so let's install it
-      {
-          Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-          try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-          catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
-
-          try
-          {
-              Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-              Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-          }#end try
-          catch #we couldn't import the module
-          {
-              Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-              Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-              Exit
-          }#end catch
-      }#end catch
-    }#endif module sbourdeaud
-    $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-    if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-      Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-      Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-      Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-      try {
-        Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop
-        Import-Module -Name sbourdeaud -ErrorAction Stop
-      }
-      catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-    }
-  #endregion
-  Set-PoSHSSLCerts
-  Set-PoshTls
-
-#endregion
-
 #region functions
 function Invoke-PrismAPICall
 {
@@ -201,14 +138,17 @@ process
     catch {
         $saved_error = $_.Exception
         $saved_error_message = $saved_error.Message
-        $resp_return_code = $saved_error.Response.StatusCode.value__
+        $resp_return_code = $_.Exception.Response.StatusCode.value__
         # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        if ($resp_return_code -eq 409) {
-          Write-Host "$(Get-Date) [WARNING] REST response is $($resp_return_code)" -ForegroundColor Yellow
+        if ($resp_return_code -eq 409) 
+        {
+          Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
+          Throw
         }
-        else {
-          Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+        else 
+        {
+          Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+          Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message" 
         }
     }
     finally {
@@ -220,6 +160,473 @@ end
     return $resp
 }    
 }
+
+function Write-LogOutput
+{
+<#
+.SYNOPSIS
+Outputs color coded messages to the screen and/or log file based on the category.
+
+.DESCRIPTION
+This function is used to produce screen and log output which is categorized, time stamped and color coded.
+
+.PARAMETER Category
+This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+
+.PARAMETER Message
+This is the actual message you want to display.
+
+.PARAMETER LogFile
+If you want to log output to a file as well, use logfile to pass the log file full path name.
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
+Displays an error message.
+
+.LINK
+https://github.com/sbourdeaud
+#>
+    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+	param
+	(
+		[Parameter(Mandatory)]
+        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
+        [string]
+        $Category,
+
+        [string]
+		$Message,
+
+        [string]
+        $LogFile
+	)
+
+    process
+    {
+        $Date = get-date #getting the date so we can timestamp the output entry
+	    $FgColor = "Gray" #resetting the foreground/text color
+	    switch ($Category) #we'll change the text color depending on the selected category
+        {
+            "INFO" {$FgColor = "Green"}
+            "WARNING" {$FgColor = "Yellow"}
+            "ERROR" {$FgColor = "Red"}
+            "SUM" {$FgColor = "Magenta"}
+            "SUCCESS" {$FgColor = "Cyan"}
+            "STEP" {$FgColor = "Magenta"}
+            "DEBUG" {$FgColor = "White"}
+            "DATA" {$FgColor = "Gray"}
+        }
+
+	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
+        {
+            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+        }
+    }
+
+}#end function Write-LogOutput
+
+#helper-function Get-RESTError
+function Help-RESTError 
+{
+    $global:helpme = $body
+    $global:helpmoref = $moref
+    $global:result = $_.Exception.Response.GetResponseStream()
+    $global:reader = New-Object System.IO.StreamReader($global:result)
+    $global:responseBody = $global:reader.ReadToEnd();
+
+    return $global:responsebody
+
+    break
+}#end function Get-RESTError
+
+function CheckModule
+{
+    param 
+    (
+        [string] $module,
+        [string] $version
+    )
+
+    #getting version of installed module
+    $current_version = (Get-Module -ListAvailable $module) | Sort-Object Version -Descending  | Select-Object Version -First 1
+    #converting version to string
+    $stringver = $current_version | Select-Object @{n='ModuleVersion'; e={$_.Version -as [string]}}
+    $a = $stringver | Select-Object Moduleversion -ExpandProperty Moduleversion
+    #converting version to string
+    $targetver = $version | select @{n='TargetVersion'; e={$_ -as [string]}}
+    $b = $targetver | Select-Object TargetVersion -ExpandProperty TargetVersion
+    
+    if ([version]"$a" -ge [version]"$b") {
+        return $true
+    }
+    else {
+        return $false
+    }
+}
+
+function LoadModule
+{#tries to load a module, import it, install it if necessary
+<#
+.SYNOPSIS
+Tries to load the specified module and installs it if it can't.
+.DESCRIPTION
+Tries to load the specified module and installs it if it can't.
+.NOTES
+Author: Stephane Bourdeaud
+.PARAMETER module
+Name of PowerShell module to import.
+.EXAMPLE
+PS> LoadModule -module PSWriteHTML
+#>
+param 
+(
+    [string] $module
+)
+
+begin
+{
+    
+}
+
+process
+{   
+    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
+    if (!(Get-Module -Name $module)) 
+    {#we could not get the module, let's try to load it
+        try
+        {#import the module
+            Import-Module -Name $module -ErrorAction Stop
+            Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+        }#end try
+        catch 
+        {#we couldn't import the module, so let's install it
+            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
+            try 
+            {#install module
+                Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
+            }
+            catch 
+            {#could not install module
+                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
+                exit 1
+            }
+
+            try
+            {#now that it is intalled, let's import it
+                Import-Module -Name $module -ErrorAction Stop
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+            }#end try
+            catch 
+            {#we couldn't import the module
+                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
+                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
+                Exit 1
+            }#end catch
+        }#end catch
+    }
+}
+
+end
+{
+
+}
+}
+
+function Set-CustomCredentials 
+{
+#input: path, credname
+	#output: saved credentials file
+<#
+.SYNOPSIS
+  Creates a saved credential file using DAPI for the current user on the local machine.
+.DESCRIPTION
+  This function is used to create a saved credential file using DAPI for the current user on the local machine.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
+Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
+#>
+	param
+	(
+		[parameter(mandatory = $false)]
+        [string] 
+        $path,
+		
+        [parameter(mandatory = $true)]
+        [string] 
+        $credname
+	)
+
+    begin
+    {
+        if (!$path)
+        {
+            if ($IsLinux -or $IsMacOS) 
+            {
+                $path = $home
+            }
+            else 
+            {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
+        } 
+    }
+    process
+    {
+        #prompt for credentials
+        $credentialsFilePath = "$path\$credname.txt"
+		$credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+		
+		#put details in hashed format
+		$user = $credentials.UserName
+		$securePassword = $credentials.Password
+        
+        #convert secureString to text
+        try 
+        {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        #create directory to store creds if it does not already exist
+        if(!(Test-Path $path))
+		{
+            try 
+            {
+                $result = New-Item -type Directory $path -ErrorAction Stop
+            } 
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+            }
+		}
+
+        #save creds to file
+        try 
+        {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        } 
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try 
+        {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        } 
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
+    }
+    end
+    {}
+}
+
+#this function is used to retrieve saved credentials for the current user
+function Get-CustomCredentials 
+{
+#input: path, credname
+	#output: credential object
+<#
+.SYNOPSIS
+  Retrieves saved credential file using DAPI for the current user on the local machine.
+.DESCRIPTION
+  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+#>
+	param
+	(
+        [parameter(mandatory = $false)]
+		[string] 
+        $path,
+		
+        [parameter(mandatory = $true)]
+        [string] 
+        $credname
+	)
+
+    begin
+    {
+        if (!$path)
+        {
+            if ($IsLinux -or $IsMacOS) 
+            {
+                $path = $home
+            }
+            else 
+            {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        } 
+    }
+    process
+    {
+        $credentialsFilePath = "$path\$credname.txt"
+        if(!(Test-Path $credentialsFilePath))
+	    {
+            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+		$user = $credFile[0]
+		$securePassword = $credFile[1] | ConvertTo-SecureString
+
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
+    }
+    end
+    {
+        return $customCredentials
+    }
+}
+
+function Set-PoshTls
+{
+<#
+.SYNOPSIS
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.DESCRIPTION
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Set-PoshTls
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.LINK
+https://github.com/sbourdeaud
+#>
+[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param 
+    (
+        
+    )
+
+    begin 
+    {
+    }
+
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = `
+        ([Net.ServicePointManager]::SecurityProtocol -bor `
+        [Net.SecurityProtocolType]::Tls12)
+    }
+
+    end
+    {
+
+    }
+}
+
+#this function is used to configure posh to ignore invalid ssl certificates
+function Set-PoSHSSLCerts
+{
+<#
+.SYNOPSIS
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+.DESCRIPTION
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+#>
+    begin
+    {
+
+    }#endbegin
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if(ServicePointManager.ServerCertificateValidationCallback ==null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback += 
+                delegate
+                (
+                    Object obj, 
+                    X509Certificate certificate, 
+                    X509Chain chain, 
+                    SslPolicyErrors errors
+                )
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }#endif
+        [ServerCertificateValidationCallback]::Ignore()
+    }#endprocess
+    end
+    {
+
+    }#endend
+}#end function Set-PoSHSSLCerts
+#endregion
+
+#region prep-work
+  #check if we need to display help and/or history
+  $HistoryText = @'
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+01/14/2020 sb   Initial release.
+04/07/2020 sb   Added sourcecsv + do over with sbourdeaud module.
+04/21/2020 sb   Do over with sbourdeaud module.
+08/01/2021 sb   Imported Invoke-PrismApiCall function to be able to deal with 
+                return code 409 correctly.
+02/06/2021 sb   Replaced username with get-credential
+################################################################################
+'@
+  $myvarScriptName = ".\set-category.ps1"
+  if ($help) {get-help $myvarScriptName; exit}
+  if ($History) {$HistoryText; exit}
+
+  Set-PoSHSSLCerts
+  Set-PoshTls
+
 #endregion
 
 #region variables
@@ -402,6 +809,11 @@ end
         $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
             $api_server_endpoint
         $method = "PUT"
+
+        #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
+        $vm_config.metadata.spec_version += 1
+        #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
+
         $payload = (ConvertTo-Json $vm_config -Depth 6)
       #endregion
 
@@ -415,10 +827,10 @@ end
           }
           catch {
             $saved_error = $_.Exception
-            $resp_return_code = $saved_error.Response.StatusCode.value__
+            $resp_return_code = $_.Exception.Response.StatusCode.value__
             if ($resp_return_code -eq 409) {
-              Write-Host "$(Get-Date) [WARNING] VM $vm cannot be updated now. Retrying in 30 seconds..." -ForegroundColor Yellow
-              sleep 30
+              Write-Host "$(Get-Date) [WARNING] VM $vm cannot be updated now. Retrying in 5 seconds..." -ForegroundColor Yellow
+              sleep 5
             }
             else {
               Write-Host $payload -ForegroundColor White
