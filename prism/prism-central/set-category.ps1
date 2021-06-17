@@ -618,6 +618,8 @@ Date       By   Updates (newest updates at the top)
 08/01/2021 sb   Imported Invoke-PrismApiCall function to be able to deal with 
                 return code 409 correctly.
 02/06/2021 sb   Replaced username with get-credential
+17/06/2021 sb   Removed dependency on external module; fixed issue with 409 rc;
+                Now just printing a warning when category is already assigned.
 ################################################################################
 '@
   $myvarScriptName = ".\set-category.ps1"
@@ -636,6 +638,7 @@ Date       By   Updates (newest updates at the top)
   $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
   $myvarOutputLogFile += "OutputLog.log"
   [System.Collections.ArrayList]$myvarListToProcess = New-Object System.Collections.ArrayList($null)
+  $myvar_already_tagged = $false
 
   $api_server_port = "9440"
   $api_server = $prism
@@ -785,8 +788,9 @@ Date       By   Updates (newest updates at the top)
           $myvarNull = $vm_config.metadata.categories_mapping | Add-Member -MemberType NoteProperty -Name $category -Value @($value) -PassThru -ErrorAction Stop
         }
         catch {
-          Write-Host "$(Get-Date) [ERROR] Could not add category:value pair ($($category):$($value)). It may already be assigned to the vm $vm in $prism" -ForegroundColor Red
-          exit
+          Write-Host "$(Get-Date) [WARNING] Could not add category:value pair ($($category):$($value)). It may already be assigned to the vm $vm in $prism" -ForegroundColor Yellow
+          $myvar_already_tagged = $true
+          continue
         }
       }
     #endregion
@@ -803,45 +807,47 @@ Date       By   Updates (newest updates at the top)
 
     #! step 5: update the vm object
     #region update vm
+      if (!$myvar_already_tagged)
+      {
+        #region prepare api call
+          $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
+          $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+              $api_server_endpoint
+          $method = "PUT"
 
-      #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
-        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
-            $api_server_endpoint
-        $method = "PUT"
+          #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
+          $vm_config.metadata.spec_version += 1
+          #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
 
-        #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
-        $vm_config.metadata.spec_version += 1
-        #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
+          $payload = (ConvertTo-Json $vm_config -Depth 6)
+        #endregion
 
-        $payload = (ConvertTo-Json $vm_config -Depth 6)
-      #endregion
-
-      #region make the api call
-        Write-Host "$(Get-Date) [INFO] Updating the configuration of vm $vm in $prism..." -ForegroundColor Green
-        do {
-          try {
-            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-            Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
-            $resp_return_code = 200
-          }
-          catch {
-            $saved_error = $_.Exception
-            $resp_return_code = $_.Exception.Response.StatusCode.value__
-            if ($resp_return_code -eq 409) {
-              Write-Host "$(Get-Date) [WARNING] VM $vm cannot be updated now. Retrying in 5 seconds..." -ForegroundColor Yellow
-              sleep 5
+        #region make the api call
+          Write-Host "$(Get-Date) [INFO] Updating the configuration of vm $vm in $prism..." -ForegroundColor Green
+          do {
+            try {
+              $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+              Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
+              $resp_return_code = 200
             }
-            else {
-              Write-Host $payload -ForegroundColor White
-              Write-Host "$(get-date) [WARNING] $($saved_error.Message)" -ForegroundColor Yellow
-              Break
+            catch {
+              $saved_error = $_.Exception
+              $resp_return_code = $_.Exception.Response.StatusCode.value__
+              if ($resp_return_code -eq 409) {
+                Write-Host "$(Get-Date) [WARNING] VM $vm cannot be updated now. Retrying in 5 seconds..." -ForegroundColor Yellow
+                sleep 5
+              }
+              else {
+                Write-Host $payload -ForegroundColor White
+                Write-Host "$(get-date) [WARNING] $($saved_error.Message)" -ForegroundColor Yellow
+                Break
+              }
             }
-          }
-          finally {
-          }
-        } while ($resp_return_code -eq 409)
-      #endregion
+            finally {
+            }
+          } while ($resp_return_code -eq 409)
+        #endregion
+      }
 
     #endregion
   }
