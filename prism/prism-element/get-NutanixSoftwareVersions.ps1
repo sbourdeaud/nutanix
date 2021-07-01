@@ -206,6 +206,9 @@ Date       By   Updates (newest updates at the top)
   $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
   [System.Collections.ArrayList]$myvar_generic_results = New-Object System.Collections.ArrayList($null)
   [System.Collections.ArrayList]$myvar_nodes_reference = New-Object System.Collections.ArrayList($null)
+  $api_server_port = 9440
+  $length = 50
+  $myvar_cluster_list = @()
 #endregion
 
 #region parameters validation
@@ -243,7 +246,81 @@ Date       By   Updates (newest updates at the top)
 
     if ($prismcentral)
     {#prismcentral was targeted, let's retrieve information about each cluster
+      #region get clusters
+        Write-Host "$(get-date) [INFO] Retrieving list of clusters..." -ForegroundColor Green
+        #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/clusters/list"
+            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+            $method = "POST"
 
+            # this is used to capture the content of the payload
+            $content = @{
+                kind="cluster";
+                offset=0;
+                length=$length
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
+        #region make api call
+            Do {
+                try 
+                {
+                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                    
+                    $listLength = 0
+                    if ($resp.metadata.offset) 
+                    {
+                        $firstItem = $resp.metadata.offset
+                    } 
+                    else 
+                    {
+                        $firstItem = 0
+                    }
+                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) 
+                    {
+                        $listLength = $resp.metadata.length
+                    } 
+                    else 
+                    {
+                        $listLength = $resp.metadata.total_matches
+                    }
+                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+
+                    #grab the information we need in each entity
+                    ForEach ($entity in $resp.entities) 
+                    {
+                        if ($entity.status.resources.nodes.hypervisor_server_list) 
+                        {
+                            $myvar_cluster_list += $entity.status.resources.network.external_ip
+                        }
+                    }
+
+                    #prepare the json payload for the next batch of entities/response
+                    $content = @{
+                        kind="cluster";
+                        offset=($resp.metadata.length + $resp.metadata.offset);
+                        length=$length
+                    }
+                    $payload = (ConvertTo-Json $content -Depth 4)
+                }
+                catch 
+                {
+                    $saved_error = $_.Exception.Message
+                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                    Throw "$(get-date) [ERROR] $saved_error"
+                }
+            }
+            While ($resp.metadata.length -eq $length)
+
+            if ($debugme) {
+                Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+                $myvarClustersResults
+            }
+        #endregion
+      Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prismcentral!" -ForegroundColor Cyan
+  #endregion
     }
     else 
     {#we are only targeting a single cluster
@@ -254,15 +331,15 @@ Date       By   Updates (newest updates at the top)
     {#process each cluster
       if ($startinventory) 
       {#we are doing an lcm inventory
-        Write-Host "$(get-date) [INFO] Triggering LCM inventory on Nutanix cluster $($cluster)..." -ForegroundColor Green
-        $url = "https://$($cluster):9440/lcm/v1.r0.b1/operations/inventory"
+        Write-Host "$(get-date) [INFO] Triggering LCM inventory on Nutanix cluster $($myvar_cluster)..." -ForegroundColor Green
+        $url = "https://$($myvar_cluster):9440/lcm/v1.r0.b1/operations/inventory"
         $method = "POST"
         $myvar_inventory_task = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully triggered LCM inventory on Nutanix cluster $($cluster): task $($myvar_inventory_task.data.task_uuid)!" -ForegroundColor Cyan
   
         if (!$nowait) 
         {#we are waiting for the lcm inventory to complete
-          Get-PrismTaskStatus -task $myvar_inventory_task.data.task_uuid -cluster $cluster -credential $prismCredentials
+          Get-PrismTaskStatus -task $myvar_inventory_task.data.task_uuid -cluster $myvar_cluster -credential $prismCredentials
         }
       } 
       else 
@@ -270,7 +347,7 @@ Date       By   Updates (newest updates at the top)
   
         #region get cluster information
             Write-Host "$(get-date) [INFO] Retrieving cluster information..." -ForegroundColor Green
-            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
+            $url = "https://$($myvar_cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
             $method = "GET"
             $myvar_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information!" -ForegroundColor Cyan
@@ -294,7 +371,7 @@ Date       By   Updates (newest updates at the top)
             Foreach ($myvar_node in $myvar_cluster_nodes_uuids) 
             {#process each host
                 Write-Host "$(get-date) [INFO] Retrieving information for node uuid $($myvar_node)..." -ForegroundColor Green
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/hosts/$($myvar_node)"
+                $url = "https://$($myvar_cluster):9440/PrismGateway/services/rest/v2.0/hosts/$($myvar_node)"
                 $method = "GET"
                 $myvar_node_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved information for node uuid $($myvar_node)!" -ForegroundColor Cyan
@@ -339,7 +416,7 @@ Date       By   Updates (newest updates at the top)
             if (!$nolcm) 
             {#we are getting lcm information
                 Write-Host "$(get-date) [INFO] Retrieving lcm information..." -ForegroundColor Green
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/genesis"
+                $url = "https://$($myvar_cluster):9440/PrismGateway/services/rest/v1/genesis"
                 $method = "POST"
                 $payload = @"
 {
@@ -355,7 +432,7 @@ Date       By   Updates (newest updates at the top)
             if (!$nolcm) 
             {#we are getting lcm updates
                 Write-Host "$(get-date) [INFO] Retrieving lcm updates..." -ForegroundColor Green
-                $url = "https://$($cluster):9440/api/nutanix/v3/groups"
+                $url = "https://$($myvar_cluster):9440/api/nutanix/v3/groups"
                 $method = "POST"
                 $payload= @"
 {
@@ -393,7 +470,7 @@ Date       By   Updates (newest updates at the top)
             if (!$nolcm) 
             {#we are getting lcm entities
                 Write-Host "$(get-date) [INFO] Retrieving lcm entities..." -ForegroundColor Green
-                $url = "https://$($cluster):9440/api/nutanix/v3/groups"
+                $url = "https://$($myvar_cluster):9440/api/nutanix/v3/groups"
                 $method = "POST"
                 $payload= @"
 {
