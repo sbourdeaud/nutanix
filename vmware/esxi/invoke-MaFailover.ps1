@@ -863,7 +863,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
 
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-    $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        if ($prismCredentials.GetNetworkCredential().password -eq "") 
+        {
+            Throw "$(get-date) [ERROR] You have specified a blank password which is not authorized! Exiting."
+        }
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
