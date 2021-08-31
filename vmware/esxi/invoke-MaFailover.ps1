@@ -596,9 +596,6 @@ Re-enable replication
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
 
-#! wip
-#todo add unplanned failover
-
 #region prepwork
     $ErrorActionPreference = "Continue"
 
@@ -1964,8 +1961,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     Write-Host "$(get-date) [STEP] Disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Magenta
                     #* disable specified protection domains on cluster
                     Write-Host "$(get-date) [INFO] Disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-                    #todo: change api call here
-                    $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_enable?re_enable=true" -f $cluster,$myvar_pd.name
+                    $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_disable" -f $cluster,$myvar_pd.name
                     $method = "POST"
                     $content = @{}
                     $body = (ConvertTo-Json $content)
