@@ -47,7 +47,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 23rd 2021
+  Revision: August 31st 2021
 #>
 
 #region parameters
@@ -640,6 +640,8 @@ Date       By   Updates (newest updates at the top)
                 witness was in use.
                 Added maxConcurrentRepl parameter and associated control loops.
 08/23/2021 sb   Adding unplanned parameter and associated logic.
+08/31/2021 sb   Fixed issue when not specifying creds, issue with ping test on 
+                posh 5 and output issue on unplanned loop
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -868,6 +870,9 @@ $drs_rule2_name = "VMs_Should_In_GS"
         {
             Throw "$(get-date) [ERROR] You have specified a blank password which is not authorized! Exiting."
         }
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -1254,7 +1259,15 @@ $drs_rule2_name = "VMs_Should_In_GS"
             }
             else 
             {#this is an unplanned failover, so add a test here to see if the remote site is pinging
-                $myvar_ping_result = Test-Connection -IPv4 -Ping -Count 3 -TargetName $myvar_remote_site_ip -Quiet -TimeoutSeconds $timeout
+                try 
+                {
+                    $myvar_ping_result = Test-Connection -Count 3 -TargetName $myvar_remote_site_ip -Quiet -ErrorAction Stop 
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not ping $myvar_remote_site_ip : $($_.Exception.Message)"
+                }
+                
                 if ($myvar_ping_result)
                 {#ping was positive so the remote site is up
                     throw "$(get-date) [ERROR] Remote site is responding to ping on IPv4 $($myvar_remote_site_ip). You cannot do an unplanned failover if the remote site is up. Exiting!"
@@ -1650,7 +1663,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #endregion
         
     #region planned failover of the protection domain(s)
-        if (!$skipfailover -and !$reEnableOnly)
+        if (!$skipfailover -and !$reEnableOnly -and !$unplanned)
         {
             #export pd_list to csv here
             $myvar_csv_export = $myvar_ntnx_cluster_name + "_pd_list.csv"
@@ -1967,6 +1980,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
             } While ($myvar_pd_role -ne "Active")
             Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) has active role now." -ForegroundColor White
             
+            Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name). Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
             Start-Sleep $reEnableDelay
         }
     }
