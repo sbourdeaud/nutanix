@@ -644,7 +644,8 @@ Date       By   Updates (newest updates at the top)
                 Added maxConcurrentRepl parameter and associated control loops.
 08/23/2021 sb   Adding unplanned parameter and associated logic.
 08/31/2021 sb   Fixed issue when not specifying creds, issue with ping test on 
-                posh 5 and output issue on unplanned loop
+                posh 5 and output issue on unplanned loop. Adding DisableOnly 
+                parameter to facilitate failback after unplanned failover
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1069,6 +1070,10 @@ $drs_rule2_name = "VMs_Should_In_GS"
             {#the list of protection domains are those in standby
                 $myvar_ntnx_ma_standby_pds = $myvar_ma_active_pds.entities | Where-Object {($_.active -eq $false) -and ($_.metro_avail.role -eq "Standby")}
             }
+            if ($DisableOnly)
+            {#the list of protection domains is those in decoupled status
+                $myvar_ntnx_ma_decoupled_pds = $myvar_ma_active_pds.entities | Where-Object {$_.metro_avail.status -eq "Decoupled"}
+            }
             
             #building pd_list
             if ($pd -eq "all") 
@@ -1076,6 +1081,10 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 if ($unplanned)
                 {
                     $myvar_pd_list_details = $myvar_ntnx_ma_standby_pds
+                }
+                elseif ($DisableOnly)
+                {
+                    $myvar_pd_list_details = $myvar_ntnx_ma_decoupled_pds
                 }
                 else 
                 {
@@ -1111,6 +1120,10 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     if (!$skipfailover -and ($pd_name -notin $myvar_ntnx_ma_active_pds.name) -and !$unplanned) 
                     {
                         Throw "$(get-date) [ERROR] Protection domain $($pd_name) was not found active on cluster $($cluster). Exiting."
+                        if ($DisableOnly -and ($pd_name -notin $myvar_ntnx_ma_decoupled_pds))
+                        {
+                            Throw "$(get-date) [ERROR] Protection domain $($pd_name) is not decoupled on cluster $($cluster). Exiting."
+                        }
                     } 
                     elseif ($unplanned)
                     {
@@ -1153,7 +1166,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
             }
             
             #checking specified pds can be processed 
-            if (!$skipfailover -and !$reEnableOnly -and !$unplanned)
+            if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
             { 
                 Write-Host "$(get-date) [INFO] Checking all active metro protection domain are in status enabled..." -ForegroundColor Green
                 foreach ($pd_item in $pd_list) 
@@ -1280,7 +1293,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
 
         #* trying to connect to vcenter
         #region connect-viserver
-            if (!$reEnableOnly -and !$unplanned)
+            if (!$reEnableOnly -and !$unplanned -and !$DisableOnly)
             {
                 Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
                 try 
@@ -1367,7 +1380,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #region move vms using drs
         #* identify HA/DRS cluster and making sure HA and DRS are enabled
         #region figure out vsphere cluster name ($myvar_vsphere_cluster_name)
-            if (!$reEnableOnly -and !$unplanned)
+            if (!$reEnableOnly -and !$unplanned -and !$DisableOnly)
             {#we are not just renabling pds, so figure out the vcenter information
                 Write-Host ""
                 Write-Host "$(get-date) [STEP] Figuring out information required to move metro protected virtual machines from vmhosts in $($myvar_ntnx_cluster_name) to vmhosts in $($myvar_ntnx_remote_cluster_name) for specified metro availability protection domains..." -ForegroundColor Magenta
@@ -1472,7 +1485,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
             }
         #endregion
         
-        if (!$skipfailover -and !$reEnableOnly -and !$unplanned)
+        if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
         {#we are not skipping failover nor reenabling pds only
             #* find matching drs groups and rule(s)
             #region matching drs groups and rules
@@ -1666,7 +1679,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #endregion
         
     #region planned failover of the protection domain(s)
-        if (!$skipfailover -and !$reEnableOnly -and !$unplanned)
+        if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
         {
             #export pd_list to csv here
             $myvar_csv_export = $myvar_ntnx_cluster_name + "_pd_list.csv"
@@ -1938,6 +1951,82 @@ $drs_rule2_name = "VMs_Should_In_GS"
             }
         }
     #endregion
+    
+    #region DisableOnly
+        if ($DisableOnly)
+        {
+            [System.Collections.ArrayList]$myvar_processed_pd_list = New-Object System.Collections.ArrayList($null)
+            foreach ($myvar_pd in $pd_list) 
+            {#main processing loop
+                if (($myvar_pd.role -eq "Active") -and ($myvar_pd.status -eq "Decoupled")) 
+                {
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Magenta
+                    #* disable specified protection domains on cluster
+                    Write-Host "$(get-date) [INFO] Disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    #todo: change api call here
+                    $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_enable?re_enable=true" -f $cluster,$myvar_pd.name
+                    $method = "POST"
+                    $content = @{}
+                    $body = (ConvertTo-Json $content)
+                    try 
+                    {
+                        $myvar_pd_disable = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not disable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    $myvar_pd_info = [ordered]@{
+                        "name" = $myvar_pd.name;
+                        "role" = $myvar_pd.role;
+                        "remote_site" = $myvar_pd.remote_site;
+                        "storage_container" = $myvar_pd.storage_container;
+                        "status" = $myvar_pd.status;
+                        "failure_handling" = $myvar_pd.failure_handling
+                    }
+                    $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
+                }
+                else 
+                {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
+                    if ($myvar_pd.role -ne "Active")
+                    {
+                        Write-Host "$(get-date) [INFO] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not active. Skipping." -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in decoupled status so we will NOT try to disable it. Current status is $($myvar_pd.status)." -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            foreach ($myvar_pd in $myvar_processed_pd_list)
+            {#checking for disabled status outside of main processing loop to speed up processing
+                Do 
+                {
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                    $method = "GET"
+                    try 
+                    {
+                        $myvar_cluster_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                    $myvar_cluster_pd_status = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
+                    if ($myvar_cluster_pd_status -ne "Disabled") 
+                    {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not disabled yet. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Start-Sleep 15
+                    }
+                } While ($myvar_cluster_pd_status -ne "Disabled")
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
+            }
+        }
+    #endregion
 
     #region unplanned
     if ($unplanned)
@@ -2024,7 +2113,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
     Write-Host "$(get-date) [STEP] Cleaning up ..." -ForegroundColor Magenta
 
     #disconnect viserver
-    if (!$reEnableOnly)
+    if (!$reEnableOnly -and !$DisableOnly -and !$unplanned)
     {
         Write-Host "$(get-date) [INFO] Disconnecting from vCenter $($myvar_vcenter_ip)" -ForegroundColor Green
         $myvar_vcenter_disconnect_command = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue
