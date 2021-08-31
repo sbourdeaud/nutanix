@@ -1680,7 +1680,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
         {
             #export pd_list to csv here
             $myvar_csv_export = $myvar_ntnx_cluster_name + "_pd_list.csv"
-            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $() in the current directory..." -ForegroundColor Green
+            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
             try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
             catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
 
@@ -2027,6 +2027,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #region unplanned
     if ($unplanned)
     {
+        $myvar_csv_export = "unplanned_failover_pd_list.csv"
+        Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
+        try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
+        catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
+
         foreach ($myvar_pd in $pd_list) 
         {#main processing loop
             #* trigger pd promotion
