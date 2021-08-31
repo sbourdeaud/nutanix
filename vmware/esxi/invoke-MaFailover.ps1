@@ -25,6 +25,8 @@
   (Optional)Number of seconds you want to wait for VMs to shutdown cleanly (when using -shutdownUvms) before powering them off forcefully. Default is 300 seconds (5 minutes).
 .PARAMETER reEnableOnly
   Try to enable specified active but disabled metro protection domains. Do nothing else.
+.PARAMETER DisableOnly
+  Try to disabled specified active but decoupled metro protection domains. Do nothing else. This is useful when failing back after an unplanned failover.
 .PARAMETER reEnableDelay
   (Optional)Specifies in seconds how long the script should wait between each protection domain re-enablement. Default and minimum is 120 seconds (2 minutes). You can specify more if you want, but not less.
 .PARAMETER maxConcurrentRepl
@@ -69,6 +71,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         [parameter(mandatory = $false)] [switch]$resetOverrides,
         [parameter(mandatory = $false)] [int]$timer,
         [parameter(mandatory = $false)] [switch]$reEnableOnly,
+        [parameter(mandatory = $false)] [switch]$DisableOnly,
         [parameter(mandatory = $false)] [int]$reEnableDelay,
         [parameter(mandatory = $false)] [int]$maxConcurrentRepl
     )
@@ -1979,9 +1982,6 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 }
             } While ($myvar_pd_role -ne "Active")
             Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) has active role now." -ForegroundColor White
-            
-            Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name). Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
-            Start-Sleep $reEnableDelay
         }
     }
     #endregion
