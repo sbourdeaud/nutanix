@@ -1940,6 +1940,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $myvar_cluster_pd_status = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
                     if ($myvar_cluster_pd_status -ne "Enabled") 
                     {
+                        $myvar_cluster_pd_ongoing_replication = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).ongoing_replication_count
+                        if ($myvar_cluster_pd_ongoing_replication -eq 0)
+                        {
+                            throw "$(get-date) [ERROR] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is still not enabled and there are currently $($myvar_cluster_pd_ongoing_replication) ongoing replications, so we have to assume replication failed! Exiting!"
+                        }
                         Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not enabled yet. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
                         Start-Sleep 15
                     }
