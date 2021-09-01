@@ -1,14 +1,3 @@
-Param (        
-  [String] $SourcePCIP               = "Enter Me",
-  [String] $TargetPCIP               = "Enter Me",
-  [String] $Mode                     = "Scan",      # Scan, Execute, InstallCreds
-  [bool]   $EULA                     = $false,
-  [string] $workingdir               = "~\appdata\local\temp\",
-  [string] $SourceRuleSearchStr      = "AZ01",
-  [string] $TargetRulePrefix         = "AZ02",
-  [int]    $RuleSyncHourChanged      = -5 # Only Replace rules if they were edited in the source PC within the past x hours. Value should be greater than the script interval, negative value please
-)
-
 <#
   .SYNOPSIS
   AHV Sync Rep with flow, this script makes sure the categories, including its values and Flow Rules exist on the target prism.
@@ -60,13 +49,31 @@ Param (
   These credential files can only be decryped on this pc, and by the same user that created them.
 #>
 
-#Prompt section
-[System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-[System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
-Add-Type -AssemblyName PresentationFramework
-$global:debug = 1
-### Loading Functions
 
+#region parameter
+  Param 
+  (        
+    [String] $SourcePCIP               = "Enter Me",
+    [String] $TargetPCIP               = "Enter Me",
+    [String][ValidateSet("Scan","Execute","InstallCreds")] $Mode = "Scan",      # Scan, Execute, InstallCreds
+    [bool]   $EULA                     = $false,
+    [string] $workingdir               = "~\appdata\local\temp\",
+    [string] $SourceRuleSearchStr      = "AZ01",
+    [string] $TargetRulePrefix         = "AZ02",
+    [int]    $RuleSyncHourChanged      = -5 # Only Replace rules if they were edited in the source PC within the past x hours. Value should be greater than the script interval, negative value please
+  )
+#endregion
+
+
+#region prompt section
+  [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
+  [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
+  Add-Type -AssemblyName PresentationFramework
+  $global:debug = 1
+#endregion
+
+
+#region functions
 Function PSR-SSL-Fix {
 
   try {
@@ -93,8 +100,6 @@ Function PSR-SSL-Fix {
   }
 }
 
-## Functions below
-## This scipt has a lot of functions, separate modules could be used, but we wanted to keep this compact. in 1 file.
 Function write-log {
   param (
   $message,
@@ -256,7 +261,6 @@ Function REST-Add-Security-Rule {
   Return $task
 } 
 
-
 Function REST-Delete-Security-Rule {
   Param (
     [string] $PCClusterIP,
@@ -283,7 +287,6 @@ Function REST-Delete-Security-Rule {
 
   Return $task
 } 
-
 
 Function REST-Category-Value-Create {
   Param (
@@ -425,7 +428,6 @@ Function REST-Category-List {
   Return $task
 } 
 
-
 Function REST-Category-Query {
   Param (
     [string] $PCClusterIP,
@@ -476,7 +478,6 @@ Function REST-Category-Value-Query {
 
   Return $task
 } 
-
 
 Function 1FRS-Create-Categories{
   Param (
@@ -551,369 +552,377 @@ Function 1FRS-Create-Categories{
   }
   write-log -message "We made '$($change)' changes in categories."
 }
+#endregion
 
-### End of Function headers, Validation logic below.
 
-if ($PSVersionTable.PSVersion.Major -lt 5){
+#region execution logic
+  if ($PSVersionTable.PSVersion.Major -lt 5){
 
-  write-log -message "You need to run this on Powershell 5 or greater...." -sev "ERROR"
+    write-log -message "You need to run this on Powershell 5 or greater...." -sev "ERROR"
 
-} elseif ($PSVersionTable.PSVersion.Major -match 5 ){
+  } elseif ($PSVersionTable.PSVersion.Major -match 5 ){
 
-  write-log -message "Disabling SSL Certificate Check for PowerShell 5"
+    write-log -message "Disabling SSL Certificate Check for PowerShell 5"
 
-  PSR-SSL-Fix
+    PSR-SSL-Fix
 
-}
+  }
 
-if (!$eula -and !$commandline){
-  $License = [System.Windows.Forms.MessageBox]::Show("Use at your own risk, do you accept?`nThis software is NOT linked to Nutanix.", "Nutanix License" , 4)
-  if ($license -eq "Yes"){
-  
-    write "User accepted the license"
-  
-  } else {
-  
+  if (!$eula -and !$commandline){
+    $License = [System.Windows.Forms.MessageBox]::Show("Use at your own risk, do you accept?`nThis software is NOT linked to Nutanix.", "Nutanix License" , 4)
+    if ($license -eq "Yes"){
+    
+      write "User accepted the license"
+    
+    } else {
+    
+      [System.Windows.Forms.MessageBox]::Show($message,"User did not accept the license!","STOP",0,16)
+      sleep 5
+      [Environment]::Exit(1)
+    
+    }
+  } elseif (!$eula) {
     [System.Windows.Forms.MessageBox]::Show($message,"User did not accept the license!","STOP",0,16)
     sleep 5
-    [Environment]::Exit(1)
-  
-  }
-} elseif (!$eula) {
-  [System.Windows.Forms.MessageBox]::Show($message,"User did not accept the license!","STOP",0,16)
-  sleep 5
-  [Environment]::Exit(1) 
-}
-
-write-log -message "Getting some data"
-write-log -message "Validating Input" -sev "Chapter"
-
-if ($SourcePCIP -eq "Enter Me"){
-
-  write-log -message "PC Source Cluster IP is not specified, prompting" -sev "WARN"
-
-  $SourcePCIP = [Microsoft.VisualBasic.Interaction]::InputBox("Enter PC Source Cluster IP", "Prism Central IP address", "")
-
-}
-if ($TargetPCIP -eq "Enter Me"){
-
-  write-log -message "PC Target Cluster IP is not specified, prompting" -sev "WARN"
-
-  $TargetPCIP = [Microsoft.VisualBasic.Interaction]::InputBox("Enter PC Target Cluster IP", "Prism Central IP address", "")
-}
-
-### Execution Logic.
-### Install Creds first
-
-if ($mode -eq "InstallCreds"){
-
-  if (!(Get-item "$workingdir\SecureFiles\" -ea:4)){
-    $null = mkdir "$workingdir\SecureFiles\" -force
+    [Environment]::Exit(1) 
   }
 
-  write-log -message "Installing Credential files."
-  write-log -message "Working on Target PC first."
+  write-log -message "Getting some data"
+  write-log -message "Validating Input" -sev "Chapter"
 
-  if (get-item "$workingdir\SecureFiles\TargetPC.xml" -ea 4){
+  if ($SourcePCIP -eq "Enter Me"){
 
-    write-log -message "Target Credential file already exists, removing"
+    write-log -message "PC Source Cluster IP is not specified, prompting" -sev "WARN"
 
-    remove-item "$workingdir\SecureFiles\TargetPC.xml" -force -confirm:0
-  }
-
-  $credential = Get-Credential -message "Please enter the Target PC Credentials"
-  $credential | Export-CliXml -Path "$workingdir\SecureFiles\TargetPC.xml"
-
-  write-log -message "Installing Source PC Credentials."
-
-  if (get-item "$workingdir\SecureFiles\SourcePC.xml" -ea 4){
-
-    write-log -message "Target Credential file already exists, removing"
-
-    remove-item "$workingdir\SecureFiles\SourcePC.xml" -force -confirm:0
-  }
-
-  $credential = Get-Credential -message "Please enter the Source PC Credentials"
-  $credential | Export-CliXml -Path "$workingdir\SecureFiles\SourcePC.xml"
-
-  write-log -message "Credentials are installed, Please run in scan or execute mode."
-
-} elseif ($mode -match "Scan|Execute") {
-
-  ### Loading Credentials
-
-  write-log -message "Loading Credential files.." -sev "Chapter"
-
-  $SourcePCCreds = Import-CliXml -Path "$workingdir\SecureFiles\SourcePC.xml"
-  $TargetPCCreds = Import-CliXml -Path "$workingdir\SecureFiles\TargetPC.xml"
-
-  $sourcePCVersion = REST-Query-PrismCentral `
-    -PCClusterIP $SourcePCIP `
-    -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
-    -PxClusterPass $SourcePCCreds.getnetworkcredential().password
-
-  $TargetPCVersion = REST-Query-PrismCentral `
-    -PCClusterIP $TargetPCIP `
-    -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-    -PxClusterPass $TargetPCCreds.getnetworkcredential().password
-  
-  write-log -message "Source PC is running version '$($sourcePCVersion.resources.version)'"
-  write-log -message "Target PC is running version '$($TargetPCVersion.resources.version)'"
-
-  if ($sourcePCVersion.resources.version -ne $TargetPCVersion.resources.version){
-
-    write-log -message "PC Version Mismatch!!" -sev "Warn"
-
-  } else {
-
-    write-log -message "PC Version Match"
+    $SourcePCIP = [Microsoft.VisualBasic.Interaction]::InputBox("Enter PC Source Cluster IP", "Prism Central IP address", "")
 
   }
+  if ($TargetPCIP -eq "Enter Me"){
 
-  write-log -message "Using username '$($SourcePCCreds.username)' as username for the source PC"
-  write-log -message "Using username '$($TargetPCCreds.username)' as username for the target PC"
+    write-log -message "PC Target Cluster IP is not specified, prompting" -sev "WARN"
 
-  write-log -message "Getting Categories from Source PC" -sev "Chapter"
-
-  $SourceCategories = REST-Category-List `
-    -PCClusterIP $SourcePCIP `
-    -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
-    -PxClusterPass $SourcePCCreds.getnetworkcredential().password
-
-  write-log -message "Creating Readable Category object"
-
-  $SCategoryList = $null
-  foreach ($Category in $SourceCategories.group_results){
-    $Entity = [PSCustomObject]@{
-       Name         = ($Category.group_summaries.'sum:name').values.values
-       Values       = ($Category.entity_results.data | where {$_.name -eq "value"}).values.values -join ","
-       ValueCount   = ($Category.total_entity_count)
-    }
-    [array]$SCategoryList += $entity     
+    $TargetPCIP = [Microsoft.VisualBasic.Interaction]::InputBox("Enter PC Target Cluster IP", "Prism Central IP address", "")
   }
-  $SourcetotalValues = 0    
-  $SCategoryList.Valuecount |% {[int]$SourcetotalValues += [int]$_ }
-
-  write-log -message "We have '$($SCategoryList.count)' categories on the source PC."
-  write-log -message "We have '$($SourcetotalValues)' values in these categories."
-  write-log -message "Getting Categories from Target PC" -sev "Chapter"
-
-  $TargetCategories = REST-Category-List `
-    -PCClusterIP $TargetPCIP `
-    -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-    -PxClusterPass $TargetPCCreds.getnetworkcredential().password
-
-  write-log -message "Creating Readable Category object"
-
-  $TCategoryList = $null
-  foreach ($Category in $TargetCategories.group_results){
-    $Entity = [PSCustomObject]@{
-       Name         = ($Category.group_summaries.'sum:name').values.values
-       Values       = ($Category.entity_results.data | where {$_.name -eq "value"}).values.values -join ","
-       ValueCount   = ($Category.total_entity_count)
-    }
-    [array]$TCategoryList += $entity     
-  }
-  $TargettotalValues = 0    
-  $TCategoryList.Valuecount |% {[int]$TargettotalValues += [int]$_ }
-
-  write-log -message "We have '$($TCategoryList.count)' categories on the source PC."
-  write-log -message "We have '$($TargettotalValues)' values in these categories."
+#endregion execution logic
 
 
-  [array] $CatValueSyncRequired = $null
-  [array] $NewCat = $null
-  foreach ($category in $SCategoryList){
-    if ($category.name -notin $TCategoryList.name){
+#region main
+  #region creds & scan
+    if ($mode -eq "InstallCreds")
+    {#dealiong with storing credentials in files
 
-      write-log -message "Category '$($category.name)' does not exist yet."
-
-      $NewCat += $category
-
-    } else {
-
-      $sourcevalarr = $category.values -split "," |sort
-      $targetvalarr = ($TCategoryList | where {$_.name -eq $category.name}).values -split "," |sort
-      $addArr = $false
-      foreach ($sourceval in $sourcevalarr){
-        if ($sourceval -in $targetvalarr){
-
-          write-log -message "The value '$sourceval' is present in category '$($category.name)' on the target PC" 
-
-        } else {
-
-          write-log -message "The value '$sourceval' is not present in '$($category.name)' on the target PC" 
-
-          $addArr = $true
-        }
+      if (!(Get-item "$workingdir\SecureFiles\" -ea:4)){
+        $null = mkdir "$workingdir\SecureFiles\" -force
       }
-      if ($addArr -eq $true){ 
 
-          write-log -message "Category '$($category.name)' is missing values on the target PC."
+      write-log -message "Installing Credential files."
+      write-log -message "Working on Target PC first."
 
-          [array] $CatValueSyncRequired += $category
+      if (get-item "$workingdir\SecureFiles\TargetPC.xml" -ea 4){
+
+        write-log -message "Target Credential file already exists, removing"
+
+        remove-item "$workingdir\SecureFiles\TargetPC.xml" -force -confirm:0
+      }
+
+      $credential = Get-Credential -message "Please enter the Target PC Credentials"
+      $credential | Export-CliXml -Path "$workingdir\SecureFiles\TargetPC.xml"
+
+      write-log -message "Installing Source PC Credentials."
+
+      if (get-item "$workingdir\SecureFiles\SourcePC.xml" -ea 4){
+
+        write-log -message "Target Credential file already exists, removing"
+
+        remove-item "$workingdir\SecureFiles\SourcePC.xml" -force -confirm:0
+      }
+
+      $credential = Get-Credential -message "Please enter the Source PC Credentials"
+      $credential | Export-CliXml -Path "$workingdir\SecureFiles\SourcePC.xml"
+
+      write-log -message "Credentials are installed, Please run in scan or execute mode."
+
+    } elseif ($mode -match "Scan|Execute") 
+    {#scan
+
+      ### Loading Credentials
+
+      write-log -message "Loading Credential files.." -sev "Chapter"
+
+      $SourcePCCreds = Import-CliXml -Path "$workingdir\SecureFiles\SourcePC.xml"
+      $TargetPCCreds = Import-CliXml -Path "$workingdir\SecureFiles\TargetPC.xml"
+
+      $sourcePCVersion = REST-Query-PrismCentral `
+        -PCClusterIP $SourcePCIP `
+        -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
+        -PxClusterPass $SourcePCCreds.getnetworkcredential().password
+
+      $TargetPCVersion = REST-Query-PrismCentral `
+        -PCClusterIP $TargetPCIP `
+        -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
+        -PxClusterPass $TargetPCCreds.getnetworkcredential().password
+      
+      write-log -message "Source PC is running version '$($sourcePCVersion.resources.version)'"
+      write-log -message "Target PC is running version '$($TargetPCVersion.resources.version)'"
+
+      if ($sourcePCVersion.resources.version -ne $TargetPCVersion.resources.version){
+
+        write-log -message "PC Version Mismatch!!" -sev "Warn"
+
       } else {
 
-          write-log -message "Category '$($category.name)' has its values in sync, no change needed."
+        write-log -message "PC Version Match"
 
       }
-    }
-  }
 
-  write-log -message "Checking Security rules on the source." -sev "Chapter"
+      write-log -message "Using username '$($SourcePCCreds.username)' as username for the source PC"
+      write-log -message "Using username '$($TargetPCCreds.username)' as username for the target PC"
 
-  $SourceRules = REST-Query-Security-Rules `
-    -PCClusterIP $SourcePCIP `
-    -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
-    -PxClusterPass $SourcePCCreds.getnetworkcredential().password
+      write-log -message "Getting Categories from Source PC" -sev "Chapter"
 
-  write-log -message "We are filtering rules matching filter string: '$SourceRuleSearchStr'"
+      $SourceCategories = REST-Category-List `
+        -PCClusterIP $SourcePCIP `
+        -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
+        -PxClusterPass $SourcePCCreds.getnetworkcredential().password
 
-  $SourceSyncRules = $SourceRules.entities | where {$_.spec.name -match $SourceRuleSearchStr -and $_.spec.name -ne "Quarantine"}
+      write-log -message "Creating Readable Category object"
 
-  write-log -message "We have '$($SyncRules.count)' rules to sync after filtering."
-  write-log -message "Checking Security rules on the target."
+      $SCategoryList = $null
+      foreach ($Category in $SourceCategories.group_results){
+        $Entity = [PSCustomObject]@{
+          Name         = ($Category.group_summaries.'sum:name').values.values
+          Values       = ($Category.entity_results.data | where {$_.name -eq "value"}).values.values -join ","
+          ValueCount   = ($Category.total_entity_count)
+        }
+        [array]$SCategoryList += $entity     
+      }
+      $SourcetotalValues = 0    
+      $SCategoryList.Valuecount |% {[int]$SourcetotalValues += [int]$_ }
 
-  $TargetRules = REST-Query-Security-Rules `
-    -PCClusterIP $TargetPCIP `
-    -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-    -PxClusterPass $TargetPCCreds.getnetworkcredential().password
+      write-log -message "We have '$($SCategoryList.count)' categories on the source PC."
+      write-log -message "We have '$($SourcetotalValues)' values in these categories."
+      write-log -message "Getting Categories from Target PC" -sev "Chapter"
 
-  write-log -message "We are only checking rules with prefix '$TargetRulePrefix'"
+      $TargetCategories = REST-Category-List `
+        -PCClusterIP $TargetPCIP `
+        -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
+        -PxClusterPass $TargetPCCreds.getnetworkcredential().password
 
-  [array] $TargetRulelist = $null
-  [array] $AlreadyExists = $null
-  [array] $NewRules = $null
-  [array] $AlreadyExistsSyncRequired = $null
-  $TargetSyncRules = $TargetRules.entities | where {$_.spec.name -match "^$($TargetRulePrefix)"}
-  
-  write-log -message "Comparing Rules based on name."
+      write-log -message "Creating Readable Category object"
 
-  foreach ($rule in $SourceSyncRules){
+      $TCategoryList = $null
+      foreach ($Category in $TargetCategories.group_results){
+        $Entity = [PSCustomObject]@{
+          Name         = ($Category.group_summaries.'sum:name').values.values
+          Values       = ($Category.entity_results.data | where {$_.name -eq "value"}).values.values -join ","
+          ValueCount   = ($Category.total_entity_count)
+        }
+        [array]$TCategoryList += $entity     
+      }
+      $TargettotalValues = 0    
+      $TCategoryList.Valuecount |% {[int]$TargettotalValues += [int]$_ }
 
-    [string]$DestName =  $TargetRulePrefix + $rule.spec.name 
+      write-log -message "We have '$($TCategoryList.count)' categories on the source PC."
+      write-log -message "We have '$($TargettotalValues)' values in these categories."
 
-    write-log -message "Checking if we have '$DestName' in our target PC already.."
 
-    if ($destname -in $TargetSyncRules.spec.name){
+      [array] $CatValueSyncRequired = $null
+      [array] $NewCat = $null
+      foreach ($category in $SCategoryList){
+        if ($category.name -notin $TCategoryList.name){
 
-      write-log -message "Destination Rule '$($destname)' already exists."
+          write-log -message "Category '$($category.name)' does not exist yet."
 
-      [array] $AlreadyExists += $rule
-
-      foreach ($rule in $AlreadyExists){
-        if (([datetime] $rule.metadata.last_update_time) -gt $(get-date).addhours($RuleSyncHourChanged)){
-
-          write-log -message "This rule is changed in the (last) '$RuleSyncHourChanged' hours"
-
-          $AlreadyExistsSyncRequired += $rule
+          $NewCat += $category
 
         } else {
 
-          write-log -message "This rule was modified '$(([datetime] $rule.metadata.last_update_time))', its old, not replacing this one."
+          $sourcevalarr = $category.values -split "," |sort
+          $targetvalarr = ($TCategoryList | where {$_.name -eq $category.name}).values -split "," |sort
+          $addArr = $false
+          foreach ($sourceval in $sourcevalarr){
+            if ($sourceval -in $targetvalarr){
+
+              write-log -message "The value '$sourceval' is present in category '$($category.name)' on the target PC" 
+
+            } else {
+
+              write-log -message "The value '$sourceval' is not present in '$($category.name)' on the target PC" 
+
+              $addArr = $true
+            }
+          }
+          if ($addArr -eq $true){ 
+
+              write-log -message "Category '$($category.name)' is missing values on the target PC."
+
+              [array] $CatValueSyncRequired += $category
+          } else {
+
+              write-log -message "Category '$($category.name)' has its values in sync, no change needed."
+
+          }
+        }
+      }
+
+      write-log -message "Checking Security rules on the source." -sev "Chapter"
+
+      $SourceRules = REST-Query-Security-Rules `
+        -PCClusterIP $SourcePCIP `
+        -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
+        -PxClusterPass $SourcePCCreds.getnetworkcredential().password
+
+      write-log -message "We are filtering rules matching filter string: '$SourceRuleSearchStr'"
+
+      $SourceSyncRules = $SourceRules.entities | where {$_.spec.name -match $SourceRuleSearchStr -and $_.spec.name -ne "Quarantine"}
+
+      write-log -message "We have '$($SyncRules.count)' rules to sync after filtering."
+      write-log -message "Checking Security rules on the target."
+
+      $TargetRules = REST-Query-Security-Rules `
+        -PCClusterIP $TargetPCIP `
+        -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
+        -PxClusterPass $TargetPCCreds.getnetworkcredential().password
+
+      write-log -message "We are only checking rules with prefix '$TargetRulePrefix'"
+
+      [array] $TargetRulelist = $null
+      [array] $AlreadyExists = $null
+      [array] $NewRules = $null
+      [array] $AlreadyExistsSyncRequired = $null
+      $TargetSyncRules = $TargetRules.entities | where {$_.spec.name -match "^$($TargetRulePrefix)"}
+      
+      write-log -message "Comparing Rules based on name."
+
+      foreach ($rule in $SourceSyncRules){
+
+        [string]$DestName =  $TargetRulePrefix + $rule.spec.name 
+
+        write-log -message "Checking if we have '$DestName' in our target PC already.."
+
+        if ($destname -in $TargetSyncRules.spec.name){
+
+          write-log -message "Destination Rule '$($destname)' already exists."
+
+          [array] $AlreadyExists += $rule
+
+          foreach ($rule in $AlreadyExists){
+            if (([datetime] $rule.metadata.last_update_time) -gt $(get-date).addhours($RuleSyncHourChanged)){
+
+              write-log -message "This rule is changed in the (last) '$RuleSyncHourChanged' hours"
+
+              $AlreadyExistsSyncRequired += $rule
+
+            } else {
+
+              write-log -message "This rule was modified '$(([datetime] $rule.metadata.last_update_time))', its old, not replacing this one."
+
+            }
+          }
+        } else {
+
+          [array] $NewRules += $rule
 
         }
       }
-    } else {
 
-      [array] $NewRules += $rule
+      if ($mode -eq "Scan"){
+
+        write-log -message "Scan Summary" -sev "Chapter"
+        $prefix = "Scan mode, this setup would"
+
+      } elseif ($mode -eq "execute") {
+
+        $prefix = "Execute mode, this setup will"
+
+      }
+
+      write-log -message "$prefix create '$($NewCat.count)' new categories on '$($TargetPCIP)'"
+      write-log -message "$prefix update '$($CatValueSyncRequired.count)' categories that need value alignment on '$($TargetPCIP)'"
+      write-log -message "$prefix create '$($NewRules.count)' new rules on '$($TargetPCIP)'"
+      write-log -message "$prefix replace '$($AlreadyExistsSyncRequired.count)' existing rules on '$($TargetPCIP)' which are changed in the (last) '$RuleSyncHourChanged' hours"
+
+      sleep 10 
 
     }
-  }
+  #endregion
 
-  if ($mode -eq "Scan"){
+  #region execute
+    if ($mode -eq "Execute"){
 
-    write-log -message "Scan Summary" -sev "Chapter"
-    $prefix = "Scan mode, this setup would"
+      write-log -message "New Categories first"
 
-  } elseif ($mode -eq "execute") {
+      if ($NewCat.count -ge 1){
 
-    $prefix = "Execute mode, this setup will"
+        1FRS-Create-Categories -PCCreds $TargetPCCreds -PCIP $TargetPCIP -delta $NewCat
+      
+      } else {
 
-  }
+        write-log -message "Category sync not required for new categories."
 
-  write-log -message "$prefix create '$($NewCat.count)' new categories on '$($TargetPCIP)'"
-  write-log -message "$prefix update '$($CatValueSyncRequired.count)' categories that need value alignment on '$($TargetPCIP)'"
-  write-log -message "$prefix create '$($NewRules.count)' new rules on '$($TargetPCIP)'"
-  write-log -message "$prefix replace '$($AlreadyExistsSyncRequired.count)' existing rules on '$($TargetPCIP)' which are changed in the (last) '$RuleSyncHourChanged' hours"
+      }
 
-  sleep 10 
+      write-log -message "Syncing Existing Categories"
 
-}
+      if ($CatValueSyncRequired.count -ge 1){
 
-if ($mode -eq "Execute"){
+        1FRS-Create-Categories -PCCreds $TargetPCCreds -PCIP $TargetPCIP -delta $CatValueSyncRequired
+      
+      } else {
 
-  write-log -message "New Categories first"
+        write-log -message "Category sync not required for existing categories."
 
-  if ($NewCat.count -ge 1){
+      }
 
-    1FRS-Create-Categories -PCCreds $TargetPCCreds -PCIP $TargetPCIP -delta $NewCat
-  
-  } else {
+      write-log -message "Working on Security Rules"
+      
+      if ($AlreadyExistsSyncRequired.count -ge 1){
 
-    write-log -message "Category sync not required for new categories."
+        write-log -message "Cleanup required, Existing changed Rules will be deleted first."
 
-  }
+        foreach ($rule in $AlreadyExistsSyncRequired){
 
-  write-log -message "Syncing Existing Categories"
+          $targetRule = $TargetSyncRules | where {$_.spec.name -eq [string]($TargetRulePrefix + $Rule.spec.name)}
 
-  if ($CatValueSyncRequired.count -ge 1){
+          if ($targetrule){ 
 
-    1FRS-Create-Categories -PCCreds $TargetPCCreds -PCIP $TargetPCIP -delta $CatValueSyncRequired
-  
-  } else {
+            write-log -message "Found the target rule to delete."
 
-    write-log -message "Category sync not required for existing categories."
+            REST-Delete-Security-Rule `
+              -PCClusterIP $TargetPCIP `
+              -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
+              -PxClusterPass $TargetPCCreds.getnetworkcredential().password `
+              -Rule $targetRule
+          }
+        } 
+      }
 
-  }
+      [array]$rulestocreate = $null
+      if ($AlreadyExistsSyncRequired.count -ge 1){
+        $rulestocreate += $AlreadyExistsSyncRequired
+      }
+      if ($NewRules.count -ge 1){
+        $rulestocreate += $NewRules
+      }
 
-  write-log -message "Working on Security Rules"
-  
-  if ($AlreadyExistsSyncRequired.count -ge 1){
+      write-log -message "Creating Rules" -sev "Chapter"
+      write-log -message "Creating '$($rulestocreate.count)' rules on '$TargetPCIP'"
 
-    write-log -message "Cleanup required, Existing changed Rules will be deleted first."
+      foreach ($rule in $rulestocreate){
 
-    foreach ($rule in $AlreadyExistsSyncRequired){
+        [string] $DRRuleName        = $TargetRulePrefix + $rule.spec.name
+        [string] $DRRuleDescription = "Please do not edit here, synced rule, edit on '$SourcePCIP'" + $rule.spec.description
 
-      $targetRule = $TargetSyncRules | where {$_.spec.name -eq [string]($TargetRulePrefix + $Rule.spec.name)}
+        write-log -message "Creating Rule '$DRRuleName'"
 
-      if ($targetrule){ 
-
-        write-log -message "Found the target rule to delete."
-
-        REST-Delete-Security-Rule `
+        REST-Add-Security-Rule `
           -PCClusterIP $TargetPCIP `
           -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
           -PxClusterPass $TargetPCCreds.getnetworkcredential().password `
-          -Rule $targetRule
+          -Rule $Rule `
+          -NewName $DRRuleName `
+          -NewDescription $DRRuleDescription
       }
-    } 
-  }
-
-  [array]$rulestocreate = $null
-  if ($AlreadyExistsSyncRequired.count -ge 1){
-    $rulestocreate += $AlreadyExistsSyncRequired
-  }
-  if ($NewRules.count -ge 1){
-    $rulestocreate += $NewRules
-  }
-
-  write-log -message "Creating Rules" -sev "Chapter"
-  write-log -message "Creating '$($rulestocreate.count)' rules on '$TargetPCIP'"
-
-  foreach ($rule in $rulestocreate){
-
-    [string] $DRRuleName        = $TargetRulePrefix + $rule.spec.name
-    [string] $DRRuleDescription = "Please do not edit here, synced rule, edit on '$SourcePCIP'" + $rule.spec.description
-
-    write-log -message "Creating Rule '$DRRuleName'"
-
-    REST-Add-Security-Rule `
-      -PCClusterIP $TargetPCIP `
-      -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-      -PxClusterPass $TargetPCCreds.getnetworkcredential().password `
-      -Rule $Rule `
-      -NewName $DRRuleName `
-      -NewDescription $DRRuleDescription
-  }
-}
+    }
+  #endregion
+#endregion
