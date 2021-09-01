@@ -497,6 +497,25 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             Write-Host ""
             Write-Host "$(get-date) [STEP] Stopping Nutanix cluster $($myvar_ntnx_cluster_name) and shutting down CVMs..." -ForegroundColor Magenta
             #sending the cluster stop command
+            if ($myvar_ssh_sessions.Connected -eq "False")
+            {
+                Write-Host "$(get-date) [INFO] Opening ssh session to $($myvar_cvm_ips[0])..." -ForegroundColor Green
+                try 
+                {
+                    $myvar_cvm_ssh_session = New-SshSession -ComputerName $myvar_cvm_ips[0] -Credential $myvar_cvm_credentials -ErrorAction Stop
+                    $myvar_ssh_sessions = Get-SshSession
+                    if (!$myvar_ssh_sessions) 
+                    {
+                        throw "$(get-date) [ERROR] Could not open ssh session to $($myvar_cvm_ips[0])"
+                    }
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not open ssh session to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"
+                }
+                Write-Host "$(get-date) [SUCCESS] Opened ssh session to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
+            }
+
             Write-Host "$(get-date) [INFO] Sending cluster stop command to $($myvar_cvm_ips[0])..." -ForegroundColor Green
             try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'I agree' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
             catch {throw "$(get-date) [ERROR] Could not send cluster stop command to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
@@ -595,6 +614,8 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #>
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
+
+#todo: when doing cluster shutdown (or anything that uses ssh sessions), ssh session is opened at the beginning as part of the checks.  Assuming the failvoer will take a long time, the ssh session should be reset before invoking any action in the functions.
 
 #region prepwork
     $ErrorActionPreference = "Continue"
