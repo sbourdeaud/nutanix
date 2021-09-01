@@ -587,11 +587,11 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
 #todo: handle going out of maintenance mode where the script would:
 <# 
-Take ESXi hosts off maintenance mode
-Power on CVMs
-SSH into a CVM to start the cluster
-Migrate VMs back
-Re-enable replication
+    Take ESXi hosts off maintenance mode
+    Power on CVMs
+    SSH into a CVM to start the cluster
+    Migrate VMs back
+    Re-enable replication
 #>
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
@@ -818,8 +818,6 @@ $drs_rule2_name = "VMs_Should_In_GS"
     Write-Host ""       
     Write-Host "$(get-date) [STEP] Validating parameters ..." -ForegroundColor Magenta
 
-    #todo: rework this section to accomodate unplanned
-
     if ($action -and ($IsMacOS -or $IsLinux)) 
     {#we need to connect to CVM using SSH but we're not running this script from a Windows machine (only platform where ssh module used works)
         Throw "$(get-date) [ERROR] You can only use -action on a Windows based system for now! Exiting."
@@ -940,9 +938,12 @@ $drs_rule2_name = "VMs_Should_In_GS"
         $myvar_cvm_credentials = New-Object PSCredential $myvar_cvm_username, $myvar_cvm_secure_password
     }
 
-    if ($unplanned -and $action)
+    if ($unplanned)
     {
-        Throw "$(get-date) [ERROR] You cannot use -action and -unplanned together!"
+        if ($action -or $DisableOnly -or $reEnableOnly)
+        {
+            Throw "$(get-date) [ERROR] You cannot use -unplanned with -action, -DisableOnly or -reEnableOnly!"
+        }
     }
 
     if (!$timer) {$timer = 300}
@@ -1882,7 +1883,6 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name).  Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
                     Start-Sleep $reEnableDelay
 
-                    #todo: add control loop here to make sure there aren't too many syncing metro pds already
                     Do 
                     {#make sure there aren't too many replications running in parallel already otherwise wait
                         #retrieve protection domains
@@ -2025,55 +2025,55 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #endregion
 
     #region unplanned
-    if ($unplanned)
-    {
-        $myvar_csv_export = "unplanned_failover_pd_list.csv"
-        Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
-        try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
-        catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
+        if ($unplanned)
+        {
+            $myvar_csv_export = "unplanned_failover_pd_list.csv"
+            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
+            try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
+            catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
 
-        foreach ($myvar_pd in $pd_list) 
-        {#main processing loop
-            #* trigger pd promotion
-            Write-Host "$(get-date) [INFO] Promoting protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/promote?force=true" -f $cluster,$myvar_pd.name
-            $method = "POST"
-            try 
-            {
-                $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-            }
-            catch
-            {
-                throw "$(get-date) [ERROR] Could not promote protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
-            }
-            Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)." -ForegroundColor Cyan
-            
-            #* check pd is active
-            Do 
-            {
-                Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
-                $method = "GET"
+            foreach ($myvar_pd in $pd_list) 
+            {#main processing loop
+                #* trigger pd promotion
+                Write-Host "$(get-date) [INFO] Promoting protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/promote?force=true" -f $cluster,$myvar_pd.name
+                $method = "POST"
                 try 
                 {
-                    $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 }
                 catch
                 {
-                    throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    throw "$(get-date) [ERROR] Could not promote protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                 }
-                Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
-
-                $myvar_pd_role = ($myvar_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.role
-                if ($myvar_pd_role -ne "Active") 
+                Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)." -ForegroundColor Cyan
+                
+                #* check pd is active
+                Do 
                 {
-                    Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) does not have active role yet but role $($myvar_pd_role). Waiting 15 seconds..." -ForegroundColor Yellow
-                    Start-Sleep 15
-                }
-            } While ($myvar_pd_role -ne "Active")
-            Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) has active role now." -ForegroundColor White
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                    $method = "GET"
+                    try 
+                    {
+                        $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                    $myvar_pd_role = ($myvar_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.role
+                    if ($myvar_pd_role -ne "Active") 
+                    {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) does not have active role yet but role $($myvar_pd_role). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Start-Sleep 15
+                    }
+                } While ($myvar_pd_role -ne "Active")
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) has active role now." -ForegroundColor White
+            }
         }
-    }
     #endregion
 
     #region maintenance
