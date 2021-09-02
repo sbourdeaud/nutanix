@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  This script is used to trigger a planned failover for the specified metro availability protection domains on the specified cluster.
+  This script is used to trigger a planned or unplanned failover for the specified metro availability protection domains on the specified cluster.
 .DESCRIPTION
-  The script will look at the Metro Availability setup for a pair of given Nutanix clusters and will create DRS affinity groups and rules so that VMs will run on hosts which hold the active copy of a given replicated datastore. This is to avoid I/O going over two sites in normal conditions.  If DRS groups and rules already exist that match the naming convention used in this script, then it will update those groups and rules (unless you use the -noruleupdate switch in which case only groups will be updated).  This script requires having both the Nutanix cmdlets and PowerCLI installed.
+  When doing planned failovers, you have the option to also put esxi hosts in maintenance mode or shutdown the entire cluster.  When using unplanned failovers, the list of protection domains to promote will be automatically determined if none are specified.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -14,28 +14,34 @@
 .PARAMETER pd
   Nutanix metro availability protection domain name (can be "all" or a comma separated list).
 .PARAMETER action
-  This defines what status the Nutanix cluster is left in. If not specified, the Nutanix cluster will be left as is.  If "maintenance", any remaiing UVMs will be powered off, then the Nutanix cluster will be stopped, the CVMs shut down and the ESXi hosts put in maintenance mode.  If "shutdown", UVMs will be powered off, the Nutanix cluster stopped, CVMs shut down, ESXI hosts put in maintenance mode and then powered off.
+  (Optional)This defines what status the Nutanix cluster is left in. If not specified, the Nutanix cluster will be left as is.  If "maintenance", any remaiing UVMs will be powered off, then the Nutanix cluster will be stopped, the CVMs shut down and the ESXi hosts put in maintenance mode.  If "shutdown", UVMs will be powered off, the Nutanix cluster stopped, CVMs shut down, ESXI hosts put in maintenance mode and then powered off.
+.PARAMETER unplanned
+  (Optional)Perform an unplanned failover.
 .PARAMETER skipfailover
-  Skip over migration of protection domains and only perform action specified on esxi hosts (maintenance or shutdown). This is useful to resume action if protection domains have already been migrated but there were still UVMs running on the cluster and it could not put hosts in maintenance mode and/or shut them down.
+  (Optional)Skip over migration of protection domains and only perform action specified on esxi hosts (maintenance or shutdown). This is useful to resume action if protection domains have already been migrated but there were still UVMs running on the cluster and it could not put hosts in maintenance mode and/or shut them down.
 .PARAMETER shutdownUvms
-  ***WARNING*** Specifies that if any remaining user virtual machines are found on a vmhost, they should be powered off. Those would be VMs which were not protected by a metro protection domain or were running on the wrong hosts. Be careful with this parameter!
+  (Optional)***WARNING*** Specifies that if any remaining user virtual machines are found on a vmhost, they should be powered off. Those would be VMs which were not protected by a metro protection domain or were running on the wrong hosts. Be careful with this parameter!
 .PARAMETER timer
-  Number of seconds you want to wait for VMs to shutdown cleanly (when using -shutdownUvms) before powering them off forcefully. Default is 300 seconds (5 minutes).
+  (Optional)Number of seconds you want to wait for VMs to shutdown cleanly (when using -shutdownUvms) before powering them off forcefully. Default is 300 seconds (5 minutes).
 .PARAMETER reEnableOnly
   Try to enable specified active but disabled metro protection domains. Do nothing else.
+.PARAMETER DisableOnly
+  Try to disabled specified active but decoupled metro protection domains. Do nothing else. This is useful when failing back after an unplanned failover.
 .PARAMETER reEnableDelay
-  Specifies in seconds how long the script should wait between each protection domain re-enablement. Default and minimum is 120 seconds (2 minutes). You can specify more if you want, but not less.
+  (Optional)Specifies in seconds how long the script should wait between each protection domain re-enablement. Default and minimum is 120 seconds (2 minutes). You can specify more if you want, but not less.
+.PARAMETER maxConcurrentRepl
+  (Optional)Integer specifying how many concurrent replications can take place in parallel.  This is set to 3 by default.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name for Prism authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
+  (Optional)Specifies a custom credentials file name for Prism authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file and do not use username or password, the script will prompt you for this information.
 .PARAMETER vcenterCreds
-  Specifies a custom credentials file name for vCenter authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$vcenterCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
+  (Optional)Specifies a custom credentials file name for vCenter authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$vcenterCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file, the script will prompt you for this information, unless your logged in user already has access to vCenter.
 .PARAMETER cvmCreds
-  Specifies a custom credentials file name for CVM ssh authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$cvmCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
+  (Optional)Specifies a custom credentials file name for CVM ssh authentication (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$cvmCreds.txt). The first time you run it, it will prompt you for a username and password, and will then store this information encrypted locally (the info can be decrupted only by the same user on the machine where the file was generated).
   If you do not specify a credential file, the script will prompt you for this information.
 .PARAMETER resetOverrides
-  Specifies that if a VM has a DRS override, you want to remove it automatically so that DRS can move the VM.
+  (Optional)Specifies that if a VM has a DRS override, you want to remove it automatically so that DRS can move the VM.
 .EXAMPLE
 .\invoke-MAFailover.ps1 -cluster c1.local -pd all -action maintenance
 Trigger a manual failover of all metro protection domains and put esxi hosts in maintenance mode:
@@ -43,7 +49,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 15th 2021
+  Revision: August 31st 2021
 #>
 
 #region parameters
@@ -58,13 +64,16 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $false)] $vcenterCreds,
         [parameter(mandatory = $false)] $cvmCreds,
+        [parameter(mandatory = $false)] [switch]$unplanned,
         [parameter(mandatory = $false)] [string][ValidateSet("maintenance","shutdown")]$action,
         [parameter(mandatory = $false)] [switch]$skipfailover,
         [parameter(mandatory = $false)] [switch]$shutdownUvms,
         [parameter(mandatory = $false)] [switch]$resetOverrides,
         [parameter(mandatory = $false)] [int]$timer,
         [parameter(mandatory = $false)] [switch]$reEnableOnly,
-        [parameter(mandatory = $false)] [int]$reEnableDelay
+        [parameter(mandatory = $false)] [switch]$DisableOnly,
+        [parameter(mandatory = $false)] [int]$reEnableDelay,
+        [parameter(mandatory = $false)] [int]$maxConcurrentRepl
     )
 #endregion
 
@@ -112,7 +121,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 
         begin
         {
-    
+
         }
         process
         {
@@ -488,6 +497,25 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             Write-Host ""
             Write-Host "$(get-date) [STEP] Stopping Nutanix cluster $($myvar_ntnx_cluster_name) and shutting down CVMs..." -ForegroundColor Magenta
             #sending the cluster stop command
+            if ($myvar_ssh_sessions.Connected -eq "False")
+            {
+                Write-Host "$(get-date) [INFO] Opening ssh session to $($myvar_cvm_ips[0])..." -ForegroundColor Green
+                try 
+                {
+                    $myvar_cvm_ssh_session = New-SshSession -ComputerName $myvar_cvm_ips[0] -Credential $myvar_cvm_credentials -ErrorAction Stop
+                    $myvar_ssh_sessions = Get-SshSession
+                    if (!$myvar_ssh_sessions) 
+                    {
+                        throw "$(get-date) [ERROR] Could not open ssh session to $($myvar_cvm_ips[0])"
+                    }
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not open ssh session to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"
+                }
+                Write-Host "$(get-date) [SUCCESS] Opened ssh session to $($myvar_cvm_ips[0])." -ForegroundColor Cyan
+            }
+
             Write-Host "$(get-date) [INFO] Sending cluster stop command to $($myvar_cvm_ips[0])..." -ForegroundColor Green
             try {$myvar_cluster_stop_command = Invoke-SshCommand -ComputerName $myvar_cvm_ips[0] -Command "export ZOOKEEPER_HOST_PORT_LIST=zk3:9876,zk2:9876,zk1:9876 && echo 'I agree' | /usr/local/nutanix/cluster/bin/cluster stop" -ErrorAction Stop}
             catch {throw "$(get-date) [ERROR] Could not send cluster stop command to $($myvar_cvm_ips[0]) : $($_.Exception.Message)"}
@@ -587,56 +615,66 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
 
+#todo: when doing cluster shutdown (or anything that uses ssh sessions), ssh session is opened at the beginning as part of the checks.  Assuming the failvoer will take a long time, the ssh session should be reset before invoking any action in the functions.
+
 #region prepwork
     $ErrorActionPreference = "Continue"
 
     Write-Host ""
     Write-Host "$(get-date) [STEP] Checking PowerShell configuration ..." -ForegroundColor Magenta
     $HistoryText = @'
- Maintenance Log
- Date       By   Updates (newest updates at the top)
- ---------- ---- ---------------------------------------------------------------
- 11/03/2020 sb   Initial release.
- 11/06/2020 sb   Added -reEnableOnly switch.
- 02/06/2021 sb   Replaced username with get-credential
- 02/16/2021 sb   Misc updates after first runs in production: moved DRS check to
-                 PowerCLI commands as status in Prism cluster json object is
-                 sometimes incorrect. Added code to force migrate powered off
-                 virtual machines in a metro enabled container. Added code to
-                 keep track of remote site cluster hypervisor hosts.  Added code
-                 to display number of remaining virtual machines in a metro
-                 enabled container.
- 05/09/2021 sb   Added check for VM with DRS override that it is in the same
-                 cluster and changed message accordingly.
- 06/02/2021 sb   Adding check on failure handling method and adding step to
-                 disable the protection domain if a Witness is not being used.
-                 Added CUSTOMIZE markers to facilitate changing DRS naming
-                 convention.
- 06/03/2021 sb   Added the ability to use custom DRS object names where there is
-                 1 rule per cluster (as opposed to 1 DRS rule per container).
-                 Added code to export processed pd list and ability to specify
-                 a csv file for -pd parameter (in order to facilitate failback).
- 06/09/2021 sb   Changed if statement on line 1451 to add debug information when
-                 vmhost comparison appears incorrect.
-                 When re-enabling pds, moved the sync status outside of the main
-                 processing loop to speed up execution of the process (now
-                 multiple pds can sync in parallel). Added the reEnableDelay
-                 parameter to wait a minimum of 2 minutes between each re-enable
-                 as recommended by engineering.
- 06/15/2021      Fixing missing underscore in the $pd_list variable name on line 
-                 1668.
-                 Modified code that keeps track of processed protection domains
-                 when using -reEnableOnly.
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+11/03/2020 sb   Initial release.
+11/06/2020 sb   Added -reEnableOnly switch.
+02/06/2021 sb   Replaced username with get-credential
+02/16/2021 sb   Misc updates after first runs in production: moved DRS check to
+                PowerCLI commands as status in Prism cluster json object is
+                sometimes incorrect. Added code to force migrate powered off
+                virtual machines in a metro enabled container. Added code to
+                keep track of remote site cluster hypervisor hosts.  Added code
+                to display number of remaining virtual machines in a metro
+                enabled container.
+05/09/2021 sb   Added check for VM with DRS override that it is in the same
+                cluster and changed message accordingly.
+06/02/2021 sb   Adding check on failure handling method and adding step to
+                disable the protection domain if a Witness is not being used.
+                Added CUSTOMIZE markers to facilitate changing DRS naming
+                convention.
+06/03/2021 sb   Added the ability to use custom DRS object names where there is
+                1 rule per cluster (as opposed to 1 DRS rule per container).
+                Added code to export processed pd list and ability to specify
+                a csv file for -pd parameter (in order to facilitate failback).
+06/09/2021 sb   Changed if statement on line 1451 to add debug information when
+                vmhost comparison appears incorrect.
+                When re-enabling pds, moved the sync status outside of the main
+                processing loop to speed up execution of the process (now
+                multiple pds can sync in parallel). Added the reEnableDelay
+                parameter to wait a minimum of 2 minutes between each re-enable
+                as recommended by engineering.
+06/15/2021 sb   Fixing missing underscore in the $pd_list variable name on line 
+                1668.
+                Modified code that keeps track of processed protection domains
+                when using -reEnableOnly.
+07/01/2021 sb   Fixing an issue with checking pd is disabled even though
+                witness was in use.
+                Added maxConcurrentRepl parameter and associated control loops.
+08/23/2021 sb   Adding unplanned parameter and associated logic.
+08/31/2021 sb   Fixed issue when not specifying creds, issue with ping test on 
+                posh 5 and output issue on unplanned loop. Adding DisableOnly 
+                parameter to facilitate failback after unplanned failover
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
 
     if ($help) 
-    {
+    {#display online help
         get-help $myvarScriptName
         exit
     }
-    if ($History) {
+    if ($History) 
+    {#display release history
     $HistoryText
     exit
     }
@@ -692,7 +730,8 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             throw "$(get-date) [ERROR] Could not update the VMware.PowerCLI module : $($_.Exception.Message)"
         }
     }
-    if ($action) {
+    if ($action) 
+    {#import sshsessions module to support actions
         if (!(Get-Module SSHSessions)) {
             if (!(Import-Module SSHSessions)) {
                 Write-Host "$(get-date) [WARNING] We need to install the SSHSessions module!" -ForegroundColor Yellow
@@ -706,36 +745,38 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 
     # ignore SSL warnings
     Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
-    if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
-    $certCallback = @"
+    if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) 
+    {#ignore ssl warnings
+        $certCallback = @"
 using System;
 using System.Net;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 public class ServerCertificateValidationCallback
 {
-    public static void Ignore()
+public static void Ignore()
+{
+    if(ServicePointManager.ServerCertificateValidationCallback ==null)
     {
-        if(ServicePointManager.ServerCertificateValidationCallback ==null)
-        {
-            ServicePointManager.ServerCertificateValidationCallback += 
-                delegate
-                (
-                    Object obj, 
-                    X509Certificate certificate, 
-                    X509Chain chain, 
-                    SslPolicyErrors errors
-                )
-                {
-                    return true;
-                };
-        }
+        ServicePointManager.ServerCertificateValidationCallback += 
+            delegate
+            (
+                Object obj, 
+                X509Certificate certificate, 
+                X509Chain chain, 
+                SslPolicyErrors errors
+            )
+            {
+                return true;
+            };
     }
 }
+}
 "@
-    Add-Type $certCallback
+        Add-Type $certCallback
     }
     [ServerCertificateValidationCallback]::Ignore()
+    
     # add Tls12 support
     Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
     [Net.ServicePointManager]::SecurityProtocol = `
@@ -751,52 +792,53 @@ public class ServerCertificateValidationCallback
 
 #! customize here
 #region customization
-    #* You can add your specific DRS object names to the switch case in the
-    #* function below if you do not have a DRS rule per container but one per
-    #* storage cluster. Note that when you do this, you can only failover all
-    #* the pds of a given cluster at a time. When you specify a list of pds,
-    #* (such as during failback) you will have to make sure that this lists 
-    #* includes all the metro pds in the cluster.
-    Function GetDrsObjectNames
+#* You can add your specific DRS object names to the switch case in the
+#* function below if you do not have a DRS rule per container but one per
+#* storage cluster. Note that when you do this, you can only failover all
+#* the pds of a given cluster at a time. When you specify a list of pds,
+#* (such as during failback) you will have to make sure that this lists 
+#* includes all the metro pds in the cluster.
+Function GetDrsObjectNames
+{
+    param
+    (
+        [parameter(mandatory = $true)]
+        [string] 
+        $cluster_name
+    )
+
+    $drs_object_names = switch ($cluster_name)
     {
-        param
-        (
-            [parameter(mandatory = $true)]
-            [string] 
-            $cluster_name
-        )
-
-        $drs_object_names = switch ($cluster_name)
-        {
-            "LABCL101" {@{
-                drs_hg_name = "MB_hosts"
-                drs_vmg_name = "MB_VMs"
-                drs_rule_name = "VMs_Should_In_MB"
-            }}
-            "LABCL201" {@{
-                drs_hg_name = "GS_hosts"
-                drs_vmg_name = "GS_VMs"
-                drs_rule_name = "VMs_Should_In_GS"
-            }}
-        }
-        return $drs_object_names
+        "LABCL101" {@{
+            drs_hg_name = "MB_hosts"
+            drs_vmg_name = "MB_VMs"
+            drs_rule_name = "VMs_Should_In_MB"
+        }}
+        "LABCL201" {@{
+            drs_hg_name = "GS_hosts"
+            drs_vmg_name = "GS_VMs"
+            drs_rule_name = "VMs_Should_In_GS"
+        }}
     }
-    <#
-    $ntnx1_cluster_name = "LABCL101"
-    $drs_hg1_name = "MB_hosts"
-    $drs_vm1_name = "MB_VMs"
-    $drs_rule1_name = "VMs_Should_In_MB"
+    return $drs_object_names
+}
+<#
+$ntnx1_cluster_name = "LABCL101"
+$drs_hg1_name = "MB_hosts"
+$drs_vm1_name = "MB_VMs"
+$drs_rule1_name = "VMs_Should_In_MB"
 
-    $ntnx2_cluster_name = "LABCL201"
-    $drs_hg2_name = "GS_hosts"
-    $drs_vm2_name = "GS_VMs"
-    $drs_rule2_name = "VMs_Should_In_GS"
-    #>
+$ntnx2_cluster_name = "LABCL201"
+$drs_hg2_name = "GS_hosts"
+$drs_vm2_name = "GS_VMs"
+$drs_rule2_name = "VMs_Should_In_GS"
+#>
 #endregion
 
 #region parameters validation
     Write-Host ""       
     Write-Host "$(get-date) [STEP] Validating parameters ..." -ForegroundColor Magenta
+
     if ($action -and ($IsMacOS -or $IsLinux)) 
     {#we need to connect to CVM using SSH but we're not running this script from a Windows machine (only platform where ssh module used works)
         Throw "$(get-date) [ERROR] You can only use -action on a Windows based system for now! Exiting."
@@ -843,7 +885,14 @@ public class ServerCertificateValidationCallback
 
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        if ($prismCredentials.GetNetworkCredential().password -eq "") 
+        {
+            Throw "$(get-date) [ERROR] You have specified a blank password which is not authorized! Exiting."
+        }
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
@@ -880,10 +929,10 @@ public class ServerCertificateValidationCallback
         }
         $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
     }
-	else 
-	{#no vcenter creds were given
-		$vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
-	}
+    else 
+    {#no vcenter creds were given
+        $vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
+    }
 
     if ($action -and !$cvmCreds) 
     {#we have specified an action, but we did not specify cvm credentials
@@ -910,14 +959,24 @@ public class ServerCertificateValidationCallback
         $myvar_cvm_credentials = New-Object PSCredential $myvar_cvm_username, $myvar_cvm_secure_password
     }
 
-    if (!$timer) {$timer = 300}
+    if ($unplanned)
+    {
+        if ($action -or $DisableOnly -or $reEnableOnly)
+        {
+            Throw "$(get-date) [ERROR] You cannot use -unplanned with -action, -DisableOnly or -reEnableOnly!"
+        }
+    }
 
+    if (!$timer) {$timer = 300}
     if ((!$reEnableDelay) -or ($reEnableDelay -lt 120)) {$reEnableDelay = 120}
+    if (!$maxConcurrentRepl) {$maxConcurrentRepl = 3}
+    $timeout = 5 #timeout in seconds for remote site ping when using -unplanned
 #endregion
 
 #region execute
     Write-Host ""
     Write-Host "$(get-date) [STEP] Retrieving information from the Nutanix cluster and checking pre-requisites conditions are met ..." -ForegroundColor Magenta
+
     #region get info and check pre-requisites
         #* testing connection to prism
         #region GET cluster
@@ -939,28 +998,31 @@ public class ServerCertificateValidationCallback
         #region assign cluster name and vcenter ip
             $myvar_ntnx_cluster_name = $myvar_ntnx_cluster_info.name
             Write-Host "$(get-date) [DATA] Nutanix cluster name is $($myvar_ntnx_cluster_name)" -ForegroundColor White
-            $myvar_management_server = $myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
-            if ($myvar_management_server -is [array]) 
-            {#houston, we have a problem, there is more than one registered vcenter
-                Throw "$(get-date) [ERROR] There is more than 1 registered management server for cluster $($cluster). Exiting."
-            } 
-            else 
-            {
-                $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
-                Write-Host "$(get-date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor White
-                <# this check does not work in some environments where vcenter may have clusters where DRS is not enabled
-                if (!$reEnableOnly) 
-                {#we don't really care if DRS is not enabled if all we're doing is re-enabling replication
-                    if (!($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).drs_enabled) 
-                    {#houston we have a problem, drs is not enabled on this cluster
-                        Throw "$(get-date) [ERROR] DRS is not enabled on vCenter $($myvar_vcenter_ip). Exiting."
-                    } 
-                    else 
-                    {
-                        Write-Host "$(get-date) [DATA] DRS is enabled on vCenter $($myvar_vcenter_ip)" -ForegroundColor White
+            if (!$unplanned)
+            {#we don't need vcenter information if this is an unplanned failover
+                $myvar_management_server = $myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
+                if ($myvar_management_server -is [array]) 
+                {#houston, we have a problem, there is more than one registered vcenter
+                    Throw "$(get-date) [ERROR] There is more than 1 registered management server for cluster $($cluster). Exiting."
+                } 
+                else 
+                {
+                    $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
+                    Write-Host "$(get-date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor White
+                    <# this check does not work in some environments where vcenter may have clusters where DRS is not enabled
+                    if (!$reEnableOnly) 
+                    {#we don't really care if DRS is not enabled if all we're doing is re-enabling replication
+                        if (!($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).drs_enabled) 
+                        {#houston we have a problem, drs is not enabled on this cluster
+                            Throw "$(get-date) [ERROR] DRS is not enabled on vCenter $($myvar_vcenter_ip). Exiting."
+                        } 
+                        else 
+                        {
+                            Write-Host "$(get-date) [DATA] DRS is enabled on vCenter $($myvar_vcenter_ip)" -ForegroundColor White
+                        }
                     }
+                    #>
                 }
-                #>
             }
         #endregion
 
@@ -1023,10 +1085,31 @@ public class ServerCertificateValidationCallback
             {#if failover has been done already and all we're doing is maintenance or shutdown, the list of protection domains to process are those which are enabled
                 $myvar_ntnx_ma_active_pds = $myvar_ma_active_pds.entities | Where-Object {$_.metro_avail.status -eq "Enabled"}
             }
+            if ($unplanned)
+            {#the list of protection domains are those in standby
+                $myvar_ntnx_ma_standby_pds = $myvar_ma_active_pds.entities | Where-Object {($_.active -eq $false) -and ($_.metro_avail.role -eq "Standby")}
+            }
+            if ($DisableOnly)
+            {#the list of protection domains is those in decoupled status
+                $myvar_ntnx_ma_decoupled_pds = $myvar_ma_active_pds.entities | Where-Object {$_.metro_avail.status -eq "Decoupled"}
+            }
+            
             #building pd_list
             if ($pd -eq "all") 
             {
-                $myvar_pd_list_details = $myvar_ntnx_ma_active_pds
+                if ($unplanned)
+                {
+                    $myvar_pd_list_details = $myvar_ntnx_ma_standby_pds
+                }
+                elseif ($DisableOnly)
+                {
+                    $myvar_pd_list_details = $myvar_ntnx_ma_decoupled_pds
+                }
+                else 
+                {
+                    $myvar_pd_list_details = $myvar_ntnx_ma_active_pds
+                }
+                
                 foreach ($myvar_pd_detail in $myvar_pd_list_details) 
                 {
                     $myvar_pd_info = [ordered]@{
@@ -1039,20 +1122,49 @@ public class ServerCertificateValidationCallback
                     }
                     $pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
                 }
-                foreach ($myvar_ctr in $myvar_ntnx_ma_active_ctrs) 
+
+                if (!$unplanned)
                 {
-                    $myvar_ctr_info = [ordered]@{"name" = $myvar_ctr}
-                    $ctr_list.Add((New-Object PSObject -Property $myvar_ctr_info)) | Out-Null
+                    foreach ($myvar_ctr in $myvar_ntnx_ma_active_ctrs) 
+                    {
+                        $myvar_ctr_info = [ordered]@{"name" = $myvar_ctr}
+                        $ctr_list.Add((New-Object PSObject -Property $myvar_ctr_info)) | Out-Null
+                    }
                 }
             } 
             else 
-            {#make sure all specified protection domain is indeed active on this cluster
+            {#build custom list of protection domains to process
                 foreach ($pd_name in $pd_names_list) 
                 {
-                    if (!$skipfailover -and ($pd_name -notin $myvar_ntnx_ma_active_pds.name)) 
+                    if (!$skipfailover -and ($pd_name -notin $myvar_ntnx_ma_active_pds.name) -and !$unplanned) 
                     {
                         Throw "$(get-date) [ERROR] Protection domain $($pd_name) was not found active on cluster $($cluster). Exiting."
+                        if ($DisableOnly -and ($pd_name -notin $myvar_ntnx_ma_decoupled_pds))
+                        {
+                            Throw "$(get-date) [ERROR] Protection domain $($pd_name) is not decoupled on cluster $($cluster). Exiting."
+                        }
                     } 
+                    elseif ($unplanned)
+                    {
+                        if ($pd_name -notin $myvar_ntnx_ma_standby_pds)
+                        {
+                            Throw "$(get-date) [ERROR] Protection domain $($pd_name) is not a standby protection domain on cluster $($cluster). Exiting."
+                        }
+                        else 
+                        {
+                            Write-Host "$(get-date) [DATA] Protection domain $($pd_name) is on standby on Nutanix cluster $($cluster)" -ForegroundColor White
+                            $myvar_pd_details = $myvar_ntnx_ma_standby_pds | Where-Object {$_.name -eq $pd_name}
+                            $myvar_pd_info = [ordered]@{
+                                "name" = $myvar_pd_details.name;
+                                "role" = $myvar_pd_details.metro_avail.role;
+                                "remote_site" = $myvar_pd_details.metro_avail.remote_site;
+                                "storage_container" = $myvar_pd_details.metro_avail.storage_container;
+                                "status" = $myvar_pd_details.metro_avail.status;
+                                "failure_handling" = $myvar_pd_details.metro_avail.failure_handling
+                            }
+                            $pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
+                        }
+                    }
                     else 
                     {
                         Write-Host "$(get-date) [DATA] Protection domain $($pd_name) was found active on Nutanix cluster $($cluster)" -ForegroundColor White
@@ -1071,8 +1183,9 @@ public class ServerCertificateValidationCallback
                     }
                 }
             }
-            #checking pds are in status enabled
-            if (!$skipfailover -and !$reEnableOnly)
+            
+            #checking specified pds can be processed 
+            if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
             { 
                 Write-Host "$(get-date) [INFO] Checking all active metro protection domain are in status enabled..." -ForegroundColor Green
                 foreach ($pd_item in $pd_list) 
@@ -1083,6 +1196,18 @@ public class ServerCertificateValidationCallback
                     }
                 }
                 Write-Host "$(get-date) [DATA] All active metro protection domain are in status enabled on cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
+            }
+            elseif ($unplanned) 
+            {#double check pds are in disabled state and not protected by witness
+                Write-Host "$(get-date) [INFO] Checking all specified metro protection domain are in status disabled and not protected by witness..." -ForegroundColor Green
+                foreach ($pd_item in $pd_list) 
+                {
+                    if (($pd_item.status -ne "disabled") -and ($pd_item.failure_handling -eq "witness")) 
+                    {
+                        Throw "$(get-date) [ERROR] Protection domain $($pd_item.name) is in status $($pd_item.status) and failure handling is $($pd_item.failure_handling). Exiting."
+                    }
+                }
+                Write-Host "$(get-date) [DATA] All specified metro protection domain can be processed for unplanned failover on cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
             }
         #endregion
 
@@ -1115,60 +1240,79 @@ public class ServerCertificateValidationCallback
             $myvar_remote_site_ip = (($myvar_remote_sites.entities | Where-Object {$_.name -eq $remote_site_name}).remote_ip_ports).psobject.properties.name
             Write-Host "$(get-date) [DATA] Remote site $($remote_site_name) ip address is $($myvar_remote_site_ip)" -ForegroundColor White
 
-            #* connecting to remote site cluster
-            Write-Host "$(get-date) [INFO] Retrieving cluster information from Nutanix cluster $($myvar_remote_site_ip) on remote site $($remote_site_name) ..." -ForegroundColor Green
-            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $myvar_remote_site_ip
-            $method = "GET"
-            try 
-            {
-                $myvar_ntnx_remote_cluster_info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-            }
-            catch
-            {
-                throw "$(get-date) [ERROR] Could not retrieve cluster information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
-            }
-            Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
+            if (!$unplanned)
+            {#if this is an unplanned failover, we're not expecting the remote site to be available                
+                #* connecting to remote site cluster
+                Write-Host "$(get-date) [INFO] Retrieving cluster information from Nutanix cluster $($myvar_remote_site_ip) on remote site $($remote_site_name) ..." -ForegroundColor Green
+                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $myvar_remote_site_ip
+                $method = "GET"
+                try 
+                {
+                    $myvar_ntnx_remote_cluster_info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                }
+                catch
+                {
+                    throw "$(get-date) [ERROR] Could not retrieve cluster information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
+                }
+                Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
 
-            #* figuring out remote cluster name and vcenter ip
-            $myvar_ntnx_remote_cluster_name = $myvar_ntnx_remote_cluster_info.name
-            Write-Host "$(get-date) [DATA] Nutanix cluster name for remote site $($remote_site_name) is $($myvar_ntnx_remote_cluster_name)" -ForegroundColor White
-            $myvar_remote_management_server = $myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
-            if ($myvar_remote_management_server -is [array])
-            {#houston, we have a problem, there is more than one registered vcenter
-                Throw "$(get-date) [ERROR] There is more than 1 registered management server for remote cluster $($myvar_ntnx_remote_cluster_name). Exiting."
-            } 
+                #* figuring out remote cluster name and vcenter ip
+                $myvar_ntnx_remote_cluster_name = $myvar_ntnx_remote_cluster_info.name
+                Write-Host "$(get-date) [DATA] Nutanix cluster name for remote site $($remote_site_name) is $($myvar_ntnx_remote_cluster_name)" -ForegroundColor White
+                $myvar_remote_management_server = $myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
+                if ($myvar_remote_management_server -is [array])
+                {#houston, we have a problem, there is more than one registered vcenter
+                    Throw "$(get-date) [ERROR] There is more than 1 registered management server for remote cluster $($myvar_ntnx_remote_cluster_name). Exiting."
+                } 
+                else 
+                {
+                    $myvar_remote_site_vcenter_ip = ($myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
+                    Write-Host "$(get-date) [DATA] vCenter IP address for remote Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_remote_site_vcenter_ip)" -ForegroundColor White
+                    if ($myvar_remote_site_vcenter_ip -ne $myvar_vcenter_ip) {#houston we have a problem, both sites have different registered vcenters
+                        Throw "$(get-date) [ERROR] Nutanix clusters $($myvar_ntnx_cluster_name) and $($myvar_ntnx_remote_cluster_name) have different registered vCenter servers: $($myvar_vcenter_ip) and $($myvar_remote_site_vcenter_ip). Exiting."
+                    } else {
+                        Write-Host "$(get-date) [DATA] Nutanix clusters $($myvar_ntnx_cluster_name) and $($myvar_ntnx_remote_cluster_name) have the same registered vCenter server." -ForegroundColor White
+                    }
+                }
+
+                #* getting remote site hosts information
+                #region GET hosts
+                    Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $($myvar_remote_site_ip) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $myvar_remote_site_ip
+                    $method = "GET"
+                    try 
+                    {
+                        $myvar_remote_ntnx_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve hosts information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
+                    $myvar_remote_ntnx_hosts_ips = ($myvar_remote_ntnx_hosts.entities).hypervisor_address   
+                #endregion
+            }
             else 
-            {
-                $myvar_remote_site_vcenter_ip = ($myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
-                Write-Host "$(get-date) [DATA] vCenter IP address for remote Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_remote_site_vcenter_ip)" -ForegroundColor White
-                if ($myvar_remote_site_vcenter_ip -ne $myvar_vcenter_ip) {#houston we have a problem, both sites have different registered vcenters
-                    Throw "$(get-date) [ERROR] Nutanix clusters $($myvar_ntnx_cluster_name) and $($myvar_ntnx_remote_cluster_name) have different registered vCenter servers: $($myvar_vcenter_ip) and $($myvar_remote_site_vcenter_ip). Exiting."
-                } else {
-                    Write-Host "$(get-date) [DATA] Nutanix clusters $($myvar_ntnx_cluster_name) and $($myvar_ntnx_remote_cluster_name) have the same registered vCenter server." -ForegroundColor White
+            {#this is an unplanned failover, so add a test here to see if the remote site is pinging
+                try 
+                {
+                    $myvar_ping_result = Test-Connection -Count 3 -TargetName $myvar_remote_site_ip -Quiet -ErrorAction Stop 
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not ping $myvar_remote_site_ip : $($_.Exception.Message)"
+                }
+                
+                if ($myvar_ping_result)
+                {#ping was positive so the remote site is up
+                    throw "$(get-date) [ERROR] Remote site is responding to ping on IPv4 $($myvar_remote_site_ip). You cannot do an unplanned failover if the remote site is up. Exiting!"
                 }
             }
-
-            #* getting remote site hosts information
-            #region GET hosts
-            Write-Host "$(get-date) [INFO] Retrieving hosts information from Nutanix cluster $($myvar_remote_site_ip) ..." -ForegroundColor Green
-            $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $myvar_remote_site_ip
-            $method = "GET"
-            try 
-            {
-                $myvar_remote_ntnx_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-            }
-            catch
-            {
-                throw "$(get-date) [ERROR] Could not retrieve hosts information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
-            }
-            Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
-            $myvar_remote_ntnx_hosts_ips = ($myvar_remote_ntnx_hosts.entities).hypervisor_address   
-        #endregion
         #endregion
 
         #* trying to connect to vcenter
         #region connect-viserver
-            if (!$reEnableOnly)
+            if (!$reEnableOnly -and !$unplanned -and !$DisableOnly)
             {
                 Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
                 try 
@@ -1251,15 +1395,15 @@ public class ServerCertificateValidationCallback
         }
         
     #endregion
-    
+
     #region move vms using drs
         #* identify HA/DRS cluster and making sure HA and DRS are enabled
         #region figure out vsphere cluster name ($myvar_vsphere_cluster_name)
-            if (!$reEnableOnly)
+            if (!$reEnableOnly -and !$unplanned -and !$DisableOnly)
             {#we are not just renabling pds, so figure out the vcenter information
                 Write-Host ""
                 Write-Host "$(get-date) [STEP] Figuring out information required to move metro protected virtual machines from vmhosts in $($myvar_ntnx_cluster_name) to vmhosts in $($myvar_ntnx_remote_cluster_name) for specified metro availability protection domains..." -ForegroundColor Magenta
-    
+
                 #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
                 $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
                 $myvar_remote_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the remote Nutanix cluster
@@ -1360,7 +1504,7 @@ public class ServerCertificateValidationCallback
             }
         #endregion
         
-        if (!$skipfailover -and !$reEnableOnly)
+        if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
         {#we are not skipping failover nor reenabling pds only
             #* find matching drs groups and rule(s)
             #region matching drs groups and rules
@@ -1554,11 +1698,11 @@ public class ServerCertificateValidationCallback
     #endregion
         
     #region planned failover of the protection domain(s)
-        if (!$skipfailover -and !$reEnableOnly)
+        if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
         {
             #export pd_list to csv here
             $myvar_csv_export = $myvar_ntnx_cluster_name + "_pd_list.csv"
-            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $() in the current directory..." -ForegroundColor Green
+            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
             try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
             catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
 
@@ -1623,11 +1767,37 @@ public class ServerCertificateValidationCallback
                         throw "$(get-date) [ERROR] Could not disable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully disabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)." -ForegroundColor Cyan
-                }
 
-                #* check pd status is disabled
+                    #* check pd status is disabled
+                    Do 
+                    {#check pd status is disabled
+                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                        $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                        $method = "GET"
+                        try 
+                        {
+                            $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        }
+                        catch
+                        {
+                            throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                        }
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                        $myvar_pd_status = ($myvar_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
+                        if ($myvar_pd_status -ne "Disabled") 
+                        {
+                            Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not disabled yet but has status $($myvar_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                            Start-Sleep 15
+                        }
+                    } While ($myvar_pd_status -ne "Disabled")
+                    Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
+                }
+                
+                #control loop here to make sure there aren't too many syncing metro pds already
                 Do 
-                {
+                {#make sure there aren't too many replications running in parallel already otherwise wait
+                    #retrieve protection domains
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
                     $method = "GET"
@@ -1641,15 +1811,14 @@ public class ServerCertificateValidationCallback
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
 
-                    $myvar_pd_status = ($myvar_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
-                    if ($myvar_pd_status -ne "Disabled") 
+                    $myvar_syncing_pds = ($myvar_pds.entities | Where-Object {$_.metro_avail.status -eq "SYNCHRONIZING"}).count
+                    Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
+                    if ($myvar_syncing_pds -ge $maxConcurrentRepl)
                     {
-                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not disabled yet but has status $($myvar_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
-                        Start-Sleep 15
+                        Write-Host "$(get-date) [WARN] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                        Start-Sleep 60
                     }
-                } While ($myvar_pd_status -ne "Disabled")
-                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
-                
+                } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
 
                 #* step 3 of 3: re-enable pd on remote
                 Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
@@ -1670,7 +1839,7 @@ public class ServerCertificateValidationCallback
             }
 
             foreach ($myvar_pd in $pd_list)
-            {#waiting for all pds to be in sync after habing been re-enabled. This has been moved out of the other main loop in order to enable parallel processing of pd re-enablement.
+            {#waiting for all pds to be in sync after having been re-enabled. This has been moved out of the other main loop in order to enable parallel processing of pd re-enablement.
                 #* check remote pd is enabled
                 Do 
                 {
@@ -1734,6 +1903,31 @@ public class ServerCertificateValidationCallback
                     $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
                     Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name).  Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
                     Start-Sleep $reEnableDelay
+
+                    Do 
+                    {#make sure there aren't too many replications running in parallel already otherwise wait
+                        #retrieve protection domains
+                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                        $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                        $method = "GET"
+                        try 
+                        {
+                            $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        }
+                        catch
+                        {
+                            throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                        }
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                        $myvar_syncing_pds = ($myvar_pds.entities | Where-Object {$_.metro_avail.status -eq "SYNCHRONIZING"}).count
+                        Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
+                        if ($myvar_syncing_pds -ge $maxConcurrentRepl)
+                        {
+                            Write-Host "$(get-date) [WARN] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                            Start-Sleep 60
+                        }
+                    } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
                 }
                 else 
                 {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
@@ -1750,28 +1944,160 @@ public class ServerCertificateValidationCallback
             foreach ($myvar_pd in $myvar_processed_pd_list)
             {#checking for enablement status outside of main processing loop to speed up processing
                 Do 
+                {
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                    $method = "GET"
+                    try 
                     {
-                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-                        $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
-                        $method = "GET"
-                        try 
-                        {
-                            $myvar_cluster_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                        }
-                        catch
-                        {
-                            throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
-                        }
-                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+                        $myvar_cluster_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
 
-                        $myvar_cluster_pd_status = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
-                        if ($myvar_cluster_pd_status -ne "Enabled") 
+                    $myvar_cluster_pd_status = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
+                    if ($myvar_cluster_pd_status -ne "Enabled") 
+                    {
+                        $myvar_cluster_pd_ongoing_replication = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).ongoing_replication_count
+                        if ($myvar_cluster_pd_ongoing_replication -eq 0)
                         {
-                            Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not enabled yet. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
-                            Start-Sleep 15
+                            throw "$(get-date) [ERROR] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is still not enabled and there are currently $($myvar_cluster_pd_ongoing_replication) ongoing replications, so we have to assume replication failed! Exiting!"
                         }
-                    } While ($myvar_cluster_pd_status -ne "Enabled")
-                    Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is enabled now." -ForegroundColor White
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not enabled yet. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Start-Sleep 15
+                    }
+                } While ($myvar_cluster_pd_status -ne "Enabled")
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is enabled now." -ForegroundColor White
+            }
+        }
+    #endregion
+    
+    #region DisableOnly
+        if ($DisableOnly)
+        {
+            [System.Collections.ArrayList]$myvar_processed_pd_list = New-Object System.Collections.ArrayList($null)
+            foreach ($myvar_pd in $pd_list) 
+            {#main processing loop
+                if (($myvar_pd.role -eq "Active") -and ($myvar_pd.status -eq "Decoupled")) 
+                {
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Magenta
+                    #* disable specified protection domains on cluster
+                    Write-Host "$(get-date) [INFO] Disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_disable" -f $cluster,$myvar_pd.name
+                    $method = "POST"
+                    $content = @{}
+                    $body = (ConvertTo-Json $content)
+                    try 
+                    {
+                        $myvar_pd_disable = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not disable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    $myvar_pd_info = [ordered]@{
+                        "name" = $myvar_pd.name;
+                        "role" = $myvar_pd.role;
+                        "remote_site" = $myvar_pd.remote_site;
+                        "storage_container" = $myvar_pd.storage_container;
+                        "status" = $myvar_pd.status;
+                        "failure_handling" = $myvar_pd.failure_handling
+                    }
+                    $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
+                }
+                else 
+                {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
+                    if ($myvar_pd.role -ne "Active")
+                    {
+                        Write-Host "$(get-date) [INFO] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not active. Skipping." -ForegroundColor Yellow
+                    }
+                    else {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in decoupled status so we will NOT try to disable it. Current status is $($myvar_pd.status)." -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            foreach ($myvar_pd in $myvar_processed_pd_list)
+            {#checking for disabled status outside of main processing loop to speed up processing
+                Do 
+                {
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                    $method = "GET"
+                    try 
+                    {
+                        $myvar_cluster_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                    $myvar_cluster_pd_status = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
+                    if ($myvar_cluster_pd_status -ne "Disabled") 
+                    {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not disabled yet. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Start-Sleep 15
+                    }
+                } While ($myvar_cluster_pd_status -ne "Disabled")
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
+            }
+        }
+    #endregion
+
+    #region unplanned
+        if ($unplanned)
+        {
+            $myvar_csv_export = "unplanned_failover_pd_list.csv"
+            Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
+            try {$pd_list | Export-Csv -NoTypeInformation .\$myvar_csv_export}
+            catch {Write-Host "$(get-date) [WARNING] Could not export list of protection domains to $($myvar_csv_export): $($_.Exception.Message)" -ForegroundColor Yellow}
+
+            foreach ($myvar_pd in $pd_list) 
+            {#main processing loop
+                #* trigger pd promotion
+                Write-Host "$(get-date) [INFO] Promoting protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/promote?force=true" -f $cluster,$myvar_pd.name
+                $method = "POST"
+                try 
+                {
+                    $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                }
+                catch
+                {
+                    throw "$(get-date) [ERROR] Could not promote protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                }
+                Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)." -ForegroundColor Cyan
+                
+                #* check pd is active
+                Do 
+                {
+                    Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                    $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                    $method = "GET"
+                    try 
+                    {
+                        $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                    $myvar_pd_role = ($myvar_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.role
+                    if ($myvar_pd_role -ne "Active") 
+                    {
+                        Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) does not have active role yet but role $($myvar_pd_role). Waiting 15 seconds..." -ForegroundColor Yellow
+                        Start-Sleep 15
+                    }
+                } While ($myvar_pd_role -ne "Active")
+                Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) has active role now." -ForegroundColor White
             }
         }
     #endregion
@@ -1806,6 +2132,7 @@ public class ServerCertificateValidationCallback
             }
         }
     #endregion
+
 #endregion
 
 #region cleanup
@@ -1813,7 +2140,7 @@ public class ServerCertificateValidationCallback
     Write-Host "$(get-date) [STEP] Cleaning up ..." -ForegroundColor Magenta
 
     #disconnect viserver
-    if (!$reEnableOnly)
+    if (!$reEnableOnly -and !$DisableOnly -and !$unplanned)
     {
         Write-Host "$(get-date) [INFO] Disconnecting from vCenter $($myvar_vcenter_ip)" -ForegroundColor Green
         $myvar_vcenter_disconnect_command = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue
@@ -1833,16 +2160,16 @@ public class ServerCertificateValidationCallback
     }
 
     #let's figure out how much time this all took
-	Write-Host "$(get-date) [SUM] total processing time: $($myvar_elapsed_time.Elapsed.ToString())" -ForegroundColor Magenta
-	
-	#cleanup after ourselves and delete all custom variables
-	Remove-Variable myvar* -ErrorAction SilentlyContinue
-	Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
-	Remove-Variable help -ErrorAction SilentlyContinue
+    Write-Host "$(get-date) [SUM] total processing time: $($myvar_elapsed_time.Elapsed.ToString())" -ForegroundColor Magenta
+
+    #cleanup after ourselves and delete all custom variables
+    Remove-Variable myvar* -ErrorAction SilentlyContinue
+    Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+    Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
-	Remove-Variable log -ErrorAction SilentlyContinue
-	Remove-Variable cluster -ErrorAction SilentlyContinue
-	Remove-Variable username -ErrorAction SilentlyContinue
-	Remove-Variable password -ErrorAction SilentlyContinue
+    Remove-Variable log -ErrorAction SilentlyContinue
+    Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable username -ErrorAction SilentlyContinue
+    Remove-Variable password -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
