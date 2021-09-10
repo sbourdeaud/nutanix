@@ -1,928 +1,1090 @@
 <#
-  .SYNOPSIS
-  AHV Sync Rep with flow, this script makes sure the categories, including its values and Flow Rules exist on the target prism.
-  .DESCRIPTION
-  Syncs Security Policys / Rules between 2 PCs. single direction. Target rules are overwritten only when changed on the source within an interval.
-  All categories on the source will be created on the target.
-  If target category exists, values are not overwritten, but only added if missing.
-  Target Categories / Values are not renamed for compatibilty reasons.
-  Requires credentials to be installed in a working dir. Use Mode InstallCreds to install the credentials.
-  Sources are synced, Rule state is synced.
-  Changing the rule on the source will automatically delete / create the rule on the target, if the change is within the time interval set.
-  Synced rules on target side should not be changed while the sync is active.
-  DR Relationship is not required for testing this script.
-  Identity based security rules cannot be synced to a random target, it needs to have the identical AD Connected.
-  This is however untested.
-  
-  .PARAMETER SourcePCIP
-  Source IP address of the Prism Central Instance.
-  .PARAMETER TargetPCIP
-  Target IP address of the Prism Central Instance.
-  .PARAMETER Mode
-  Scan, Scans source, and target and shows the differences or possible changes to be made.
-  Execute, Scan + make the changes needed on the target.
-  .PARAMETER SourceRuleSearchStr
-  This is a regular expression search string. Rules that should be synchronized should follow this naming convention.
-  .PARAMETER TargetRulePrefix
-  This is prefix that is inserted before the target rule name.
-  .PARAMETER RuleSyncHourChanged
-  This value should be in negative notation "-1", but also greater than the interval in which the script is scheduled.
-  Rules that are changed in this interval will be overwritten.
-  Rules are not compared. Source always wins.
-  We do not overwrite the rule unless its changed within this time period.
-  .PARAMETER EULA
-  Use at your own risk, not Nutanix owned software.
-  .INPUTS
-  This tool does not support pipeline input operations
-  .OUTPUTS
-  Not applicable.
-  .EXAMPLE
-  .\Flow_Rule_Sync.ps1 -mode installcreds
-  Installs the credentials for Source and Target PCs. Stores the secure credential files in a working dir.
-  These credential files can only be decryped on this pc, and by the same user that created them.
-  .EXAMPLE
-  .\Flow_Rule_Sync.ps1 -mode execute -SourcePCIP 10.10.0.32 -TargetPCIP 10.42.17.40 -EULA $true
-  Example for scheduled task
-  .EXAMPLE
-  .\Flow_Rule_Sync.ps1 -mode execute
-  Installs the credentials for Source and Target PCs. Stores the secure credential files in a working dir.
-  These credential files can only be decryped on this pc, and by the same user that created them.
+.SYNOPSIS
+  Use this script to synchronize Nutanix Flow rules between two Prism Central instances.
+.DESCRIPTION
+  Given a source and target Prism Central, a category and a rule prefix, script will synchronize Nutanix Flow rules between both Prism Central (from source to target).
+.PARAMETER help
+  Displays a help message (seriously, what did you think this was?)
+.PARAMETER history
+  Displays a release history for this script (provided the editors were smart enough to document this...)
+.PARAMETER log
+  Specifies that you want the output messages to be written in a log file as well as on the screen.
+.PARAMETER debugme
+  Turns off SilentlyContinue on unexpected error messages.
+.PARAMETER sourcePc
+  Source Prism Central fully qualified domain name or IP address.
+.PARAMETER targetPc
+  Target Prism Central fully qualified domain name or IP address.
+.PARAMETER prismCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER action
+  Can be either scan (to view changes only) or sync (to synchronize changes from source to target).
+.PARAMETER prefix
+  Prefix of Flow rule names on source to consider (this prevents deleting rules that need to exist only on target).
+.EXAMPLE
+.\Invoke-FlowRuleSync.ps1 -sourcePc pc1.local -targetPc pc2.local -prismCreds myadcreds -action sync -prefix flowPc1
+Synchronize all rules starting with flowPc1 from pc1 to pc2:
+.LINK
+  http://www.nutanix.com/services
+.NOTES
+  Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+  Revision: September 10th 2021
 #>
 
 
-#region parameter
-  Param 
-  (        
-    [String] $SourcePCIP               = "Enter Me",
-    [String] $TargetPCIP               = "Enter Me",
-    [String][ValidateSet("Scan","Execute","InstallCreds")] $Mode = "Scan",      # Scan, Execute, InstallCreds
-    [bool]   $EULA                     = $false,
-    [string] $workingdir               = "~\appdata\local\temp\",
-    [string] $SourceRuleSearchStr      = "AZ01",
-    [string] $TargetRulePrefix         = "AZ02",
-    [int]    $RuleSyncHourChanged      = -5 # Only Replace rules if they were edited in the source PC within the past x hours. Value should be greater than the script interval, negative value please
-  )
-#endregion
-
-
-#region prompt section
-  [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-  [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.VisualBasic') | Out-Null
-  Add-Type -AssemblyName PresentationFramework
-  $global:debug = 1
+#region parameters
+    Param
+    (
+        #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
+        [parameter(mandatory = $false)] [switch]$help,
+        [parameter(mandatory = $false)] [switch]$history,
+        [parameter(mandatory = $false)] [switch]$log,
+        [parameter(mandatory = $false)] [switch]$debugme,
+        [parameter(mandatory = $true)] [string]$sourcePc,
+        [parameter(mandatory = $true)] [string]$targetPc,
+        [parameter(mandatory = $true)] [string]$prefix,
+        [parameter(mandatory = $false)][ValidateSet("scan","sync")] [string]$action="scan",
+        [parameter(mandatory = $false)] $prismCreds
+    )
 #endregion
 
 
 #region functions
-Function PSR-SSL-Fix {
+    #this function is used to process output to console (timestamped and color coded) and log file
+    function Write-LogOutput
+    {
+    <#
+    .SYNOPSIS
+    Outputs color coded messages to the screen and/or log file based on the category.
 
-  try {
-  add-type @"
-    using System.Net;
-    using System.Security.Cryptography.X509Certificates;
-    public class TrustAllCertsPolicy : ICertificatePolicy {
-        public bool CheckValidationResult(ServicePoint srvPoint, X509Certificate certificate,
-                                          WebRequest request, int certificateProblem) {
-            return true;
+    .DESCRIPTION
+    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+
+    .PARAMETER Category
+    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+
+    .PARAMETER Message
+    This is the actual message you want to display.
+
+    .PARAMETER LogFile
+    If you want to log output to a file as well, use logfile to pass the log file full path name.
+
+    .NOTES
+    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+    .EXAMPLE
+    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
+    Displays an error message.
+
+    .LINK
+    https://github.com/sbourdeaud
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param
+    (
+        [Parameter(Mandatory)]
+        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
+        [string]
+        $Category,
+
+        [string]
+        $Message,
+
+        [string]
+        $LogFile
+    )
+
+    process
+    {
+        $Date = get-date #getting the date so we can timestamp the output entry
+        $FgColor = "Gray" #resetting the foreground/text color
+        switch ($Category) #we'll change the text color depending on the selected category
+        {
+            "INFO" {$FgColor = "Green"}
+            "WARNING" {$FgColor = "Yellow"}
+            "ERROR" {$FgColor = "Red"}
+            "SUM" {$FgColor = "Magenta"}
+            "SUCCESS" {$FgColor = "Cyan"}
+            "STEP" {$FgColor = "Magenta"}
+            "DEBUG" {$FgColor = "White"}
+            "DATA" {$FgColor = "Gray"}
         }
-     }
-"@
 
-  [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Ssl3, [Net.SecurityProtocolType]::Tls, [Net.SecurityProtocolType]::Tls11, [Net.SecurityProtocolType]::Tls12
-
-  write-log -message "SSL Certificate has been loaded." 
-
-  } catch {
-
-    write-log -message "SSL Certificate fix is already loaded." -sev "WARN"
-
-  }
-}
-
-Function write-log {
-  param (
-  $message,
-  $sev = "INFO",
-  $D = 0
-  ) 
-  ## This write log module is designed for nutanix calm output
-  if ($sev -eq "INFO" -and $Debug -ge $D){
-    write-host "'$(get-date -format "dd-MMM-yy HH:mm:ss")' | INFO  | $message "
-  } elseif ($sev -eq "WARN"){
-    write-host "'$(get-date -format "dd-MMM-yy HH:mm:ss")' |'WARN' | $message " -ForegroundColor  Yellow
-  } elseif ($sev -eq "ERROR"){
-    write-host "'$(get-date -format "dd-MMM-yy HH:mm:ss")' |'ERROR'| $message " -ForegroundColor  Red
-    [System.Reflection.Assembly]::LoadWithPartialName("System.Windows.Forms")
-    [System.Windows.Forms.MessageBox]::Show($message,"GuestVM Tools stopped", 'OK' , 'ERROR')
-    sleep 5
-    [Environment]::Exit(1)
-  } elseif ($sev -eq "CHAPTER"){
-    write-host ""
-    write-host "####################################################################"
-    write-host "#                                                                  #"
-    write-host "#     $message"
-    write-host "#                                                                  #"
-    write-host "####################################################################"
-    write-host ""
-  }
-} 
-
-function Get-FunctionName {
-  param (
-    [int]$StackNumber = 1
-  ) 
-    return [string]$(Get-PSCallStack)[$StackNumber].FunctionName
-}
-
-function Test-IsGuid{
-  [OutputType([bool])]
-  param
-  (
-    [Parameter(Mandatory = $true)]
-    [string]$ObjectGuid
-  )
-  
-  # Define verification regex
-  [regex]$guidRegex = '(?im)^[{(]?[0-9A-F]{8}[-]?(?:[0-9A-F]{4}[-]?){3}[0-9A-F]{12}[)}]?$'
-
-  # Check guid against regex
-  return $ObjectGuid -match $guidRegex
-}
-
-Function REST-Query-PrismCentral {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser
-  )
-  write-log -message "Building Credential object"
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-
-  write-log -message "Getting PC Object."
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/prism_central"
-
-  $JSON = $Payload | convertto-json
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "GET" -headers $headers -ea:4;
-  } catch {
-    sleep 10
-    $task = Invoke-RestMethod -Uri $URL -method "GET" -headers $headers
-  }
-
-  write-log -message "We found '$($task.entities.count)' clusters"
-
-  Return $task
-}
-
-Function REST-Query-Security-Rules {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser
-  )
-  write-log -message "Building Credential object"
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-
-  write-log -message "Query all security rules"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/network_security_rules/list"
-  $Payload= @{
-    kind="network_security_rule"
-    offset=0
-    length=99999
-  } 
-
-  $JSON = $Payload | convertto-json
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "post" -body $JSON -ContentType 'application/json' -headers $headers -ea:4;
-  } catch {$error.clear()
-    sleep 10
-    $task = Invoke-RestMethod -Uri $URL -method "post" -body $JSON -ContentType 'application/json' -headers $headers
-  }
-  if ($task.entities.count -eq 0){
-    do {
-      $task = Invoke-RestMethod -Uri $URL -method "post" -body $JSON -ContentType 'application/json' -headers $headers -ea:4;
-      sleep 30
-      $count++
-
-      write-log -message "Cycle $count Getting Security Rules, current items found is '$($task.entities.count)'"
-    } until ($count -ge 10 -or $task.entities.count -ge 1)
-  }
-  write-log -message "We found '$($task.entities.count)' Security Rules"
-
-  Return $task
-} 
-
-Function REST-Add-Security-Rule {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser,
-    [object] $Rule,
-    [string] $NewName,
-    [string] $NewDescription
-  )
-  write-log -message "Building Credential object"
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-
-  write-log -message "Preparing rule for upload."
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/network_security_rules"
-  $Rule.psobject.members.remove("Status")
-  $rule.metadata.psobject.members.remove("uuid")
-  $rule.spec.name = $NewName
-  $rule.spec.description = $NewDescription
-  $rule.spec.resources.app_rule.outbound_allow_list | %{$_.PSObject.Properties.remove("rule_id")}
-  $rule.spec.resources.app_rule.outbound_allow_list | %{$_.PSObject.Properties.Remove("service_group_list")}
-  $rule.spec.resources.app_rule.inbound_allow_list | %{$_.PSObject.Properties.remove("rule_id")}
-  $rule.spec.resources.app_rule.inbound_allow_list | %{$_.PSObject.Properties.Remove("service_group_list")}
-
-  $JSON = $Rule | convertto-json -depth 100
-
-  try{
- #   Write-Host $JSON
-    $task = Invoke-RestMethod -Uri $URL -method "post" -body $JSON -ContentType 'application/json' -headers $headers -ea:4;
-  } catch {$error.clear()
-    sleep 10
-    $task = Invoke-RestMethod -Uri $URL -method "post" -body $JSON -ContentType 'application/json' -headers $headers
-  }
-
-  Return $task
-} 
-
-Function REST-Delete-Security-Rule {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser,
-    [object] $Rule
-  )
-  write-log -message "Building Credential object"
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-
-  write-log -message "Deleting Rule '$($Rule.status.name)' with uuid '$($Rule.metadata.uuid)'"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/network_security_rules/$($Rule.metadata.uuid)"
-
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "DELETE" -headers $headers -ea:4;
-  } catch {$error.clear()
-    sleep 10
-    $task = Invoke-RestMethod -Uri $URL -method "DELETE" -headers $headers
-  }
-
-  Return $task
-} 
-
-Function REST-Category-Value-Create {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser,
-    [object] $CatObj,
-    [string] $Value
-  )
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-  
-  write-log -message "Creating Value '$Value' on Category '$($CatObj.name)'"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/categories/$($CatObj.name)/$($Value)"
-
-  $Payload= @"
-{
-      "value": "$Value",
-      "description": "$($CatObj.description)"
-}
-"@
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "PUT" -body $Payload -ContentType 'application/json' -headers $headers -ea:4;
-  } catch {
-    ;$FName = Get-FunctionName;write-log -message "Error Caught on function $FName" -sev "WARN"
-    $task = Invoke-RestMethod -Uri $URL -method "PUT" -body $Payload -ContentType 'application/json' -headers $headers
-  }
-
-  Return $task
-} 
-
-Function REST-Category-Create {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser,
-    [string] $Name
-  )
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-  
-  write-log -message "Creating / Updating Category '$($Name)'"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/categories/$($Name)"
-  ## What is cardinality.. Do we care.. We only create once. We dont update.
-  $Payload= @"
-{
-  "api_version": "3.1.0",
-  "description": "Created by 1-click-flow-Sync.",
-  "capabilities": {
-    "cardinality": 64
-  },
-  "name": "$($Name)"
-}
-"@
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "PUT" -body $Payload -ContentType 'application/json' -headers $headers -ea:4;
-  } catch {
-    ;$FName = Get-FunctionName;write-log -message "Error Caught on function $FName" -sev "WARN"
-    $task = Invoke-RestMethod -Uri $URL -method "PUT" -body $Payload -ContentType 'application/json' -headers $headers
-  }
-
-  Return $task
-} 
-
-
-Function REST-Category-List {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser
-  )
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-  
-  write-log -message "Query all categories on '$PCClusterIP'"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/groups"
-
-  $Payload= @"
-{
-  "entity_type": "category",
-  "query_name": "eb:data-1599312145673",
-  "grouping_attribute": "abac_category_key",
-  "group_sort_attribute": "name",
-  "group_sort_order": "ASCENDING",
-  "group_count": 20,
-  "group_offset": 0,
-  "group_attributes": [{
-    "attribute": "name",
-    "ancestor_entity_type": "abac_category_key"
-  }, {
-    "attribute": "immutable",
-    "ancestor_entity_type": "abac_category_key"
-  }, {
-    "attribute": "cardinality",
-    "ancestor_entity_type": "abac_category_key"
-  }, {
-    "attribute": "description",
-    "ancestor_entity_type": "abac_category_key"
-  }, {
-    "attribute": "total_policy_counts",
-    "ancestor_entity_type": "abac_category_key"
-  }, {
-    "attribute": "total_entity_counts",
-    "ancestor_entity_type": "abac_category_key"
-  }],
-  "group_member_count": 5,
-  "group_member_offset": 0,
-  "group_member_sort_attribute": "value",
-  "group_member_sort_order": "ASCENDING",
-  "group_member_attributes": [{
-    "attribute": "name"
-  }, {
-    "attribute": "value"
-  }, {
-    "attribute": "entity_counts"
-  }, {
-    "attribute": "policy_counts"
-  }, {
-    "attribute": "immutable"
-  }]
-}
-"@
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "POST" -body $Payload -ContentType 'application/json' -headers $headers -ea:4;
-  } catch {
-    ;$FName = Get-FunctionName;write-log -message "Error Caught on function $FName" -sev "WARN"
-    $task = Invoke-RestMethod -Uri $URL -method "POST" -body $Payload -ContentType 'application/json' -headers $headers
-  }
-
-  Return $task
-} 
-
-Function REST-Category-Query {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser,
-    [string] $Name
-  )
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-  
-  write-log -message "Finding Category with Name '$($Name)'"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/categories/$Name"
-
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "GET" -headers $headers -ea:4;
-  } catch {
-    write-log "Category '$Name' does not exist."
-  }
-
-  Return $task
-}
-
-Function REST-Category-Value-Query {
-  Param (
-    [string] $PCClusterIP,
-    [string] $PxClusterPass,
-    [string] $PxClusterUser,
-    [string] $Name,
-    [string] $value
-  )
-
-  $credPair = "$($PxClusterUser):$($PxClusterPass)"
-  $encodedCredentials = [System.Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes($credPair))
-  $headers = @{ Authorization = "Basic $encodedCredentials" }
-  
-  write-log -message "Finding Category Value with Name '$($Name)' and value '$($value)'"
-
-  $URL = "https://$($PCClusterIP):9440/api/nutanix/v3/categories/$($Name)/$($value)"
-
-  try{
-    $task = Invoke-RestMethod -Uri $URL -method "GET" -headers $headers -ea:4;
-  } catch {
-    write-log -message "Category with Name '$($Name)' and value '$($value)' does not exist."
-  }
-
-  Return $task
-} 
-
-Function 1FRS-Create-Categories{
-  Param (
-    [string] $PCIP,
-    [object] $PCCreds,
-    [object] $delta
-  )
-  $change = 0
-  foreach ($Category in $delta){
-    $CategoryName = $Category.name
-    $valarr = $Category.values -split ","
-
-    write-log -message "Working on Category '$CategoryName'"
-  
-    $CatObj = REST-Category-Query `
-      -PCClusterIP $PCIP `
-      -PxClusterUser $PCCreds.getnetworkcredential().username `
-      -PxClusterPass $PCCreds.getnetworkcredential().password `
-      -name $CategoryName
-
-    if (!$CatObj){
-      $change++
-      write-log -message "Category '$CategoryName' does not exist, creating"
-      write-log -message "This Parent PC is not prepared with all Categories."
-      write-log -message "Creating Category with general description."
-
-      REST-Category-Create `
-        -PCClusterIP $PCIP `
-        -PxClusterUser $PCCreds.getnetworkcredential().username `
-        -PxClusterPass $PCCreds.getnetworkcredential().password `
-        -Name $CategoryName
-
-      write-log -message "Getting object after creating."  
-
-      $CatObj = REST-Category-Query `
-        -PCClusterIP $PCIP `
-        -PxClusterUser $PCCreds.getnetworkcredential().username `
-        -PxClusterPass $PCCreds.getnetworkcredential().password `
-        -name $CategoryName
-
-      write-log -message "Getting object after creating."
-
+        Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+        if ($LogFile) #add the entry to the log file if -LogFile has been specified
+        {
+            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+        }
     }
 
-    write-log -message "Working on '$($valarr.count)' values for this category."
+    }#end function Write-LogOutput
 
-    foreach ($value in $valarr){
+    #this function loads a powershell module
+    function LoadModule
+    {#tries to load a module, import it, install it if necessary
+    <#
+    .SYNOPSIS
+    Tries to load the specified module and installs it if it can't.
+    .DESCRIPTION
+    Tries to load the specified module and installs it if it can't.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER module
+    Name of PowerShell module to import.
+    .EXAMPLE
+    PS> LoadModule -module PSWriteHTML
+    #>
+    param 
+    (
+        [string] $module
+    )
 
-      write-log -message "Checking Value '$value'"
-
-      $ValueObj = REST-Category-Value-Query `
-          -PCClusterIP $PCIP `
-          -PxClusterUser $PCCreds.getnetworkcredential().username `
-          -PxClusterPass $PCCreds.getnetworkcredential().password `
-        -Name $CategoryName `
-        -Value $Value 
-  
-      if (!$ValueObj){
-        $change++
-        write-log -message "Value does not exist yet in '$CategoryName', creating.." 
-  
-        REST-Category-Value-Create `
-          -PCClusterIP $PCIP `
-          -PxClusterUser $PCCreds.getnetworkcredential().username `
-          -PxClusterPass $PCCreds.getnetworkcredential().password `
-          -Catobj $CatObj `
-          -Value $Value
-  
-        write-log -message "Value Created." 
-      }
+    begin
+    {
+        
     }
-  }
-  write-log -message "We made '$($change)' changes in categories."
+
+    process
+    {   
+        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
+        if (!(Get-Module -Name $module)) 
+        {#we could not get the module, let's try to load it
+            try
+            {#import the module
+                Import-Module -Name $module -ErrorAction Stop
+                Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+            }#end try
+            catch 
+            {#we couldn't import the module, so let's install it
+                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
+                try 
+                {#install module
+                    Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
+                }
+                catch 
+                {#could not install module
+                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
+                    exit 1
+                }
+
+                try
+                {#now that it is intalled, let's import it
+                    Import-Module -Name $module -ErrorAction Stop
+                    Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+                }#end try
+                catch 
+                {#we couldn't import the module
+                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
+                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
+                    Exit 1
+                }#end catch
+            }#end catch
+        }
+    }
+
+    end
+    {
+
+    }
+    }
+
+    function Set-CustomCredentials 
+    {
+    #input: path, credname
+        #output: saved credentials file
+    <#
+    .SYNOPSIS
+    Creates a saved credential file using DAPI for the current user on the local machine.
+    .DESCRIPTION
+    This function is used to create a saved credential file using DAPI for the current user on the local machine.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER path
+    Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+    .PARAMETER credname
+    Specifies the credential file name.
+    .EXAMPLE
+    .\Set-CustomCredentials -path c:\creds -credname prism-apiuser
+    Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
+    #>
+        param
+        (
+            [parameter(mandatory = $false)]
+            [string] 
+            $path,
+            
+            [parameter(mandatory = $true)]
+            [string] 
+            $credname
+        )
+
+        begin
+        {
+            if (!$path)
+            {
+                if ($IsLinux -or $IsMacOS) 
+                {
+                    $path = $home
+                }
+                else 
+                {
+                    $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                }
+                Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
+            } 
+        }
+        process
+        {
+            #prompt for credentials
+            $credentialsFilePath = "$path\$credname.txt"
+            $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+            
+            #put details in hashed format
+            $user = $credentials.UserName
+            $securePassword = $credentials.Password
+            
+            #convert secureString to text
+            try 
+            {
+                $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+            }
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
+            }
+
+            #create directory to store creds if it does not already exist
+            if(!(Test-Path $path))
+            {
+                try 
+                {
+                    $result = New-Item -type Directory $path -ErrorAction Stop
+                } 
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+                }
+            }
+
+            #save creds to file
+            try 
+            {
+                Set-Content $credentialsFilePath $user -ErrorAction Stop
+            } 
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+            }
+            try 
+            {
+                Add-Content $credentialsFilePath $password -ErrorAction Stop
+            } 
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+            }
+
+            Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
+        }
+        end
+        {}
+    }
+
+    #this function is used to retrieve saved credentials for the current user
+    function Get-CustomCredentials 
+    {
+    #input: path, credname
+        #output: credential object
+    <#
+    .SYNOPSIS
+    Retrieves saved credential file using DAPI for the current user on the local machine.
+    .DESCRIPTION
+    This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER path
+    Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+    .PARAMETER credname
+    Specifies the credential file name.
+    .EXAMPLE
+    .\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+    Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+    #>
+        param
+        (
+            [parameter(mandatory = $false)]
+            [string] 
+            $path,
+            
+            [parameter(mandatory = $true)]
+            [string] 
+            $credname
+        )
+
+        begin
+        {
+            if (!$path)
+            {
+                if ($IsLinux -or $IsMacOS) 
+                {
+                    $path = $home
+                }
+                else 
+                {
+                    $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+                }
+                Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+            } 
+        }
+        process
+        {
+            $credentialsFilePath = "$path\$credname.txt"
+            if(!(Test-Path $credentialsFilePath))
+            {
+                throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
+            }
+
+            $credFile = Get-Content $credentialsFilePath
+            $user = $credFile[0]
+            $securePassword = $credFile[1] | ConvertTo-SecureString
+
+            $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+            Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
+        }
+        end
+        {
+            return $customCredentials
+        }
+    }
+
+    #this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
+    function Set-PoshTls
+    {
+    <#
+    .SYNOPSIS
+    Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+    .DESCRIPTION
+    Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+    .NOTES
+    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+    .EXAMPLE
+    .\Set-PoshTls
+    Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+    .LINK
+    https://github.com/sbourdeaud
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            
+        )
+
+        begin 
+        {
+        }
+
+        process
+        {
+            Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+            [Net.ServicePointManager]::SecurityProtocol = `
+            ([Net.ServicePointManager]::SecurityProtocol -bor `
+            [Net.SecurityProtocolType]::Tls12)
+        }
+
+        end
+        {
+
+        }
+    }
+
+    #this function is used to configure posh to ignore invalid ssl certificates
+    function Set-PoSHSSLCerts
+    {
+    <#
+    .SYNOPSIS
+    Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+    .DESCRIPTION
+    Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+    #>
+        begin
+        {
+
+        }#endbegin
+        process
+        {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+            if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+                $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if(ServicePointManager.ServerCertificateValidationCallback ==null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback += 
+                delegate
+                (
+                    Object obj, 
+                    X509Certificate certificate, 
+                    X509Chain chain, 
+                    SslPolicyErrors errors
+                )
+                {
+                    return true;
+                };
+        }
+    }
 }
+"@
+                Add-Type $certCallback
+            }#endif
+            [ServerCertificateValidationCallback]::Ignore()
+        }#endprocess
+        end
+        {
+
+        }#endend
+    }#end function Set-PoSHSSLCerts
+
+    #this function is used to make a REST api call to Prism
+    function Invoke-PrismAPICall
+    {
+    <#
+    .SYNOPSIS
+    Makes api call to prism based on passed parameters. Returns the json response.
+    .DESCRIPTION
+    Makes api call to prism based on passed parameters. Returns the json response.
+    .NOTES
+    Author: Stephane Bourdeaud
+    .PARAMETER method
+    REST method (POST, GET, DELETE, or PUT)
+    .PARAMETER credential
+    PSCredential object to use for authentication.
+    PARAMETER url
+    URL to the api endpoint.
+    PARAMETER payload
+    JSON payload to send.
+    .EXAMPLE
+    .\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+    Makes a POST api call to the specified endpoint with the specified payload.
+    #>
+    param
+    (
+        [parameter(mandatory = $true)]
+        [ValidateSet("POST","GET","DELETE","PUT")]
+        [string] 
+        $method,
+        
+        [parameter(mandatory = $true)]
+        [string] 
+        $url,
+
+        [parameter(mandatory = $false)]
+        [string] 
+        $payload,
+        
+        [parameter(mandatory = $true)]
+        [System.Management.Automation.PSCredential]
+        $credential
+    )
+
+    begin
+    {
+        
+    }
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        try {
+            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+            if ($PSVersionTable.PSVersion.Major -gt 5) 
+            {
+                $headers = @{
+                    "Content-Type"="application/json";
+                    "Accept"="application/json"
+                }
+                if ($payload) 
+                {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } 
+                else 
+                {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
+            } 
+            else 
+            {
+                $username = $credential.UserName
+                $password = $credential.Password
+                $headers = @{
+                    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
+                    "Content-Type"="application/json";
+                    "Accept"="application/json"
+                }
+                if ($payload) 
+                {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } 
+                else 
+                {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
+            }
+            Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        }
+        catch {
+            $saved_error = $_.Exception
+            $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
+            $resp_return_code = $_.Exception.Response.StatusCode.value__
+            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+            if ($resp_return_code -eq 409) 
+            {
+                Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
+                Throw
+            }
+            else 
+            {
+                if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message" 
+            }
+        }
+        finally {
+            #add any last words here; this gets processed no matter what
+        }
+    }
+    end
+    {
+        return $resp
+    }    
+    }
+
+    #helper-function Get-RESTError
+    function Help-RESTError 
+    {
+        $global:helpme = $body
+        $global:helpmoref = $moref
+        $global:result = $_.Exception.Response.GetResponseStream()
+        $global:reader = New-Object System.IO.StreamReader($global:result)
+        $global:responseBody = $global:reader.ReadToEnd();
+
+        return $global:responsebody
+
+        break
+    }#end function Get-RESTError
+
+    function Get-PrismCentralObjectList
+    {
+        [CmdletBinding()]
+        param 
+        (
+            [Parameter(mandatory = $true)][string] $pc,
+            [Parameter(mandatory = $true)][string] $object,
+            [Parameter(mandatory = $true)][string] $kind
+        )
+
+        begin 
+        {
+            [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null)
+            $url = "https://{0}:9440/api/nutanix/v3/{1}/list" -f $pc,$object
+            $method = "POST"
+            $content = @{
+                kind=$kind;
+                offset=0;
+                length=$length
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        }
+        process 
+        {
+            Do {
+                try {
+                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                    
+                    $listLength = 0
+                    if ($resp.metadata.offset) {
+                        $firstItem = $resp.metadata.offset
+                    } else {
+                        $firstItem = 0
+                    }
+                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+                        $listLength = $resp.metadata.length
+                    } else {
+                        $listLength = $resp.metadata.total_matches
+                    }
+                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        
+                    #grab the information we need in each entity
+                    ForEach ($entity in $resp.entities) {                
+                        $myvarResults.Add($entity) | Out-Null
+                    }
+        
+                    #prepare the json payload for the next batch of entities/response
+                    $content = @{
+                        kind=$kind;
+                        offset=($resp.metadata.length + $resp.metadata.offset);
+                        length=$length
+                    }
+                    $payload = (ConvertTo-Json $content -Depth 4)
+                }
+                catch {
+                    $saved_error = $_.Exception.Message
+                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                    if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                    Throw "$(get-date) [ERROR] $saved_error"
+                }
+                finally {
+                    #add any last words here; this gets processed no matter what
+                }
+            }
+            While ($resp.metadata.length -eq $length)
+        }
+        end 
+        {
+            return $myvarResults
+        }
+    }
+
 #endregion
 
 
-#region execution logic
-  if ($PSVersionTable.PSVersion.Major -lt 5){
+#region prepwork
+    $HistoryText = @'
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+09/10/2021 sb   Initial release.
+################################################################################
+'@
+    $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
 
-    write-log -message "You need to run this on Powershell 5 or greater...." -sev "ERROR"
+    if ($help) {get-help $myvarScriptName; exit}
+    if ($History) {$HistoryText; exit}
 
-  } elseif ($PSVersionTable.PSVersion.Major -match 5 ){
+    #check PoSH version
+    if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-    write-log -message "Disabling SSL Certificate Check for PowerShell 5"
+    #check if we have all the required PoSH modules
+    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
 
-    PSR-SSL-Fix
+    Set-PoSHSSLCerts
+    Set-PoshTls
+#endregion
 
-  }
+#region variables
+    $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+    $length = 100
+#endregion
 
-  if (!$eula -and !$commandline){
-    $License = [System.Windows.Forms.MessageBox]::Show("Use at your own risk, do you accept?`nThis software is NOT linked to Nutanix.", "Nutanix License" , 4)
-    if ($license -eq "Yes"){
-    
-      write "User accepted the license"
-    
-    } else {
-    
-      [System.Windows.Forms.MessageBox]::Show($message,"User did not accept the license!","STOP",0,16)
-      sleep 5
-      [Environment]::Exit(1)
-    
+#region parameters validation
+    if (!$prismCreds) 
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    } 
+    else 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        catch 
+        {
+            Set-CustomCredentials -credname $prismCreds
+            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            $username = $prismCredentials.UserName
+            $PrismSecurePassword = $prismCredentials.Password
+        }
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
-  } elseif (!$eula) {
-    [System.Windows.Forms.MessageBox]::Show($message,"User did not accept the license!","STOP",0,16)
-    sleep 5
-    [Environment]::Exit(1) 
-  }
+#endregion
 
-  write-log -message "Getting some data"
-  write-log -message "Validating Input" -sev "Chapter"
-
-  if ($SourcePCIP -eq "Enter Me"){
-
-    write-log -message "PC Source Cluster IP is not specified, prompting" -sev "WARN"
-
-    $SourcePCIP = [Microsoft.VisualBasic.Interaction]::InputBox("Enter PC Source Cluster IP", "Prism Central IP address", "")
-
-  }
-  if ($TargetPCIP -eq "Enter Me"){
-
-    write-log -message "PC Target Cluster IP is not specified, prompting" -sev "WARN"
-
-    $TargetPCIP = [Microsoft.VisualBasic.Interaction]::InputBox("Enter PC Target Cluster IP", "Prism Central IP address", "")
-  }
-#endregion execution logic
-
-
+#todo improve: add export action for rules from source to json
 #region main
-  #region creds & scan
-    if ($mode -eq "InstallCreds")
-    {#dealiong with storing credentials in files
 
-      if (!(Get-item "$workingdir\SecureFiles\" -ea:4)){
-        $null = mkdir "$workingdir\SecureFiles\" -force
-      }
+    #region GET Flow rules
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Getting Flow rules" -ForegroundColor Magenta
+        #region process source
+            Write-Host "$(get-date) [INFO] Retrieving list of Flow rules from the source Prism Central instance $($sourcePc)..." -ForegroundColor Green
+            $source_rules_response = Get-PrismCentralObjectList -pc $sourcePc -object "network_security_rules" -kind "network_security_rule"
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the source Prism Central instance $($sourcePc)" -ForegroundColor Cyan
 
-      write-log -message "Installing Credential files."
-      write-log -message "Working on Target PC first."
-
-      if (get-item "$workingdir\SecureFiles\TargetPC.xml" -ea 4){
-
-        write-log -message "Target Credential file already exists, removing"
-
-        remove-item "$workingdir\SecureFiles\TargetPC.xml" -force -confirm:0
-      }
-
-      $credential = Get-Credential -message "Please enter the Target PC Credentials"
-      $credential | Export-CliXml -Path "$workingdir\SecureFiles\TargetPC.xml"
-
-      write-log -message "Installing Source PC Credentials."
-
-      if (get-item "$workingdir\SecureFiles\SourcePC.xml" -ea 4){
-
-        write-log -message "Target Credential file already exists, removing"
-
-        remove-item "$workingdir\SecureFiles\SourcePC.xml" -force -confirm:0
-      }
-
-      $credential = Get-Credential -message "Please enter the Source PC Credentials"
-      $credential | Export-CliXml -Path "$workingdir\SecureFiles\SourcePC.xml"
-
-      write-log -message "Credentials are installed, Please run in scan or execute mode."
-
-    } elseif ($mode -match "Scan|Execute") 
-    {#scan
-
-      ### Loading Credentials
-
-      write-log -message "Loading Credential files.." -sev "Chapter"
-
-      $SourcePCCreds = Import-CliXml -Path "$workingdir\SecureFiles\SourcePC.xml"
-      $TargetPCCreds = Import-CliXml -Path "$workingdir\SecureFiles\TargetPC.xml"
-
-      $sourcePCVersion = REST-Query-PrismCentral `
-        -PCClusterIP $SourcePCIP `
-        -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
-        -PxClusterPass $SourcePCCreds.getnetworkcredential().password
-
-      $TargetPCVersion = REST-Query-PrismCentral `
-        -PCClusterIP $TargetPCIP `
-        -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-        -PxClusterPass $TargetPCCreds.getnetworkcredential().password
-      
-      write-log -message "Source PC is running version '$($sourcePCVersion.resources.version)'"
-      write-log -message "Target PC is running version '$($TargetPCVersion.resources.version)'"
-
-      if ($sourcePCVersion.resources.version -ne $TargetPCVersion.resources.version){
-
-        write-log -message "PC Version Mismatch!!" -sev "Warn"
-
-      } else {
-
-        write-log -message "PC Version Match"
-
-      }
-
-      write-log -message "Using username '$($SourcePCCreds.username)' as username for the source PC"
-      write-log -message "Using username '$($TargetPCCreds.username)' as username for the target PC"
-
-      write-log -message "Getting Categories from Source PC" -sev "Chapter"
-
-      $SourceCategories = REST-Category-List `
-        -PCClusterIP $SourcePCIP `
-        -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
-        -PxClusterPass $SourcePCCreds.getnetworkcredential().password
-
-      write-log -message "Creating Readable Category object"
-
-      $SCategoryList = $null
-      foreach ($Category in $SourceCategories.group_results){
-        $Entity = [PSCustomObject]@{
-          Name         = ($Category.group_summaries.'sum:name').values.values
-          Values       = ($Category.entity_results.data | where {$_.name -eq "value"}).values.values -join ","
-          ValueCount   = ($Category.total_entity_count)
-        }
-        [array]$SCategoryList += $entity     
-      }
-      $SourcetotalValues = 0    
-      $SCategoryList.Valuecount |% {[int]$SourcetotalValues += [int]$_ }
-
-      write-log -message "We have '$($SCategoryList.count)' categories on the source PC."
-      write-log -message "We have '$($SourcetotalValues)' values in these categories."
-      write-log -message "Getting Categories from Target PC" -sev "Chapter"
-
-      $TargetCategories = REST-Category-List `
-        -PCClusterIP $TargetPCIP `
-        -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-        -PxClusterPass $TargetPCCreds.getnetworkcredential().password
-
-      write-log -message "Creating Readable Category object"
-
-      $TCategoryList = $null
-      foreach ($Category in $TargetCategories.group_results){
-        $Entity = [PSCustomObject]@{
-          Name         = ($Category.group_summaries.'sum:name').values.values
-          Values       = ($Category.entity_results.data | where {$_.name -eq "value"}).values.values -join ","
-          ValueCount   = ($Category.total_entity_count)
-        }
-        [array]$TCategoryList += $entity     
-      }
-      $TargettotalValues = 0    
-      $TCategoryList.Valuecount |% {[int]$TargettotalValues += [int]$_ }
-
-      write-log -message "We have '$($TCategoryList.count)' categories on the source PC."
-      write-log -message "We have '$($TargettotalValues)' values in these categories."
-
-
-      [array] $CatValueSyncRequired = $null
-      [array] $NewCat = $null
-      foreach ($category in $SCategoryList){
-        if ($category.name -notin $TCategoryList.name){
-
-          write-log -message "Category '$($category.name)' does not exist yet."
-
-          $NewCat += $category
-
-        } else {
-
-          $sourcevalarr = $category.values -split "," |sort
-          $targetvalarr = ($TCategoryList | where {$_.name -eq $category.name}).values -split "," |sort
-          $addArr = $false
-          foreach ($sourceval in $sourcevalarr){
-            if ($sourceval -in $targetvalarr){
-
-              write-log -message "The value '$sourceval' is present in category '$($category.name)' on the target PC" 
-
-            } else {
-
-              write-log -message "The value '$sourceval' is not present in '$($category.name)' on the target PC" 
-
-              $addArr = $true
+            $filtered_source_rules_response = $source_rules_response | Where-Object {$_.spec.name -match "^$prefix"}
+            if (!$filtered_source_rules_response)
+            {
+                Throw "$(get-date) [ERROR] There are no Flow rules on $($sourcePc) which match prefix $($prefix)!"
             }
-          }
-          if ($addArr -eq $true){ 
-
-              write-log -message "Category '$($category.name)' is missing values on the target PC."
-
-              [array] $CatValueSyncRequired += $category
-          } else {
-
-              write-log -message "Category '$($category.name)' has its values in sync, no change needed."
-
-          }
-        }
-      }
-
-      write-log -message "Checking Security rules on the source." -sev "Chapter"
-
-      $SourceRules = REST-Query-Security-Rules `
-        -PCClusterIP $SourcePCIP `
-        -PxClusterUser $SourcePCCreds.getnetworkcredential().username `
-        -PxClusterPass $SourcePCCreds.getnetworkcredential().password
-
-      write-log -message "We are filtering rules matching filter string: '$SourceRuleSearchStr'"
-
-      $SourceSyncRules = $SourceRules.entities | where {$_.spec.name -match $SourceRuleSearchStr -and $_.spec.name -ne "Quarantine"}
-
-      write-log -message "We have '$($SyncRules.count)' rules to sync after filtering."
-      write-log -message "Checking Security rules on the target."
-
-      $TargetRules = REST-Query-Security-Rules `
-        -PCClusterIP $TargetPCIP `
-        -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-        -PxClusterPass $TargetPCCreds.getnetworkcredential().password
-
-      write-log -message "We are only checking rules with prefix '$TargetRulePrefix'"
-
-      [array] $TargetRulelist = $null
-      [array] $AlreadyExists = $null
-      [array] $NewRules = $null
-      [array] $AlreadyExistsSyncRequired = $null
-      $TargetSyncRules = $TargetRules.entities | where {$_.spec.name -match "^$($TargetRulePrefix)"}
-      
-      write-log -message "Comparing Rules based on name."
-
-      foreach ($rule in $SourceSyncRules){
-
-        [string]$DestName =  $TargetRulePrefix + $rule.spec.name 
-
-        write-log -message "Checking if we have '$DestName' in our target PC already.."
-
-        if ($destname -in $TargetSyncRules.spec.name){
-
-          write-log -message "Destination Rule '$($destname)' already exists."
-
-          [array] $AlreadyExists += $rule
-
-          foreach ($rule in $AlreadyExists){
-            if (([datetime] $rule.metadata.last_update_time) -gt $(get-date).addhours($RuleSyncHourChanged)){
-
-              write-log -message "This rule is changed in the (last) '$RuleSyncHourChanged' hours"
-
-              $AlreadyExistsSyncRequired += $rule
-
-            } else {
-
-              write-log -message "This rule was modified '$(([datetime] $rule.metadata.last_update_time))', its old, not replacing this one."
-
+            else 
+            {
+                Write-Host "$(get-date) [DATA] There are $($filtered_source_rules_response.count) Flow rules which match prefix $($prefix) on source Prism Central $($sourcePc)..." -ForegroundColor White
             }
-          }
-        } else {
+        #endregion
 
-          [array] $NewRules += $rule
+        #region process target
+            Write-Host "$(get-date) [INFO] Retrieving list of Flow rules from the source Prism Central instance $($targetPc)..." -ForegroundColor Green
+            $target_rules_response = Get-PrismCentralObjectList -pc $targetPc -object "network_security_rules" -kind "network_security_rule"
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the source Prism Central instance $($targetPc)" -ForegroundColor Cyan
+            $filtered_target_rules_response = $target_rules_response | Where-Object {$_.spec.name -match "^$prefix"}
+            Write-Host "$(get-date) [DATA] There are $($filtered_target_rules_response.count) Flow rules which match prefix $($prefix) on target Prism Central $($targetPc)..." -ForegroundColor White
+        #endregion
+    #endregion
+
+    #region COMPARE Flow rules
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Comparing Flow rules" -ForegroundColor Magenta
+
+        #* rules to add ($add_rules_list)
+        [System.Collections.ArrayList]$add_rules_list = New-Object System.Collections.ArrayList($null)
+        foreach ($rule in $filtered_source_rules_response) 
+        {#compare source with target
+            if ($rule.spec.name -notin $filtered_target_rules_response.spec.name)
+            {#rule exists on source but not on target
+                Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist yet on target Prism Central $($targetPc)" -ForegroundColor Green
+                $add_rules_list.Add($rule) | Out-Null
+            }
+        }
+        Write-Host "$(get-date) [DATA] There are $($add_rules_list.count) Flow rules to add on target Prism Central $($targetPc)" -ForegroundColor White
+
+        #* rules to remove ($remove_rules_list)
+        [System.Collections.ArrayList]$remove_rules_list = New-Object System.Collections.ArrayList($null)
+        foreach ($rule in $filtered_target_rules_response) 
+        {#compare target with source
+            if ($rule.spec.name -notin $filtered_source_rules_response.spec.name)
+            {#rule exists on target but not on source
+                Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) no longer exists on source Prism Central $($sourcePc)" -ForegroundColor Green
+                $remove_rules_list.Add($rule) | Out-Null
+            }
+        }
+        Write-Host "$(get-date) [DATA] There are $($remove_rules_list.count) Flow rules to remove on target Prism Central $($targetPc)" -ForegroundColor White
+
+        #* rules to update ($update_rules_list)
+        [System.Collections.ArrayList]$update_rules_list = New-Object System.Collections.ArrayList($null)
+        foreach ($rule in $filtered_source_rules_response) 
+        {#compare source with target
+            if ($target_rule = $filetered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name})
+            {#we have a matching rule on target, let's compare
+                if (($rule.spec.resources -ne $target_rule.spec.resources) -or ($rule.spec.description -ne $target_rule.spec.description))
+                {#rule configuration or description on source does not match rule configuration or description on target
+                    Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) needs to be updated on target Prism Central $($targetPc)" -ForegroundColor Green
+                    $update_rules_list.Add($rule) | Out-Null
+                }
+            }
+            
+        }
+        Write-Host "$(get-date) [DATA] There are $($update_rules_list.count) Flow rules to update on target Prism Central $($targetPc)" -ForegroundColor White
+
+    #endregion
+    
+    #region ACTION
+        if ($action -eq "scan")
+        {#display what we would do
 
         }
-      }
 
-      if ($mode -eq "Scan"){
+        if ($action -eq "sync")
+        {#synchronize (ADD, DELETE, UPDATE)
+            #region process ADD
+                if ($add_rules_list)
+                {#there are rules to be added
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Adding Flow rules" -ForegroundColor Magenta
+                    foreach ($rule in $add_rules_list)
+                    {#process each rule to add
+                        #region which categories are used?
+                            #* figure out categories used in this rule
+                            [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
+                            #types of rules: 
+                            if ($rule.spec.resources.quarantine_rule)
+                            {
+                                Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
+                                foreach ($category in $rule.spec.resources.quarantine_rule.target_group.filter.params)
+                                {#process each category used in target_group
+                                    $category_name = $category.PSObject.Properties.Name
+                                    foreach ($value in $category.$category_name)
+                                    {#process each value for this category
+                                        $category_value_pair = "$($category_name):$($value)"
+                                        $used_categories_list.Add($category_value_pair) | Out-Null
+                                    }
+                                }
+                            }
+                            elseif ($rule.spec.resources.isolation_rule) 
+                            {
+                                Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
+                                foreach ($category in $rule.spec.resources.isolation_rule.first_entity_filter.params)
+                                {#process each category used in first_entity_filter
+                                    $category_name = $category.PSObject.Properties.Name
+                                    foreach ($value in $category.$category_name)
+                                    {#process each value for this category
+                                        $category_value_pair = "$($category_name):$($value)"
+                                        $used_categories_list.Add($category_value_pair) | Out-Null
+                                    }
+                                }
+                                foreach ($category in $rule.spec.resources.isolation_rule.second_entity_filter.params)
+                                {#process each category used in second_entity_filter
+                                    $category_name = $category.PSObject.Properties.Name
+                                    foreach ($value in $category.$category_name)
+                                    {#process each value for this category
+                                        $category_value_pair = "$($category_name):$($value)"
+                                        $used_categories_list.Add($category_value_pair) | Out-Null
+                                    }
+                                }
+                            }
+                            elseif ($rule.spec.resources.app_rule) 
+                            {
+                                Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
+                                foreach ($category in $rule.spec.resources.app_rule.outbound_allow_list.filter.params)
+                                {#process each category used in outbound_allow_list
+                                    $category_name = $category.PSObject.Properties.Name
+                                    foreach ($value in $category.$category_name)
+                                    {#process each value for this category
+                                        $category_value_pair = "$($category_name):$($value)"
+                                        $used_categories_list.Add($category_value_pair) | Out-Null
+                                    }
+                                }
+                                foreach ($category in $rule.spec.resources.app_rule.target_group.filter.params)
+                                {#process each category used in target_group
+                                    $category_name = $category.PSObject.Properties.Name
+                                    foreach ($value in $category.$category_name)
+                                    {#process each value for this category
+                                        $category_value_pair = "$($category_name):$($value)"
+                                        $used_categories_list.Add($category_value_pair) | Out-Null
+                                    }
+                                }
+                                foreach ($category in $rule.spec.resources.app_rule.inbound_allow_list.filter.params)
+                                {#process each category used in inbound_allow_list
+                                    $category_name = $category.PSObject.Properties.Name
+                                    foreach ($value in $category.$category_name)
+                                    {#process each value for this category
+                                        $category_value_pair = "$($category_name):$($value)"
+                                        $used_categories_list.Add($category_value_pair) | Out-Null
+                                    }
+                                }
+                            }
+                            else 
+                            {
+                                Write-Host "$(get-date) [WARNING] Rule $($rule.spec.Name) is not a supported rule type for replication!" -ForegroundColor Yellow
+                            }
 
-        write-log -message "Scan Summary" -sev "Chapter"
-        $prefix = "Scan mode, this setup would"
+                            Write-Host "$(get-date) [DATA] Flow rule $($rule.spec.Name) uses the following category:value pairs:" -ForegroundColor White
+                            $used_categories_list
+                        #endregion
+                        
+                        #region are all used category:value pairs on target?
+                            #* check each used category:value pair exists on target
+                            [System.Collections.ArrayList]$missing_categories_list = New-Object System.Collections.ArrayList($null)
+                            foreach ($category_value_pair in ($used_categories_list | Select-Object -Unique))
+                            {#process each used category
+                                $category = ($category_value_pair -split ":")[0]
+                                $value = ($category_value_pair -split ":")[1]
 
-      } elseif ($mode -eq "execute") {
+                                $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
+                                $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                $method = "GET"
 
-        $prefix = "Execute mode, this setup will"
+                                Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
+                                try 
+                                {
+                                    $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                                    Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
+                                }
+                                catch 
+                                {
+                                    $saved_error = $_.Exception.Message
+                                    $error_code = ($saved_error -split " ")[3]
+                                    if ($error_code -eq "404") 
+                                    {
+                                        Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
+                                        $missing_categories_list.Add($category_value_pair) | Out-Null
+                                        Continue
+                                    }
+                                    else 
+                                    {
+                                        Write-Host "$saved_error" -ForegroundColor Yellow
+                                        Continue
+                                    }
+                                }
+                            }
 
-      }
+                            if ($missing_categories_list)
+                            {
+                                Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
+                                $missing_categories_list
+                            }
+                        #endregion
+                        
+                        #region create missing category:value pairs on target
+                            [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
+                            foreach ($category_value_pair in $missing_categories_list)
+                            {
+                                #check if category exists
+                                $category = ($category_value_pair -split ":")[0]
+                                $value = ($category_value_pair -split ":")[1]
 
-      write-log -message "$prefix create '$($NewCat.count)' new categories on '$($TargetPCIP)'"
-      write-log -message "$prefix update '$($CatValueSyncRequired.count)' categories that need value alignment on '$($TargetPCIP)'"
-      write-log -message "$prefix create '$($NewRules.count)' new rules on '$($TargetPCIP)'"
-      write-log -message "$prefix replace '$($AlreadyExistsSyncRequired.count)' existing rules on '$($TargetPCIP)' which are changed in the (last) '$RuleSyncHourChanged' hours"
+                                if (!$processed_categories_list)
+                                {#we havent processed any category yet
+                                    if ($category -notin $processed_categories_list)
+                                    {#this category has not been found or added yet
+                                        $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
+                                        $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                        $method = "GET"
 
-      sleep 10 
+                                        Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
+                                        try 
+                                        {
+                                            $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                                            Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
+                                            $processed_categories_list.Add($category) | Out-Null
+                                        }
+                                        catch 
+                                        {
+                                            $saved_error = $_.Exception.Message
+                                            $error_code = ($saved_error -split " ")[3]
+                                            if ($error_code -eq "404") 
+                                            {
+                                                Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
+                                                #add category
+                                                $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
+                                                $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                                $method = "PUT"
+                                                $content = @{
+                                                    api_version="3.1.0";
+                                                    description="added by Invoke-FlowRuleSync.ps1 script";
+                                                    name="$category"
+                                                }
+                                                $payload = (ConvertTo-Json $content -Depth 4)
+                                                try 
+                                                {
+                                                    $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                                    Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
+                                                    $processed_categories_list.Add($category) | Out-Null     
+                                                }
+                                                catch 
+                                                {
+                                                    Throw "$($_.Exception.Message)"
+                                                }  
+                                            }
+                                            else 
+                                            {
+                                                Throw "$($_.Exception.Message)"
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                #add value
+                                $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
+                                $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                $method = "PUT"
+                                $content = @{
+                                    api_version="3.1.0";
+                                    description="added by Invoke-FlowRuleSync.ps1 script";
+                                    value="$value"
+                                }
+                                $payload = (ConvertTo-Json $content -Depth 4)
+                                try 
+                                {
+                                    $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                    Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan   
+                                }
+                                catch 
+                                {
+                                    Throw "$($_.Exception.Message)"
+                                }
+                            }
+                        #endregion
 
-    }
-  #endregion
+                        #region add rule on target
+                            $api_server_endpoint = "/api/nutanix/v3/network_security_rules"
+                            $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                            $method = "POST"
+                            $rule.psobject.members.remove("status")
+                            $rule.metadata.psobject.members.remove("uuid")
+                            $rule.metadata.psobject.members.remove("owner_reference")
+                            if ($rule.spec.resources.app_rule)
+                            {
+                                $rule.spec.resources.app_rule.outbound_allow_list | %{$_.PSObject.Properties.remove("rule_id")}
+                                $rule.spec.resources.app_rule.outbound_allow_list | %{$_.PSObject.Properties.Remove("service_group_list")}
+                                $rule.spec.resources.app_rule.inbound_allow_list | %{$_.PSObject.Properties.remove("rule_id")}
+                                $rule.spec.resources.app_rule.inbound_allow_list | %{$_.PSObject.Properties.Remove("service_group_list")}
+                            }
+                            $payload = (ConvertTo-Json $rule -Depth 100)
 
-  #region execute
-    if ($mode -eq "Execute"){
+                            try 
+                            {
+                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                Write-Host "$(Get-Date) [SUCCESS] Added Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan   
+                            }
+                            catch 
+                            {
+                                Throw "$($_.Exception.Message)"
+                            }                            
+                        #endregion
 
-      write-log -message "New Categories first"
+                        Write-Host ""
+                    }
+                }
+            #endregion
 
-      if ($NewCat.count -ge 1){
+            #region process DELETE
+                if ($remove_rules_list)
+                {#there are rules to be removed
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Removing Flow rules" -ForegroundColor Magenta
+                    foreach ($rule in $remove_rules_list)
+                    {#process each rule to remove
+                        #? for each category, figure out if it is used anywhere else in rules on source: if not, delete the category
+                        #? delete rule on target
+                    }
+                }
+            #endregion
 
-        1FRS-Create-Categories -PCCreds $TargetPCCreds -PCIP $TargetPCIP -delta $NewCat
-      
-      } else {
+            #region process UPDATE 
+                if ($update_rules_list)
+                {#there are rules to be updated
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Updating Flow rules" -ForegroundColor Magenta
+                    foreach ($rule in $update_rules_list)
+                    {#process each rule to update
+                        #? for each category used, find out if it exists on target: if not, add the category
+                        #? update rule on target
+                    }
+                }
+            #endregion
+        }
+    #endregion
+    
+#endregion
 
-        write-log -message "Category sync not required for new categories."
+#region cleanup
+    #let's figure out how much time this all took
+    Write-Host ""
+    Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
-      }
-
-      write-log -message "Syncing Existing Categories"
-
-      if ($CatValueSyncRequired.count -ge 1){
-
-        1FRS-Create-Categories -PCCreds $TargetPCCreds -PCIP $TargetPCIP -delta $CatValueSyncRequired
-      
-      } else {
-
-        write-log -message "Category sync not required for existing categories."
-
-      }
-
-      write-log -message "Working on Security Rules"
-      
-      if ($AlreadyExistsSyncRequired.count -ge 1){
-
-        write-log -message "Cleanup required, Existing changed Rules will be deleted first."
-
-        foreach ($rule in $AlreadyExistsSyncRequired){
-
-          $targetRule = $TargetSyncRules | where {$_.spec.name -eq [string]($TargetRulePrefix + $Rule.spec.name)}
-
-          if ($targetrule){ 
-
-            write-log -message "Found the target rule to delete."
-
-            REST-Delete-Security-Rule `
-              -PCClusterIP $TargetPCIP `
-              -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-              -PxClusterPass $TargetPCCreds.getnetworkcredential().password `
-              -Rule $targetRule
-          }
-        } 
-      }
-
-      [array]$rulestocreate = $null
-      if ($AlreadyExistsSyncRequired.count -ge 1){
-        $rulestocreate += $AlreadyExistsSyncRequired
-      }
-      if ($NewRules.count -ge 1){
-        $rulestocreate += $NewRules
-      }
-
-      write-log -message "Creating Rules" -sev "Chapter"
-      write-log -message "Creating '$($rulestocreate.count)' rules on '$TargetPCIP'"
-
-      foreach ($rule in $rulestocreate){
-
-        [string] $DRRuleName        = $TargetRulePrefix + $rule.spec.name
-        [string] $DRRuleDescription = "Please do not edit here, synced rule, edit on '$SourcePCIP'" + $rule.spec.description
-
-        write-log -message "Creating Rule '$DRRuleName'"
-
-        REST-Add-Security-Rule `
-          -PCClusterIP $TargetPCIP `
-          -PxClusterUser $TargetPCCreds.getnetworkcredential().username `
-          -PxClusterPass $TargetPCCreds.getnetworkcredential().password `
-          -Rule $Rule `
-          -NewName $DRRuleName `
-          -NewDescription $DRRuleDescription
-      }
-    }
-  #endregion
+    #cleanup after ourselves and delete all custom variables
+    Remove-Variable myvar* -ErrorAction SilentlyContinue
+    Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+    Remove-Variable help -ErrorAction SilentlyContinue
+    Remove-Variable history -ErrorAction SilentlyContinue
+    Remove-Variable log -ErrorAction SilentlyContinue
+    Remove-Variable sourcePc -ErrorAction SilentlyContinue
+    Remove-Variable targetPc -ErrorAction SilentlyContinue
+    Remove-Variable debugme -ErrorAction SilentlyContinue
 #endregion
