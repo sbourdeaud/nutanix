@@ -720,11 +720,12 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 
-#todo: improve: rule add/update/delete returns task uuid: check on task status
-#todo: wip: how to process last rule deletion from source? right now it will throw an error if none found on source that match prefix. Should error only if none found on source and target!
 #todo: wip: implement correct processing of isolation rules
-#todo: improve: implement category:value pair delete
+#todo: improve: rule add/update/delete returns task uuid: check on task status
 #todo: improve: add export action for rules from source to json
+#todo: improve: move code to figure out categories to a function
+#todo: improve: implement category:value pair delete
+
 #region main
 
     #region GET Flow rules
@@ -734,25 +735,22 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Retrieving list of Flow rules from the source Prism Central instance $($sourcePc)..." -ForegroundColor Green
             $source_rules_response = Get-PrismCentralObjectList -pc $sourcePc -object "network_security_rules" -kind "network_security_rule"
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the source Prism Central instance $($sourcePc)" -ForegroundColor Cyan
-
             $filtered_source_rules_response = $source_rules_response | Where-Object {$_.spec.name -match "^$prefix"}
-            if (!$filtered_source_rules_response)
-            {
-                Throw "$(get-date) [ERROR] There are no Flow rules on $($sourcePc) which match prefix $($prefix)!"
-            }
-            else 
-            {
-                Write-Host "$(get-date) [DATA] There are $($filtered_source_rules_response.count) Flow rules which match prefix $($prefix) on source Prism Central $($sourcePc)..." -ForegroundColor White
-            }
+            Write-Host "$(get-date) [DATA] There are $($filtered_source_rules_response.count) Flow rules which match prefix $($prefix) on source Prism Central $($sourcePc)..." -ForegroundColor White
         #endregion
 
         #region process target
-            Write-Host "$(get-date) [INFO] Retrieving list of Flow rules from the source Prism Central instance $($targetPc)..." -ForegroundColor Green
+            Write-Host "$(get-date) [INFO] Retrieving list of Flow rules from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
             $target_rules_response = Get-PrismCentralObjectList -pc $targetPc -object "network_security_rules" -kind "network_security_rule"
-            Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the source Prism Central instance $($targetPc)" -ForegroundColor Cyan
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
             $filtered_target_rules_response = $target_rules_response | Where-Object {$_.spec.name -match "^$prefix"}
             Write-Host "$(get-date) [DATA] There are $($filtered_target_rules_response.count) Flow rules which match prefix $($prefix) on target Prism Central $($targetPc)..." -ForegroundColor White
         #endregion
+
+        if (!$filtered_source_rules_response -and !$filtered_target_rules_response)
+        {
+            Throw "$(get-date) [ERROR] There are no Flow rules on $($sourcePc) or $($targetPc) which match prefix $($prefix)!"
+        }
     #endregion
 
     #region COMPARE Flow rules
