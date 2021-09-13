@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 10th 2021
+  Revision: September 13th 2021
 #>
 
 
@@ -667,6 +667,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 09/10/2021 sb   Initial release.
+09/13/2021 sb   Added processing for rule(s) deletion.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
@@ -684,10 +685,12 @@ Date       By   Updates (newest updates at the top)
     Set-PoshTls
 #endregion
 
+
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
     $length = 100
 #endregion
+
 
 #region parameters validation
     if (!$prismCreds) 
@@ -716,7 +719,9 @@ Date       By   Updates (newest updates at the top)
     }
 #endregion
 
-#todo: wip: implement rule delete
+
+#todo: improve: rule add/update/delete returns task uuid: check on task status
+#todo: wip: how to process last rule deletion from source? right now it will throw an error if none found on source that match prefix. Should error only if none found on source and target!
 #todo: wip: implement correct processing of isolation rules
 #todo: improve: implement category:value pair delete
 #todo: improve: add export action for rules from source to json
@@ -1047,8 +1052,23 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Removing Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $remove_rules_list)
                     {#process each rule to remove
-                        #? for each category, figure out if it is used anywhere else in rules on source: if not, delete the category
+                        #todo: for each category, figure out if it is used anywhere else in rules on source: if not, delete the category
                         #? delete rule on target
+                        $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
+                        $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
+                        $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                        $method = "DELETE"
+
+                        Write-Host "$(get-date) [STEP] Deleting Flow rule $($rule.spec.Name) on $($targetPc)" -ForegroundColor Green
+                        try 
+                        {
+                            $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                            Write-Host "$(Get-Date) [SUCCESS] Deleted Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan   
+                        }
+                        catch 
+                        {
+                            Throw "$($_.Exception.Message)"
+                        }
                     }
                 }
             #endregion
@@ -1292,6 +1312,7 @@ Date       By   Updates (newest updates at the top)
     #endregion
     
 #endregion
+
 
 #region cleanup
     #let's figure out how much time this all took
