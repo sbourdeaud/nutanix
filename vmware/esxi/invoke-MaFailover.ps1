@@ -886,53 +886,42 @@ $drs_rule2_name = "VMs_Should_In_GS"
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
-        if ($prismCredentials.GetNetworkCredential().password -eq "") 
-        {
-            Throw "$(get-date) [ERROR] You have specified a blank password which is not authorized! Exiting."
-        }
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
         try 
         {
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
         catch 
         {
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
+    $username = $prismCredentials.UserName
+    $PrismSecurePassword = $prismCredentials.Password
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
     if ($vcenterCreds) 
     {#vcenterCreds was specified
         try 
         {
-            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
-            $vcenterUsername = $vcenterCredentials.UserName
-            $vcenterSecurePassword = $vcenterCredentials.Password
+            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop 
         }
         catch 
         {
             Set-CustomCredentials -credname $vcenterCreds
             $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
-            $vcenterUsername = $vcenterCredentials.UserName
-            $vcenterSecurePassword = $vcenterCredentials.Password
         }
-        $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
     }
     else 
     {#no vcenter creds were given
         $vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
     }
+    $vcenterUsername = $vcenterCredentials.UserName
+    $vcenterSecurePassword = $vcenterCredentials.Password
+    $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
 
     if ($action -and !$cvmCreds) 
     {#we have specified an action, but we did not specify cvm credentials

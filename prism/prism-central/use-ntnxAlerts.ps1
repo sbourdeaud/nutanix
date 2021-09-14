@@ -263,18 +263,16 @@ Set-PoshTls
       try 
       {
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
       catch 
       {
           Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
   }
+  $username = $prismCredentials.UserName
+  $PrismSecurePassword = $prismCredentials.Password
+  $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
   $api_server = $prism
   $api_server_port = "9440"

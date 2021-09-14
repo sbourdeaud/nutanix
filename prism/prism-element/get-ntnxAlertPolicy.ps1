@@ -123,6 +123,7 @@
 	
   #let's initialize parameters if they haven't been specified
   if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism"}
+  
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
@@ -132,18 +133,17 @@
       try 
       {
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
       catch 
       {
           Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
   }
+  $username = $prismCredentials.UserName
+  $PrismSecurePassword = $prismCredentials.Password
+  $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+
   if (!$csv) {$csv = "prism-alerts-report.csv"}
 #endregion
 

@@ -216,6 +216,7 @@ Date       By   Updates (newest updates at the top)
   {
     Throw "$(Get-Date) [ERROR] You must specify either a Nutanix cluster with -cluster or a Nutanix Prism Central instance with -prismcentral!"
   }
+
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
@@ -225,18 +226,16 @@ Date       By   Updates (newest updates at the top)
       try 
       {
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
       catch 
       {
           Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
   }
+  $username = $prismCredentials.UserName
+  $PrismSecurePassword = $prismCredentials.Password
+  $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 #endregion
 
 #todo: deal with lcm inventory tasks already running (status will be 409: CONFLICT)
