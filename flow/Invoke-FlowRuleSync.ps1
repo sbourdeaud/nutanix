@@ -277,6 +277,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
             {
                 throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
             }
+
             try 
             {
                 Add-Content $credentialsFilePath $password -ErrorAction Stop
@@ -759,6 +760,12 @@ Date       By   Updates (newest updates at the top)
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
+
+    if ($log) 
+    {
+        $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
+        Start-Transcript -Path ./$myvar_output_log_file
+    }
 
     if ($help) {get-help $myvarScriptName; exit}
     if ($History) {$HistoryText; exit}
@@ -1495,6 +1502,11 @@ Date       By   Updates (newest updates at the top)
     #let's figure out how much time this all took
     Write-Host ""
     Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+    
+    if ($log) 
+    {
+        Stop-Transcript
+    }
 
     #cleanup after ourselves and delete all custom variables
     Remove-Variable myvar* -ErrorAction SilentlyContinue
