@@ -7,6 +7,8 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
+.PARAMETER log
+  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
@@ -49,7 +51,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 31st 2021
+  Revision: September 17th 2021
 #>
 
 #region parameters
@@ -58,6 +60,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
+		[parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $false)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$pd,
@@ -620,6 +623,12 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #region prepwork
     $ErrorActionPreference = "Continue"
 
+    if ($log) 
+    {
+        $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
+        Start-Transcript -Path ./$myvar_output_log_file
+    }
+
     Write-Host ""
     Write-Host "$(get-date) [STEP] Checking PowerShell configuration ..." -ForegroundColor Magenta
     $HistoryText = @'
@@ -664,6 +673,8 @@ Date       By   Updates (newest updates at the top)
 08/31/2021 sb   Fixed issue when not specifying creds, issue with ping test on 
                 posh 5 and output issue on unplanned loop. Adding DisableOnly 
                 parameter to facilitate failback after unplanned failover
+09/17/2021 sb   Fixing issue #19 (redirect output to log file with -log 
+                parameter)
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -886,31 +897,22 @@ $drs_rule2_name = "VMs_Should_In_GS"
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
-        if ($prismCredentials.GetNetworkCredential().password -eq "") 
-        {
-            Throw "$(get-date) [ERROR] You have specified a blank password which is not authorized! Exiting."
-        }
-        $username = $prismCredentials.UserName
-        $PrismSecurePassword = $prismCredentials.Password
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-    } 
+    }
     else 
     { #we are using custom credentials, so let's grab the username and password from that
         try 
         {
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
         catch 
         {
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
-        }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+        }    
     }
+    $username = $prismCredentials.UserName
+    $PrismSecurePassword = $prismCredentials.Password
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
     if ($vcenterCreds) 
     {#vcenterCreds was specified
@@ -970,7 +972,6 @@ $drs_rule2_name = "VMs_Should_In_GS"
     if (!$timer) {$timer = 300}
     if ((!$reEnableDelay) -or ($reEnableDelay -lt 120)) {$reEnableDelay = 120}
     if (!$maxConcurrentRepl) {$maxConcurrentRepl = 3}
-    $timeout = 5 #timeout in seconds for remote site ping when using -unplanned
 #endregion
 
 #region execute
@@ -1728,7 +1729,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 #Start-Sleep 30
                 #* check remote pd is active
                 Do 
-                {
+                {#loop while remote pd is not active
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_remote_site_ip
                     $method = "GET"
@@ -1754,7 +1755,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 
                 #* step 2 of 3: if necessary, disable pd
                 if ($myvar_pd.failure_handling -ne "Witness")
-                {
+                {#witness is not used
                     Write-Host "$(get-date) [INFO] Witness is not in use, so disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/metro_avail_disable" -f $cluster,$myvar_pd.name
                     $method = "POST"
@@ -2161,6 +2162,8 @@ $drs_rule2_name = "VMs_Should_In_GS"
 
     #let's figure out how much time this all took
     Write-Host "$(get-date) [SUM] total processing time: $($myvar_elapsed_time.Elapsed.ToString())" -ForegroundColor Magenta
+
+    if ($log) {Stop-Transcript}
 
     #cleanup after ourselves and delete all custom variables
     Remove-Variable myvar* -ErrorAction SilentlyContinue
