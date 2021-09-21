@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 13th 2021
+  Revision: September 17th 2021
 #>
 
 
@@ -598,7 +598,9 @@ public class ServerCertificateValidationCallback
 
         begin 
         {
-            [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null)
+            if (!$length) {$length = 100} #we may not inherit the $length variable; if that is the case, set it to 100 objects per page
+            $total, $cumulated, $first, $last, $offset = 0 #those are used to keep track of how many objects we have processed
+            [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #this is variable we will use to keep track of entities
             $url = "https://{0}:9440/api/nutanix/v3/{1}/list" -f $pc,$object
             $method = "POST"
             $content = @{
@@ -606,7 +608,7 @@ public class ServerCertificateValidationCallback
                 offset=0;
                 length=$length
             }
-            $payload = (ConvertTo-Json $content -Depth 4)
+            $payload = (ConvertTo-Json $content -Depth 4) #this is the initial payload at offset 0
         }
         process 
         {
@@ -614,7 +616,7 @@ public class ServerCertificateValidationCallback
                 try {
                     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
                     
-                    $listLength = 0
+                    <# $listLength = 0
                     if ($resp.metadata.offset) {
                         $firstItem = $resp.metadata.offset
                     } else {
@@ -625,18 +627,33 @@ public class ServerCertificateValidationCallback
                     } else {
                         $listLength = $resp.metadata.total_matches
                     }
-                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green #>
+                    
+                    if ($total -eq 0) {$total = $resp.metadata.total_matches} #this is the first time we go thru this loop, so let's assign the total number of objects
+                    $first = $offset #this is the first object for this iteration
+                    $last = $offset + ($resp.entities).count #this is the last object for this iteration
+                    if ($total -le $length)
+                    {#we have less objects than our specified length
+                        $cumulated = $total
+                    }
+                    else 
+                    {#we have more objects than our specified length, so let's increment cumulated
+                        $cumulated += ($resp.entities).count
+                    }
+                    
+                    Write-Host "$(Get-Date) [INFO] Processing results from $(if ($first) {$first} else {"0"}) to $($last) out of $($total)" -ForegroundColor Green
                     if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
         
                     #grab the information we need in each entity
                     ForEach ($entity in $resp.entities) {                
                         $myvarResults.Add($entity) | Out-Null
                     }
-        
+                    
+                    $offset = $last #let's increment our offset
                     #prepare the json payload for the next batch of entities/response
                     $content = @{
                         kind=$kind;
-                        offset=($resp.metadata.length + $resp.metadata.offset);
+                        offset=$offset;
                         length=$length
                     }
                     $payload = (ConvertTo-Json $content -Depth 4)
@@ -651,7 +668,7 @@ public class ServerCertificateValidationCallback
                     #add any last words here; this gets processed no matter what
                 }
             }
-            While ($resp.metadata.length -eq $length)
+            While ($last -lt $total)
         }
         end 
         {
@@ -757,6 +774,8 @@ Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 09/10/2021 sb   Initial release.
 09/13/2021 sb   Added processing for rule(s) deletion.
+09/17/2021 sb   Adding -log parameter to redirect output to log file in working
+                directory as well as the console.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
@@ -839,9 +858,21 @@ Date       By   Updates (newest updates at the top)
         #endregion
 
         if (!$filtered_source_rules_response -and !$filtered_target_rules_response)
-        {
+        {#we didn't find any matching rules
             Throw "$(get-date) [ERROR] There are no Flow rules on $($sourcePc) or $($targetPc) which match prefix $($prefix)!"
         }
+    #endregion
+    
+    #region GET service groups from target
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Getting service groups..." -ForegroundColor Magenta
+
+        #region process target
+            Write-Host "$(get-date) [INFO] Retrieving list of service groups from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
+            $target_service_groups = Get-PrismCentralObjectList -pc $targetPc -object "service_groups" -kind "service_group"
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
+            Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
+        #endregion
     #endregion
 
     #region COMPARE Flow rules
@@ -898,6 +929,7 @@ Date       By   Updates (newest updates at the top)
 
         if ($action -eq "sync")
         {#synchronize (ADD, DELETE, UPDATE)
+            
             #region process ADD
                 if ($add_rules_list)
                 {#there are rules to be added
@@ -905,13 +937,14 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Adding Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $add_rules_list)
                     {#process each rule to add
+                        
                         #region deal with categories
                             #region which categories are used?
                                 #* figure out categories used in this rule
                                 [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules: 
+                                #types of rules (where categories are listed varies depending on the type of rule): 
                                 if ($rule.spec.resources.quarantine_rule)
-                                {
+                                {#this is a quarantine rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
                                     foreach ($category in $rule.spec.resources.quarantine_rule.target_group.filter.params.PSObject.Properties.Name)
                                     {#process each category used in target_group
@@ -923,7 +956,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 elseif ($rule.spec.resources.isolation_rule) 
-                                {
+                                {#this is an isolation rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
                                     foreach ($category in $rule.spec.resources.isolation_rule.first_entity_filter.params.PSObject.Properties.Name)
                                     {#process each category used in first_entity_filter
@@ -943,7 +976,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 elseif ($rule.spec.resources.app_rule) 
-                                {
+                                {#this is an app policy/rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
                                     foreach ($category in $rule.spec.resources.app_rule.outbound_allow_list.filter.params.PSObject.Properties.Name)
                                     {#process each category used in outbound_allow_list
@@ -971,7 +1004,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 else 
-                                {
+                                {#we don't know what type of rule this is
                                     Write-Host "$(get-date) [WARNING] Rule $($rule.spec.Name) is not a supported rule type for replication!" -ForegroundColor Yellow
                                 }
 
@@ -1016,7 +1049,7 @@ Date       By   Updates (newest updates at the top)
                                 }
 
                                 if ($missing_categories_list)
-                                {
+                                {#there are missing categories on target
                                     Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
                                     $missing_categories_list
                                 }
@@ -1025,7 +1058,7 @@ Date       By   Updates (newest updates at the top)
                             #region create missing category:value pairs on target
                                 [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
                                 foreach ($category_value_pair in $missing_categories_list)
-                                {
+                                {#process all missing categories and values
                                     #check if category exists
                                     $category = ($category_value_pair -split ":")[0]
                                     $value = ($category_value_pair -split ":")[1]
@@ -1040,17 +1073,17 @@ Date       By   Updates (newest updates at the top)
 
                                             Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
                                             try 
-                                            {
+                                            {#get the category
                                                 $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                                                 Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
                                                 $processed_categories_list.Add($category) | Out-Null
                                             }
                                             catch 
-                                            {
+                                            {#get category failed, or category was not found
                                                 $saved_error = $_.Exception.Message
                                                 $error_code = ($saved_error -split " ")[3]
                                                 if ($error_code -eq "404") 
-                                                {
+                                                {#category was not found
                                                     Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
                                                     #add category
                                                     $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
@@ -1063,7 +1096,7 @@ Date       By   Updates (newest updates at the top)
                                                     }
                                                     $payload = (ConvertTo-Json $content -Depth 4)
                                                     try 
-                                                    {
+                                                    {#add the category
                                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                                         Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
                                                         if ($debugme) {$resp}
@@ -1071,12 +1104,12 @@ Date       By   Updates (newest updates at the top)
                                                         $processed_categories_list.Add($category) | Out-Null     
                                                     }
                                                     catch 
-                                                    {
+                                                    {#we couldn't add the category
                                                         Throw "$($_.Exception.Message)"
                                                     }  
                                                 }
                                                 else 
-                                                {
+                                                {#we couldn't get the category
                                                     Throw "$($_.Exception.Message)"
                                                 }
                                             }
@@ -1094,14 +1127,14 @@ Date       By   Updates (newest updates at the top)
                                     }
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                     try 
-                                    {
+                                    {#add the value
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                         Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan
                                         if ($debugme) {$resp}
                                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
                                     }
                                     catch 
-                                    {
+                                    {#we couldn't add the value
                                         Throw "$($_.Exception.Message)"
                                     }
                                 }
@@ -1112,9 +1145,9 @@ Date       By   Updates (newest updates at the top)
                             #region which service groups are used?
                                 #* figure out service groups used in this rule
                                 [System.Collections.ArrayList]$used_service_group_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules: 
+                                #types of rules (where categories are listed varies depending on the type of rule): 
                                 if ($rule.spec.resources.app_rule) 
-                                {
+                                {#this is an app rule
                                     foreach ($service_group in $rule.spec.resources.app_rule.outbound_allow_list.service_group_list)
                                     {#process each service group used in outbound_allow_list
                                         $used_service_group_list.Add($service_group) | Out-Null
@@ -1127,57 +1160,40 @@ Date       By   Updates (newest updates at the top)
                             #endregion
 
                             #region are all used service groups on the target?
-                                #get target service groups
-                                $api_server_endpoint = "/api/nutanix/v3/service_groups/list" -f $service_group.uuid
-                                $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
-                                $method = "POST"
-                                $content = @{
-                                    kind="service_group";
-                                    offset=0;
-                                    length=$length
-                                }
-                                $payload = (ConvertTo-Json $content -Depth 4)
-                                #! resume here: find a way to get all service group records when payload doesn't include all metadata info
-                                $target_service_groups = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-
 
                                 [System.Collections.ArrayList]$missing_service_groups_list = New-Object System.Collections.ArrayList($null)
                                 foreach ($service_group in ($used_service_group_list | Select-Object -Unique))
                                 {#process each used service group
+
+                                    #find out what the service group name is (only uuid is kept in rule definition)
                                     $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
                                     $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
                                     $method = "GET"
 
                                     $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 
-                                    Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
-                                    try 
-                                    {
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                                        Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
+                                    #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
+                                    if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
+                                    {#based on its name, that service group does not exist on the target
+                                        $missing_service_groups_list.Add($source_service_group) | Out-Null
                                     }
-                                    catch 
-                                    {
-                                        $saved_error = $_.Exception.Message
-                                        $error_code = ($saved_error -split " ")[3]
-                                        if ($error_code -eq "404") 
-                                        {
-                                            Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
-                                            $missing_categories_list.Add($category_value_pair) | Out-Null
-                                            Continue
+                                    else 
+                                    {#the service group already exists on target, let's update the uuid reference in that rule
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in inbound allow list
+                                            $service_group_inbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
                                         }
-                                        else 
-                                        {
-                                            Write-Host "$saved_error" -ForegroundColor Yellow
-                                            Continue
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in outbound allow list
+                                            $service_group_outbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
                                         }
                                     }
                                 }
 
-                                if ($missing_categories_list)
-                                {
-                                    Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_categories_list
+                                if ($missing_service_groups_list)
+                                {#there are missing service groups
+                                    Write-Host "$(get-date) [DATA] The following service groups need to be added on $($targetPc):" -ForegroundColor White
+                                    $missing_service_groups_list.service_group.name
                                 }
                             #endregion
 
@@ -1217,6 +1233,7 @@ Date       By   Updates (newest updates at the top)
                 }
             #endregion
 
+            
             #region process DELETE
                 if ($remove_rules_list)
                 {#there are rules to be removed
@@ -1233,19 +1250,20 @@ Date       By   Updates (newest updates at the top)
 
                         Write-Host "$(get-date) [STEP] Deleting Flow rule $($rule.spec.Name) on $($targetPc)" -ForegroundColor Green
                         try 
-                        {
+                        {#delete the rule
                             $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                             Write-Host "$(Get-Date) [SUCCESS] Deleted Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan
                             
                         }
                         catch 
-                        {
+                        {#we couldn't delete the rule
                             Throw "$($_.Exception.Message)"
                         }
                     }
                 }
             #endregion
 
+            
             #region process UPDATE 
                 if ($update_rules_list)
                 {#there are rules to be updated
@@ -1253,13 +1271,14 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Updating Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $update_rules_list)
                     {#process each rule to update
+                        
                         #region deal with categories
                             #region which categories are used?
                                 #* figure out categories used in this rule
                                 [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules: 
+                                #types of rules (where categories are listed varies depending on the type of rule):
                                 if ($rule.spec.resources.quarantine_rule)
-                                {
+                                {#this is a quarantine rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
                                     foreach ($category in $rule.spec.resources.quarantine_rule.target_group.filter.params.PSObject.Properties.Name)
                                     {#process each category used in target_group
@@ -1271,7 +1290,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 elseif ($rule.spec.resources.isolation_rule) 
-                                {
+                                {#this is an isolation rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
                                     foreach ($category in $rule.spec.resources.isolation_rule.first_entity_filter.params.PSObject.Properties.Name)
                                     {#process each category used in first_entity_filter
@@ -1291,7 +1310,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 elseif ($rule.spec.resources.app_rule) 
-                                {
+                                {#this is an app rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
                                     foreach ($category in $rule.spec.resources.app_rule.outbound_allow_list.filter.params.PSObject.Properties.Name)
                                     {#process each category used in outbound_allow_list
@@ -1319,7 +1338,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 else 
-                                {
+                                {#we don't know what type of rule this is
                                     Write-Host "$(get-date) [WARNING] Rule $($rule.spec.Name) is not a supported rule type for replication!" -ForegroundColor Yellow
                                 }
 
@@ -1341,22 +1360,22 @@ Date       By   Updates (newest updates at the top)
 
                                     Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
                                     try 
-                                    {
+                                    {#get the category:pair
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                                         Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
                                     }
                                     catch 
-                                    {
+                                    {#we couldn't get the category:pair or it does not exist
                                         $saved_error = $_.Exception.Message
                                         $error_code = ($saved_error -split " ")[3]
                                         if ($error_code -eq "404") 
-                                        {
+                                        {#the category:pair does not exist
                                             Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
                                             $missing_categories_list.Add($category_value_pair) | Out-Null
                                             Continue
                                         }
                                         else 
-                                        {
+                                        {#we couldn't get the category:pair
                                             Write-Host "$saved_error" -ForegroundColor Yellow
                                             Continue
                                         }
@@ -1364,7 +1383,7 @@ Date       By   Updates (newest updates at the top)
                                 }
 
                                 if ($missing_categories_list)
-                                {
+                                {#there are missing category:value pairs
                                     Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
                                     $missing_categories_list
                                 }
@@ -1373,7 +1392,7 @@ Date       By   Updates (newest updates at the top)
                             #region create missing category:value pairs on target
                                 [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
                                 foreach ($category_value_pair in $missing_categories_list)
-                                {
+                                {#process each missing category:value pair
                                     #check if category exists
                                     $category = ($category_value_pair -split ":")[0]
                                     $value = ($category_value_pair -split ":")[1]
@@ -1388,17 +1407,17 @@ Date       By   Updates (newest updates at the top)
 
                                             Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
                                             try 
-                                            {
+                                            {#get the category
                                                 $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                                                 Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
                                                 $processed_categories_list.Add($category) | Out-Null
                                             }
                                             catch 
-                                            {
+                                            {#we couldn't get the category or it does not exist
                                                 $saved_error = $_.Exception.Message
                                                 $error_code = ($saved_error -split " ")[3]
                                                 if ($error_code -eq "404") 
-                                                {
+                                                {#the category does not exist
                                                     Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
                                                     #add category
                                                     $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
@@ -1411,18 +1430,18 @@ Date       By   Updates (newest updates at the top)
                                                     }
                                                     $payload = (ConvertTo-Json $content -Depth 4)
                                                     try 
-                                                    {
+                                                    {#add the category
                                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                                         Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
                                                         $processed_categories_list.Add($category) | Out-Null     
                                                     }
                                                     catch 
-                                                    {
+                                                    {#we couldn't add the category
                                                         Throw "$($_.Exception.Message)"
                                                     }  
                                                 }
                                                 else 
-                                                {
+                                                {#we couldn't get the category
                                                     Throw "$($_.Exception.Message)"
                                                 }
                                             }
@@ -1440,12 +1459,12 @@ Date       By   Updates (newest updates at the top)
                                     }
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                     try 
-                                    {
+                                    {#add the value
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                         Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan   
                                     }
                                     catch 
-                                    {
+                                    {#we couldn't add the value
                                         Throw "$($_.Exception.Message)"
                                     }
                                 }
@@ -1504,7 +1523,7 @@ Date       By   Updates (newest updates at the top)
     Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
     
     if ($log) 
-    {
+    {#we had started a transcript to log file, so let's stop it now that we are done
         Stop-Transcript
     }
 
