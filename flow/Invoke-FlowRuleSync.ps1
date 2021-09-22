@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 17th 2021
+  Revision: September 22nd 2021
 #>
 
 
@@ -776,6 +776,7 @@ Date       By   Updates (newest updates at the top)
 09/13/2021 sb   Added processing for rule(s) deletion.
 09/17/2021 sb   Adding -log parameter to redirect output to log file in working
                 directory as well as the console.
+09/22/2021 sb   Adding service and address groups sync (issue #9).
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
@@ -802,7 +803,7 @@ Date       By   Updates (newest updates at the top)
 
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-    $length = 100
+    $length = 600
 #endregion
 
 
@@ -829,13 +830,11 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 
-#todo: wip: learn to deal with service groups: lookup service group name from uuid, check it exists on target and what the uuid is, create it if necessary, update uuid reference in payload (right now, that section is simply removed)
 #todo: wip: implement correct processing of isolation rules: return warning rather than failure when duplicate isolation rule exists
 #todo: improve: rule add/update/delete returns task uuid: check on task status: no task uuid is returned... check on status later?
 #todo: improve: add export action for rules from source to json (for backup purposes)
 #todo: improve: move code to figure out categories to a function
 #todo: improve: implement category:value pair delete
-#todo: improve: process service and address groups updates
 #! does not process correctly if rule has been updated on target (exp tested: service group)
 
 #region main
@@ -874,6 +873,18 @@ Date       By   Updates (newest updates at the top)
             $target_service_groups = Get-PrismCentralObjectList -pc $targetPc -object "service_groups" -kind "service_group"
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
             Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
+        #endregion
+    #endregion
+
+    #region GET address groups from target
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Getting address groups..." -ForegroundColor Magenta
+
+        #region process target
+            Write-Host "$(get-date) [INFO] Retrieving list of address groups from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
+            $target_address_groups = Get-PrismCentralObjectList -pc $targetPc -object "address_groups" -kind "address_group"
+            Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of address groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
+            Write-Host "$(get-date) [DATA] There are $($target_address_groups.count) address groups on target Prism Central $($targetPc)..." -ForegroundColor White
         #endregion
     #endregion
 
@@ -1218,17 +1229,106 @@ Date       By   Updates (newest updates at the top)
                                         Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
                                         if ($debugme) {$resp}
                                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
                                         {#that service group is used in inbound allow list, let's update the uuid with that of the newly created service group
                                             $service_group_inbound.uuid = $resp.uuid
                                         }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
                                         {#that service group is used in outbound allow list, let's update the uuid with that of the newly created service group
                                             $service_group_outbound.uuid = $resp.uuid
                                         }
                                     }
                                     catch 
                                     {#we couldn't add the service group
+                                        Throw "$($_.Exception.Message)"
+                                    }
+                                }
+                            #endregion
+                        #endregion
+                        
+                        #region deal with address groups
+                            #region which address groups are used?
+                                #* figure out address groups used in this rule
+                                Write-Host "$(get-date) [INFO] Examining address groups..." -ForegroundColor Green
+                                [System.Collections.ArrayList]$used_address_group_list = New-Object System.Collections.ArrayList($null)
+                                #types of rules (where categories are listed varies depending on the type of rule): 
+                                if ($rule.spec.resources.app_rule) 
+                                {#this is an app rule
+                                    foreach ($address_group in $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list)
+                                    {#process each address group used in outbound_allow_list
+                                        $used_address_group_list.Add($address_group) | Out-Null
+                                    }
+                                    foreach ($address_group in $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list)
+                                    {#process each address group used in inbound_allow_list
+                                        $used_address_group_list.Add($address_group) | Out-Null
+                                    }
+                                }
+                            #endregion
+
+                            #region are all used address groups on the target?
+
+                                [System.Collections.ArrayList]$missing_address_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
+                                {#process each used address group
+
+                                    #find out what the address group name is (only uuid is kept in rule definition)
+                                    $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
+                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
+                                    $method = "GET"
+
+                                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                                    if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
+                                    {#based on its name, that address group does not exist on the target
+                                        $missing_address_groups_list.Add($source_address_group) | Out-Null
+                                    }
+                                    else 
+                                    {#the address group already exists on target, let's update the uuid reference in that rule
+                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
+                                        {#that address group is used in inbound allow list
+                                            $address_group_inbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                        }
+                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
+                                        {#that address group is used in outbound allow list
+                                            $address_group_outbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                        }
+                                    }
+                                }
+
+                                if ($missing_address_groups_list)
+                                {#there are missing address groups
+                                    Write-Host "$(get-date) [DATA] The following address groups need to be added on $($targetPc):" -ForegroundColor White
+                                    $missing_address_groups_list.address_group.name
+                                }
+                            #endregion
+
+                            #region create missing address groups on target
+                                [System.Collections.ArrayList]$processed_address_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($address_group in $missing_address_groups_list)
+                                {#process all missing address groups
+                                    #add address group
+                                    $api_server_endpoint = "/api/nutanix/v3/address_groups" -f $category,$value
+                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                    $method = "POST"
+                                    $payload = (ConvertTo-Json $address_group.address_group -Depth 10)
+                                    Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
+                                    try 
+                                    {#add address group
+                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                        Write-Host "$(Get-Date) [SUCCESS] Added address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Cyan
+                                        if ($debugme) {$resp}
+                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
+                                        {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
+                                            $address_group_inbound.uuid = $resp.uuid
+                                        }
+                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
+                                        {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
+                                            $address_group_outbound.uuid = $resp.uuid
+                                        }
+                                    }
+                                    catch 
+                                    {#we couldn't add the address group
                                         Throw "$($_.Exception.Message)"
                                     }
                                 }
@@ -1579,11 +1679,11 @@ Date       By   Updates (newest updates at the top)
                                         Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
                                         if ($debugme) {$resp}
                                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
                                         {#that service group is used in inbound allow list, let's update the uuid with that of the newly created service group
                                             $service_group_inbound.uuid = $resp.uuid
                                         }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
                                         {#that service group is used in outbound allow list, let's update the uuid with that of the newly created service group
                                             $service_group_outbound.uuid = $resp.uuid
                                         }
@@ -1596,6 +1696,95 @@ Date       By   Updates (newest updates at the top)
                             #endregion
                         #endregion
                         
+                        #region deal with address groups
+                            #region which address groups are used?
+                                #* figure out address groups used in this rule
+                                Write-Host "$(get-date) [INFO] Examining address groups..." -ForegroundColor Green
+                                [System.Collections.ArrayList]$used_address_group_list = New-Object System.Collections.ArrayList($null)
+                                #types of rules (where categories are listed varies depending on the type of rule): 
+                                if ($rule.spec.resources.app_rule) 
+                                {#this is an app rule
+                                    foreach ($address_group in $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list)
+                                    {#process each address group used in outbound_allow_list
+                                        $used_address_group_list.Add($address_group) | Out-Null
+                                    }
+                                    foreach ($address_group in $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list)
+                                    {#process each address group used in inbound_allow_list
+                                        $used_address_group_list.Add($address_group) | Out-Null
+                                    }
+                                }
+                            #endregion
+
+                            #region are all used address groups on the target?
+
+                                [System.Collections.ArrayList]$missing_address_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
+                                {#process each used address group
+
+                                    #find out what the address group name is (only uuid is kept in rule definition)
+                                    $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
+                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
+                                    $method = "GET"
+
+                                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                                    if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
+                                    {#based on its name, that address group does not exist on the target
+                                        $missing_address_groups_list.Add($source_address_group) | Out-Null
+                                    }
+                                    else 
+                                    {#the address group already exists on target, let's update the uuid reference in that rule
+                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
+                                        {#that address group is used in inbound allow list
+                                            $address_group_inbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                        }
+                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
+                                        {#that address group is used in outbound allow list
+                                            $address_group_outbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                        }
+                                    }
+                                }
+
+                                if ($missing_address_groups_list)
+                                {#there are missing address groups
+                                    Write-Host "$(get-date) [DATA] The following address groups need to be added on $($targetPc):" -ForegroundColor White
+                                    $missing_address_groups_list.address_group.name
+                                }
+                            #endregion
+
+                            #region create missing address groups on target
+                                [System.Collections.ArrayList]$processed_address_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($address_group in $missing_address_groups_list)
+                                {#process all missing address groups
+                                    #add address group
+                                    $api_server_endpoint = "/api/nutanix/v3/address_groups" -f $category,$value
+                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                    $method = "POST"
+                                    $payload = (ConvertTo-Json $address_group.address_group -Depth 10)
+                                    Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
+                                    try 
+                                    {#add address group
+                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                        Write-Host "$(Get-Date) [SUCCESS] Added address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Cyan
+                                        if ($debugme) {$resp}
+                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
+                                        {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
+                                            $address_group_inbound.uuid = $resp.uuid
+                                        }
+                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
+                                        {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
+                                            $address_group_outbound.uuid = $resp.uuid
+                                        }
+                                    }
+                                    catch 
+                                    {#we couldn't add the address group
+                                        Throw "$($_.Exception.Message)"
+                                    }
+                                }
+                            #endregion
+                        #endregion
+
                         #region update rule on target
                             $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
