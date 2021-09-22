@@ -835,6 +835,8 @@ Date       By   Updates (newest updates at the top)
 #todo: improve: add export action for rules from source to json (for backup purposes)
 #todo: improve: move code to figure out categories to a function
 #todo: improve: implement category:value pair delete
+#todo: improve: process service and address groups updates
+#! does not process correctly if rule has been updated on target (exp tested: service group)
 
 #region main
 
@@ -907,6 +909,7 @@ Date       By   Updates (newest updates at the top)
         [System.Collections.ArrayList]$update_rules_list = New-Object System.Collections.ArrayList($null)
         foreach ($rule in $filtered_source_rules_response) 
         {#compare source with target
+            #! currently, this will always not match if a service or address group is in use and there is no way to find out if this is a new group or the same since all we're tracking is the uuid...
             if ($target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name})
             {#we have a matching rule on target, let's compare
                 if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
@@ -941,6 +944,7 @@ Date       By   Updates (newest updates at the top)
                         #region deal with categories
                             #region which categories are used?
                                 #* figure out categories used in this rule
+                                Write-Host "$(get-date) [INFO] Examining categories..." -ForegroundColor Green
                                 [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
                                 #types of rules (where categories are listed varies depending on the type of rule): 
                                 if ($rule.spec.resources.quarantine_rule)
@@ -1144,6 +1148,7 @@ Date       By   Updates (newest updates at the top)
                         #region deal with service groups
                             #region which service groups are used?
                                 #* figure out service groups used in this rule
+                                Write-Host "$(get-date) [INFO] Examining service groups..." -ForegroundColor Green
                                 [System.Collections.ArrayList]$used_service_group_list = New-Object System.Collections.ArrayList($null)
                                 #types of rules (where categories are listed varies depending on the type of rule): 
                                 if ($rule.spec.resources.app_rule) 
@@ -1162,7 +1167,7 @@ Date       By   Updates (newest updates at the top)
                             #region are all used service groups on the target?
 
                                 [System.Collections.ArrayList]$missing_service_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($service_group in ($used_service_group_list | Select-Object -Unique))
+                                foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
                                 {#process each used service group
 
                                     #find out what the service group name is (only uuid is kept in rule definition)
@@ -1198,6 +1203,35 @@ Date       By   Updates (newest updates at the top)
                             #endregion
 
                             #region create missing service groups on target
+                                [System.Collections.ArrayList]$processed_service_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($service_group in $missing_service_groups_list)
+                                {#process all missing service groups
+                                    #add service group
+                                    $api_server_endpoint = "/api/nutanix/v3/service_groups" -f $category,$value
+                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                    $method = "POST"
+                                    $payload = (ConvertTo-Json $service_group.service_group -Depth 10)
+                                    Write-Host "$(Get-Date) [INFO] Adding service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Green
+                                    try 
+                                    {#add service group
+                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                        Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
+                                        if ($debugme) {$resp}
+                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in inbound allow list, let's update the uuid with that of the newly created service group
+                                            $service_group_inbound.uuid = $resp.uuid
+                                        }
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in outbound allow list, let's update the uuid with that of the newly created service group
+                                            $service_group_outbound.uuid = $resp.uuid
+                                        }
+                                    }
+                                    catch 
+                                    {#we couldn't add the service group
+                                        Throw "$($_.Exception.Message)"
+                                    }
+                                }
                             #endregion
                         #endregion
 
@@ -1275,6 +1309,7 @@ Date       By   Updates (newest updates at the top)
                         #region deal with categories
                             #region which categories are used?
                                 #* figure out categories used in this rule
+                                Write-Host "$(get-date) [INFO] Examining categories..." -ForegroundColor Green
                                 [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
                                 #types of rules (where categories are listed varies depending on the type of rule):
                                 if ($rule.spec.resources.quarantine_rule)
@@ -1473,12 +1508,91 @@ Date       By   Updates (newest updates at the top)
 
                         #region deal with service groups
                             #region which service groups are used?
+                                #* figure out service groups used in this rule
+                                Write-Host "$(get-date) [INFO] Examining service groups..." -ForegroundColor Green
+                                [System.Collections.ArrayList]$used_service_group_list = New-Object System.Collections.ArrayList($null)
+                                #types of rules (where categories are listed varies depending on the type of rule): 
+                                if ($rule.spec.resources.app_rule) 
+                                {#this is an app rule
+                                    foreach ($service_group in $rule.spec.resources.app_rule.outbound_allow_list.service_group_list)
+                                    {#process each service group used in outbound_allow_list
+                                        $used_service_group_list.Add($service_group) | Out-Null
+                                    }
+                                    foreach ($service_group in $rule.spec.resources.app_rule.inbound_allow_list.service_group_list)
+                                    {#process each service group used in inbound_allow_list
+                                        $used_service_group_list.Add($service_group) | Out-Null
+                                    }
+                                }
                             #endregion
 
                             #region are all used service groups on the target?
+
+                                [System.Collections.ArrayList]$missing_service_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
+                                {#process each used service group
+
+                                    #find out what the service group name is (only uuid is kept in rule definition)
+                                    $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
+                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
+                                    $method = "GET"
+
+                                    $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                                    #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
+                                    if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
+                                    {#based on its name, that service group does not exist on the target
+                                        $missing_service_groups_list.Add($source_service_group) | Out-Null
+                                    }
+                                    else 
+                                    {#the service group already exists on target, let's update the uuid reference in that rule
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in inbound allow list
+                                            $service_group_inbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                                        }
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in outbound allow list
+                                            $service_group_outbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                                        }
+                                    }
+                                }
+
+                                if ($missing_service_groups_list)
+                                {#there are missing service groups
+                                    Write-Host "$(get-date) [DATA] The following service groups need to be added on $($targetPc):" -ForegroundColor White
+                                    $missing_service_groups_list.service_group.name
+                                }
                             #endregion
 
                             #region create missing service groups on target
+                                [System.Collections.ArrayList]$processed_service_groups_list = New-Object System.Collections.ArrayList($null)
+                                foreach ($service_group in $missing_service_groups_list)
+                                {#process all missing service groups
+                                    #add service group
+                                    $api_server_endpoint = "/api/nutanix/v3/service_groups" -f $category,$value
+                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                    $method = "POST"
+                                    $payload = (ConvertTo-Json $service_group.service_group -Depth 10)
+                                    Write-Host "$(Get-Date) [INFO] Adding service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Green
+                                    try 
+                                    {#add service group
+                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                        Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
+                                        if ($debugme) {$resp}
+                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in inbound allow list, let's update the uuid with that of the newly created service group
+                                            $service_group_inbound.uuid = $resp.uuid
+                                        }
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in outbound allow list, let's update the uuid with that of the newly created service group
+                                            $service_group_outbound.uuid = $resp.uuid
+                                        }
+                                    }
+                                    catch 
+                                    {#we couldn't add the service group
+                                        Throw "$($_.Exception.Message)"
+                                    }
+                                }
                             #endregion
                         #endregion
                         
