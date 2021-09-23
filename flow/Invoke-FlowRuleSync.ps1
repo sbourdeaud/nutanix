@@ -558,8 +558,15 @@ public class ServerCertificateValidationCallback
             }
             else 
             {
-                if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
-                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message" 
+                if ($saved_error_message -match 'rule already exists')
+                {
+                    Throw "$(get-date) [WARNING] $saved_error_message" 
+                }
+                else 
+                {
+                    if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                    Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"    
+                }
             }
         }
         finally {
@@ -1360,7 +1367,15 @@ Date       By   Updates (newest updates at the top)
                             }
                             catch 
                             {#we couldn't create the network policy
-                                Throw "$($_.Exception.Message)"
+                                if ($_.Exception.Message -match 'rule already exists')
+                                {#the isolation rule already exists, let's just warn about this
+                                    Write-Host "$(Get-Date) [WARNING] Could not add isolation rule $($rule.spec.Name) to $targetPc" -ForegroundColor Yellow
+                                    Write-Host "$($_.Exception.Message)" -ForegroundColor Yellow
+                                }
+                                else 
+                                {
+                                    Throw "$($_.Exception.Message)"   
+                                }
                             }                            
                         #endregion
 
