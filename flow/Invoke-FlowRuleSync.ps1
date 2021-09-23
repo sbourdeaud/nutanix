@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 22nd 2021
+  Revision: September 23rd 2021
 #>
 
 
@@ -777,6 +777,8 @@ Date       By   Updates (newest updates at the top)
 09/17/2021 sb   Adding -log parameter to redirect output to log file in working
                 directory as well as the console.
 09/22/2021 sb   Adding service and address groups sync (issue #9).
+09/23/2021 sb   Fixed an issue when categories were added to a rule in outbound
+                and/or outbound.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
@@ -961,9 +963,9 @@ Date       By   Updates (newest updates at the top)
                                 if ($rule.spec.resources.quarantine_rule)
                                 {#this is a quarantine rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
-                                    foreach ($category in $rule.spec.resources.quarantine_rule.target_group.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.quarantine_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in target_group
-                                        foreach ($value in $rule.spec.resources.quarantine_rule.target_group.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.quarantine_rule.target_group.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
@@ -973,17 +975,17 @@ Date       By   Updates (newest updates at the top)
                                 elseif ($rule.spec.resources.isolation_rule) 
                                 {#this is an isolation rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
-                                    foreach ($category in $rule.spec.resources.isolation_rule.first_entity_filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.isolation_rule.first_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in first_entity_filter
-                                        foreach ($value in $rule.spec.resources.isolation_rule.first_entity_filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.isolation_rule.first_entity_filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
                                         }
                                     }
-                                    foreach ($category in $rule.spec.resources.isolation_rule.second_entity_filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.isolation_rule.second_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in second_entity_filter
-                                        foreach ($value in $rule.spec.resources.isolation_rule.second_entity_filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.isolation_rule.second_entity_filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
@@ -993,25 +995,25 @@ Date       By   Updates (newest updates at the top)
                                 elseif ($rule.spec.resources.app_rule) 
                                 {#this is an app policy/rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
-                                    foreach ($category in $rule.spec.resources.app_rule.outbound_allow_list.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in outbound_allow_list
-                                        foreach ($value in $rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
                                         }
                                     }
-                                    foreach ($category in $rule.spec.resources.app_rule.target_group.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.app_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in target_group
-                                        foreach ($value in $rule.spec.resources.app_rule.target_group.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.app_rule.target_group.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
                                         }
                                     }
-                                    foreach ($category in $rule.spec.resources.app_rule.inbound_allow_list.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in inbound_allow_list
-                                        foreach ($value in $rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
@@ -1411,13 +1413,13 @@ Date       By   Updates (newest updates at the top)
                                 #* figure out categories used in this rule
                                 Write-Host "$(get-date) [INFO] Examining categories..." -ForegroundColor Green
                                 [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule):
+                                #types of rules (where categories are listed varies depending on the type of rule): 
                                 if ($rule.spec.resources.quarantine_rule)
                                 {#this is a quarantine rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
-                                    foreach ($category in $rule.spec.resources.quarantine_rule.target_group.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.quarantine_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in target_group
-                                        foreach ($value in $rule.spec.resources.quarantine_rule.target_group.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.quarantine_rule.target_group.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
@@ -1427,17 +1429,17 @@ Date       By   Updates (newest updates at the top)
                                 elseif ($rule.spec.resources.isolation_rule) 
                                 {#this is an isolation rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
-                                    foreach ($category in $rule.spec.resources.isolation_rule.first_entity_filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.isolation_rule.first_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in first_entity_filter
-                                        foreach ($value in $rule.spec.resources.isolation_rule.first_entity_filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.isolation_rule.first_entity_filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
                                         }
                                     }
-                                    foreach ($category in $rule.spec.resources.isolation_rule.second_entity_filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.isolation_rule.second_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in second_entity_filter
-                                        foreach ($value in $rule.spec.resources.isolation_rule.second_entity_filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.isolation_rule.second_entity_filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
@@ -1445,27 +1447,27 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 elseif ($rule.spec.resources.app_rule) 
-                                {#this is an app rule
+                                {#this is an app policy/rule
                                     Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
-                                    foreach ($category in $rule.spec.resources.app_rule.outbound_allow_list.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in outbound_allow_list
-                                        foreach ($value in $rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
                                         }
                                     }
-                                    foreach ($category in $rule.spec.resources.app_rule.target_group.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.app_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in target_group
-                                        foreach ($value in $rule.spec.resources.app_rule.target_group.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.app_rule.target_group.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
                                         }
                                     }
-                                    foreach ($category in $rule.spec.resources.app_rule.inbound_allow_list.filter.params.PSObject.Properties.Name)
+                                    foreach ($category in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
                                     {#process each category used in inbound_allow_list
-                                        foreach ($value in $rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category")
+                                        foreach ($value in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category" | Where-Object {$_}))
                                         {#process each value for this category
                                             $category_value_pair = "$($category):$($value)"
                                             $used_categories_list.Add($category_value_pair) | Out-Null
@@ -1495,22 +1497,22 @@ Date       By   Updates (newest updates at the top)
 
                                     Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
                                     try 
-                                    {#get the category:pair
+                                    {
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                                         Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
                                     }
                                     catch 
-                                    {#we couldn't get the category:pair or it does not exist
+                                    {
                                         $saved_error = $_.Exception.Message
                                         $error_code = ($saved_error -split " ")[3]
                                         if ($error_code -eq "404") 
-                                        {#the category:pair does not exist
+                                        {
                                             Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
                                             $missing_categories_list.Add($category_value_pair) | Out-Null
                                             Continue
                                         }
                                         else 
-                                        {#we couldn't get the category:pair
+                                        {
                                             Write-Host "$saved_error" -ForegroundColor Yellow
                                             Continue
                                         }
@@ -1518,7 +1520,7 @@ Date       By   Updates (newest updates at the top)
                                 }
 
                                 if ($missing_categories_list)
-                                {#there are missing category:value pairs
+                                {#there are missing categories on target
                                     Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
                                     $missing_categories_list
                                 }
@@ -1527,7 +1529,7 @@ Date       By   Updates (newest updates at the top)
                             #region create missing category:value pairs on target
                                 [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
                                 foreach ($category_value_pair in $missing_categories_list)
-                                {#process each missing category:value pair
+                                {#process all missing categories and values
                                     #check if category exists
                                     $category = ($category_value_pair -split ":")[0]
                                     $value = ($category_value_pair -split ":")[1]
@@ -1548,11 +1550,11 @@ Date       By   Updates (newest updates at the top)
                                                 $processed_categories_list.Add($category) | Out-Null
                                             }
                                             catch 
-                                            {#we couldn't get the category or it does not exist
+                                            {#get category failed, or category was not found
                                                 $saved_error = $_.Exception.Message
                                                 $error_code = ($saved_error -split " ")[3]
                                                 if ($error_code -eq "404") 
-                                                {#the category does not exist
+                                                {#category was not found
                                                     Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
                                                     #add category
                                                     $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
@@ -1568,6 +1570,8 @@ Date       By   Updates (newest updates at the top)
                                                     {#add the category
                                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                                         Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
+                                                        if ($debugme) {$resp}
+                                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
                                                         $processed_categories_list.Add($category) | Out-Null     
                                                     }
                                                     catch 
@@ -1596,7 +1600,9 @@ Date       By   Updates (newest updates at the top)
                                     try 
                                     {#add the value
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan   
+                                        Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan
+                                        if ($debugme) {$resp}
+                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
                                     }
                                     catch 
                                     {#we couldn't add the value
