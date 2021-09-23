@@ -839,7 +839,6 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 
-#todo: wip: implement correct processing of isolation rules: return warning rather than failure when duplicate isolation rule exists
 #todo: improve: rule add/update/delete returns task uuid: check on task status: no task uuid is returned... check on status later?
 #todo: improve: add export action for rules from source to json (for backup purposes)
 #todo: improve: move code to figure out categories to a function
