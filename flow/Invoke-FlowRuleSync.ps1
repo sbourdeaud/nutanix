@@ -1203,13 +1203,20 @@ Date       By   Updates (newest updates at the top)
                                     }
                                     else 
                                     {#the service group already exists on target, let's update the uuid reference in that rule
+                                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
                                         if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
                                         {#that service group is used in inbound allow list
-                                            $service_group_inbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                                            ForEach ($service_group_item in $service_group_inbound)
+                                            {
+                                                $service_group_item.uuid = $target_service_group_uuid
+                                            } 
                                         }
                                         if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
                                         {#that service group is used in outbound allow list
-                                            $service_group_outbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                                            ForEach ($service_group_item in $service_group_outbound)
+                                            {
+                                                $service_group_item.uuid = $target_service_group_uuid
+                                            }
                                         }
                                     }
                                 }
@@ -1236,14 +1243,19 @@ Date       By   Updates (newest updates at the top)
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                         Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
                                         if ($debugme) {$resp}
-                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
-                                        {#that service group is used in inbound allow list, let's update the uuid with that of the newly created service group
-                                            $service_group_inbound.uuid = $resp.uuid
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in inbound allow list
+                                            ForEach ($service_group_item in $service_group_inbound)
+                                            {
+                                                $service_group_item.uuid = $resp.uuid
+                                            } 
                                         }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
-                                        {#that service group is used in outbound allow list, let's update the uuid with that of the newly created service group
-                                            $service_group_outbound.uuid = $resp.uuid
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in outbound allow list
+                                            ForEach ($service_group_item in $service_group_outbound)
+                                            {
+                                                $service_group_item.uuid = $resp.uuid
+                                            }
                                         }
                                     }
                                     catch 
@@ -1292,13 +1304,20 @@ Date       By   Updates (newest updates at the top)
                                     }
                                     else 
                                     {#the address group already exists on target, let's update the uuid reference in that rule
+                                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
                                         if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
                                         {#that address group is used in inbound allow list
-                                            $address_group_inbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                            ForEach ($address_group_item in $address_group_inbound)
+                                            {
+                                                $address_group_item.uuid = $target_address_group_uuid
+                                            }
                                         }
                                         if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
                                         {#that address group is used in outbound allow list
-                                            $address_group_outbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                            ForEach ($address_group_item in $address_group_outbound)
+                                            {
+                                                $address_group_item.uuid = $target_address_group_uuid
+                                            }
                                         }
                                     }
                                 }
@@ -1328,11 +1347,17 @@ Date       By   Updates (newest updates at the top)
                                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
                                         if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
                                         {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
-                                            $address_group_inbound.uuid = $resp.uuid
+                                            ForEach ($address_group_item in $address_group_inbound)
+                                            {
+                                                $address_group_item.uuid = $resp.uuid
+                                            }
                                         }
                                         if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
                                         {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
-                                            $address_group_outbound.uuid = $resp.uuid
+                                            ForEach ($address_group_item in $address_group_outbound)
+                                            {
+                                                $address_group_item.uuid = $resp.uuid
+                                            }
                                         }
                                     }
                                     catch 
@@ -1665,13 +1690,20 @@ Date       By   Updates (newest updates at the top)
                                     }
                                     else 
                                     {#the service group already exists on target, let's update the uuid reference in that rule
+                                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
                                         if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
                                         {#that service group is used in inbound allow list
-                                            $service_group_inbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                                            ForEach ($service_group_item in $service_group_inbound)
+                                            {
+                                                $service_group_item.uuid = $target_service_group_uuid
+                                            } 
                                         }
                                         if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
                                         {#that service group is used in outbound allow list
-                                            $service_group_outbound.uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                                            ForEach ($service_group_item in $service_group_outbound)
+                                            {
+                                                $service_group_item.uuid = $target_service_group_uuid
+                                            }
                                         }
                                     }
                                 }
@@ -1698,14 +1730,19 @@ Date       By   Updates (newest updates at the top)
                                         $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                                         Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
                                         if ($debugme) {$resp}
-                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
-                                        {#that service group is used in inbound allow list, let's update the uuid with that of the newly created service group
-                                            $service_group_inbound.uuid = $resp.uuid
+                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in inbound allow list
+                                            ForEach ($service_group_item in $service_group_inbound)
+                                            {
+                                                $service_group_item.uuid = $resp.uuid
+                                            } 
                                         }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $service_group.uuid})
-                                        {#that service group is used in outbound allow list, let's update the uuid with that of the newly created service group
-                                            $service_group_outbound.uuid = $resp.uuid
+                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                                        {#that service group is used in outbound allow list
+                                            ForEach ($service_group_item in $service_group_outbound)
+                                            {
+                                                $service_group_item.uuid = $resp.uuid
+                                            }
                                         }
                                     }
                                     catch 
@@ -1754,13 +1791,20 @@ Date       By   Updates (newest updates at the top)
                                     }
                                     else 
                                     {#the address group already exists on target, let's update the uuid reference in that rule
+                                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
                                         if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
                                         {#that address group is used in inbound allow list
-                                            $address_group_inbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                            ForEach ($address_group_item in $address_group_inbound)
+                                            {
+                                                $address_group_item.uuid = $target_address_group_uuid
+                                            }
                                         }
                                         if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
                                         {#that address group is used in outbound allow list
-                                            $address_group_outbound.uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                                            ForEach ($address_group_item in $address_group_outbound)
+                                            {
+                                                $address_group_item.uuid = $target_address_group_uuid
+                                            }
                                         }
                                     }
                                 }
@@ -1790,11 +1834,17 @@ Date       By   Updates (newest updates at the top)
                                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
                                         if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
                                         {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
-                                            $address_group_inbound.uuid = $resp.uuid
+                                            ForEach ($address_group_item in $address_group_inbound)
+                                            {
+                                                $address_group_item.uuid = $resp.uuid
+                                            }
                                         }
                                         if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
                                         {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
-                                            $address_group_outbound.uuid = $resp.uuid
+                                            ForEach ($address_group_item in $address_group_outbound)
+                                            {
+                                                $address_group_item.uuid = $resp.uuid
+                                            }
                                         }
                                     }
                                     catch 
