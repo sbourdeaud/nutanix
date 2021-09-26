@@ -52,163 +52,163 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 #region functions
     #this function is used to process output to console (timestamped and color coded) and log file
     function Write-LogOutput
-    {
-    <#
-    .SYNOPSIS
-    Outputs color coded messages to the screen and/or log file based on the category.
+    {#used to format output
+        <#
+        .SYNOPSIS
+        Outputs color coded messages to the screen and/or log file based on the category.
 
-    .DESCRIPTION
-    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+        .DESCRIPTION
+        This function is used to produce screen and log output which is categorized, time stamped and color coded.
 
-    .PARAMETER Category
-    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+        .PARAMETER Category
+        This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
 
-    .PARAMETER Message
-    This is the actual message you want to display.
+        .PARAMETER Message
+        This is the actual message you want to display.
 
-    .PARAMETER LogFile
-    If you want to log output to a file as well, use logfile to pass the log file full path name.
+        .PARAMETER LogFile
+        If you want to log output to a file as well, use logfile to pass the log file full path name.
 
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
 
-    .EXAMPLE
-    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-    Displays an error message.
+        .EXAMPLE
+        .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
+        Displays an error message.
 
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
 
-    param
-    (
-        [Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
-        [string]
-        $Category,
+        param
+        (
+            [Parameter(Mandatory)]
+            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
+            [string]
+            $Category,
 
-        [string]
-        $Message,
+            [string]
+            $Message,
 
-        [string]
-        $LogFile
-    )
+            [string]
+            $LogFile
+        )
 
-    process
-    {
-        $Date = get-date #getting the date so we can timestamp the output entry
-        $FgColor = "Gray" #resetting the foreground/text color
-        switch ($Category) #we'll change the text color depending on the selected category
+        process
         {
-            "INFO" {$FgColor = "Green"}
-            "WARNING" {$FgColor = "Yellow"}
-            "ERROR" {$FgColor = "Red"}
-            "SUM" {$FgColor = "Magenta"}
-            "SUCCESS" {$FgColor = "Cyan"}
-            "STEP" {$FgColor = "Magenta"}
-            "DEBUG" {$FgColor = "White"}
-            "DATA" {$FgColor = "Gray"}
-        }
+            $Date = get-date #getting the date so we can timestamp the output entry
+            $FgColor = "Gray" #resetting the foreground/text color
+            switch ($Category) #we'll change the text color depending on the selected category
+            {
+                "INFO" {$FgColor = "Green"}
+                "WARNING" {$FgColor = "Yellow"}
+                "ERROR" {$FgColor = "Red"}
+                "SUM" {$FgColor = "Magenta"}
+                "SUCCESS" {$FgColor = "Cyan"}
+                "STEP" {$FgColor = "Magenta"}
+                "DEBUG" {$FgColor = "White"}
+                "DATA" {$FgColor = "Gray"}
+            }
 
-        Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-        if ($LogFile) #add the entry to the log file if -LogFile has been specified
-        {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+            if ($LogFile) #add the entry to the log file if -LogFile has been specified
+            {
+                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+            }
         }
-    }
 
     }#end function Write-LogOutput
 
     #this function loads a powershell module
     function LoadModule
     {#tries to load a module, import it, install it if necessary
-    <#
-    .SYNOPSIS
-    Tries to load the specified module and installs it if it can't.
-    .DESCRIPTION
-    Tries to load the specified module and installs it if it can't.
-    .NOTES
-    Author: Stephane Bourdeaud
-    .PARAMETER module
-    Name of PowerShell module to import.
-    .EXAMPLE
-    PS> LoadModule -module PSWriteHTML
-    #>
-    param 
-    (
-        [string] $module
-    )
+        <#
+        .SYNOPSIS
+        Tries to load the specified module and installs it if it can't.
+        .DESCRIPTION
+        Tries to load the specified module and installs it if it can't.
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER module
+        Name of PowerShell module to import.
+        .EXAMPLE
+        PS> LoadModule -module PSWriteHTML
+        #>
+        param 
+        (
+            [string] $module
+        )
 
-    begin
-    {
-        
-    }
+        begin
+        {
+            
+        }
 
-    process
-    {   
-        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
-        if (!(Get-Module -Name $module)) 
-        {#we could not get the module, let's try to load it
-            try
-            {#import the module
-                Import-Module -Name $module -ErrorAction Stop
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-            }#end try
-            catch 
-            {#we couldn't import the module, so let's install it
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
-                try 
-                {#install module
-                    Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
-                }
-                catch 
-                {#could not install module
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
-                    exit 1
-                }
-
+        process
+        {   
+            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
+            if (!(Get-Module -Name $module)) 
+            {#we could not get the module, let's try to load it
                 try
-                {#now that it is intalled, let's import it
+                {#import the module
                     Import-Module -Name $module -ErrorAction Stop
                     Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
                 }#end try
                 catch 
-                {#we couldn't import the module
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
-                    Exit 1
+                {#we couldn't import the module, so let's install it
+                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
+                    try 
+                    {#install module
+                        Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
+                    }
+                    catch 
+                    {#could not install module
+                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
+                        exit 1
+                    }
+
+                    try
+                    {#now that it is intalled, let's import it
+                        Import-Module -Name $module -ErrorAction Stop
+                        Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
+                    }#end try
+                    catch 
+                    {#we couldn't import the module
+                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
+                        Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
+                        Exit 1
+                    }#end catch
                 }#end catch
-            }#end catch
+            }
+        }
+
+        end
+        {
+
         }
     }
 
-    end
-    {
-
-    }
-    }
-
     function Set-CustomCredentials 
-    {
-    #input: path, credname
-        #output: saved credentials file
-    <#
-    .SYNOPSIS
-    Creates a saved credential file using DAPI for the current user on the local machine.
-    .DESCRIPTION
-    This function is used to create a saved credential file using DAPI for the current user on the local machine.
-    .NOTES
-    Author: Stephane Bourdeaud
-    .PARAMETER path
-    Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-    .PARAMETER credname
-    Specifies the credential file name.
-    .EXAMPLE
-    .\Set-CustomCredentials -path c:\creds -credname prism-apiuser
-    Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
-    #>
+    {#creates files to store creds
+        #input: path, credname
+            #output: saved credentials file
+        <#
+        .SYNOPSIS
+        Creates a saved credential file using DAPI for the current user on the local machine.
+        .DESCRIPTION
+        This function is used to create a saved credential file using DAPI for the current user on the local machine.
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER path
+        Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+        .PARAMETER credname
+        Specifies the credential file name.
+        .EXAMPLE
+        .\Set-CustomCredentials -path c:\creds -credname prism-apiuser
+        Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
+        #>
         param
         (
             [parameter(mandatory = $false)]
@@ -295,24 +295,24 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
     #this function is used to retrieve saved credentials for the current user
     function Get-CustomCredentials 
-    {
-    #input: path, credname
-        #output: credential object
-    <#
-    .SYNOPSIS
-    Retrieves saved credential file using DAPI for the current user on the local machine.
-    .DESCRIPTION
-    This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
-    .NOTES
-    Author: Stephane Bourdeaud
-    .PARAMETER path
-    Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-    .PARAMETER credname
-    Specifies the credential file name.
-    .EXAMPLE
-    .\Get-CustomCredentials -path c:\creds -credname prism-apiuser
-    Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
-    #>
+    {#retrieves creds from files
+        #input: path, credname
+            #output: credential object
+        <#
+        .SYNOPSIS
+        Retrieves saved credential file using DAPI for the current user on the local machine.
+        .DESCRIPTION
+        This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER path
+        Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+        .PARAMETER credname
+        Specifies the credential file name.
+        .EXAMPLE
+        .\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+        Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+        #>
         param
         (
             [parameter(mandatory = $false)]
@@ -339,6 +339,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
                 Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
             } 
         }
+        
         process
         {
             $credentialsFilePath = "$path\$credname.txt"
@@ -355,6 +356,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
             Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
         }
+        
         end
         {
             return $customCredentials
@@ -363,25 +365,25 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
     #this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
     function Set-PoshTls
-    {
-    <#
-    .SYNOPSIS
-    Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+    {#disables unsecure Tls protocols
+        <#
+        .SYNOPSIS
+        Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
 
-    .DESCRIPTION
-    Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+        .DESCRIPTION
+        Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
 
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
 
-    .EXAMPLE
-    .\Set-PoshTls
-    Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+        .EXAMPLE
+        .\Set-PoshTls
+        Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
 
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
 
         param 
         (
@@ -408,17 +410,19 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
     #this function is used to configure posh to ignore invalid ssl certificates
     function Set-PoSHSSLCerts
-    {
-    <#
-    .SYNOPSIS
-    Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
-    .DESCRIPTION
-    Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
-    #>
+    {#configures posh to ignore self-signed certs
+        <#
+        .SYNOPSIS
+        Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+        .DESCRIPTION
+        Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+        #>
+        
         begin
         {
 
         }#endbegin
+        
         process
         {
             Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
@@ -453,6 +457,7 @@ public class ServerCertificateValidationCallback
             }#endif
             [ServerCertificateValidationCallback]::Ignore()
         }#endprocess
+        
         end
         {
 
@@ -461,127 +466,129 @@ public class ServerCertificateValidationCallback
 
     #this function is used to make a REST api call to Prism
     function Invoke-PrismAPICall
-    {
-    <#
-    .SYNOPSIS
-    Makes api call to prism based on passed parameters. Returns the json response.
-    .DESCRIPTION
-    Makes api call to prism based on passed parameters. Returns the json response.
-    .NOTES
-    Author: Stephane Bourdeaud
-    .PARAMETER method
-    REST method (POST, GET, DELETE, or PUT)
-    .PARAMETER credential
-    PSCredential object to use for authentication.
-    PARAMETER url
-    URL to the api endpoint.
-    PARAMETER payload
-    JSON payload to send.
-    .EXAMPLE
-    .\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
-    Makes a POST api call to the specified endpoint with the specified payload.
-    #>
-    param
-    (
-        [parameter(mandatory = $true)]
-        [ValidateSet("POST","GET","DELETE","PUT")]
-        [string] 
-        $method,
-        
-        [parameter(mandatory = $true)]
-        [string] 
-        $url,
+    {#makes a REST API call to Prism
+        <#
+        .SYNOPSIS
+        Makes api call to prism based on passed parameters. Returns the json response.
+        .DESCRIPTION
+        Makes api call to prism based on passed parameters. Returns the json response.
+        .NOTES
+        Author: Stephane Bourdeaud
+        .PARAMETER method
+        REST method (POST, GET, DELETE, or PUT)
+        .PARAMETER credential
+        PSCredential object to use for authentication.
+        PARAMETER url
+        URL to the api endpoint.
+        PARAMETER payload
+        JSON payload to send.
+        .EXAMPLE
+        .\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+        Makes a POST api call to the specified endpoint with the specified payload.
+        #>
+        param
+        (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string] 
+            $method,
+            
+            [parameter(mandatory = $true)]
+            [string] 
+            $url,
 
-        [parameter(mandatory = $false)]
-        [string] 
-        $payload,
-        
-        [parameter(mandatory = $true)]
-        [System.Management.Automation.PSCredential]
-        $credential
-    )
+            [parameter(mandatory = $false)]
+            [string] 
+            $payload,
+            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential
+        )
 
-    begin
-    {
+        begin
+        {
+            
+        }
         
-    }
-    process
-    {
-        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-        try {
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-            if ($PSVersionTable.PSVersion.Major -gt 5) 
-            {
-                $headers = @{
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
-                }
-                if ($payload) 
+        process
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+            try {
+                #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+                if ($PSVersionTable.PSVersion.Major -gt 5) 
                 {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    $headers = @{
+                        "Content-Type"="application/json";
+                        "Accept"="application/json"
+                    }
+                    if ($payload) 
+                    {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    } 
+                    else 
+                    {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    }
                 } 
                 else 
                 {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                    $username = $credential.UserName
+                    $password = $credential.Password
+                    $headers = @{
+                        "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
+                        "Content-Type"="application/json";
+                        "Accept"="application/json"
+                    }
+                    if ($payload) 
+                    {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                    } 
+                    else 
+                    {
+                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                    }
                 }
-            } 
-            else 
-            {
-                $username = $credential.UserName
-                $password = $credential.Password
-                $headers = @{
-                    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
-                }
-                if ($payload) 
-                {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-                } 
-                else 
-                {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
-                }
+                Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
             }
-            Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-        }
-        catch {
-            $saved_error = $_.Exception
-            $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
-            $resp_return_code = $_.Exception.Response.StatusCode.value__
-            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-            if ($resp_return_code -eq 409) 
-            {
-                Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
-                Throw
-            }
-            else 
-            {
-                if ($saved_error_message -match 'rule already exists')
+            catch {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                if ($resp_return_code -eq 409) 
                 {
-                    Throw "$(get-date) [WARNING] $saved_error_message" 
+                    Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
+                    Throw
                 }
                 else 
                 {
-                    if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
-                    Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"    
+                    if ($saved_error_message -match 'rule already exists')
+                    {
+                        Throw "$(get-date) [WARNING] $saved_error_message" 
+                    }
+                    else 
+                    {
+                        if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                        Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"    
+                    }
                 }
             }
+            finally {
+                #add any last words here; this gets processed no matter what
+            }
         }
-        finally {
-            #add any last words here; this gets processed no matter what
-        }
-    }
-    end
-    {
-        return $resp
-    }    
+        
+        end
+        {
+            return $resp
+        }    
     }
 
     #helper-function Get-RESTError
     function Help-RESTError 
-    {
+    {#tries to retrieve full REST messages
         $global:helpme = $body
         $global:helpmoref = $moref
         $global:result = $_.Exception.Response.GetResponseStream()
@@ -594,7 +601,7 @@ public class ServerCertificateValidationCallback
     }#end function Get-RESTError
 
     function Get-PrismCentralObjectList
-    {
+    {#retrieves multiple pages of Prism REST objects v3
         [CmdletBinding()]
         param 
         (
@@ -617,6 +624,7 @@ public class ServerCertificateValidationCallback
             }
             $payload = (ConvertTo-Json $content -Depth 4) #this is the initial payload at offset 0
         }
+        
         process 
         {
             Do {
@@ -677,6 +685,7 @@ public class ServerCertificateValidationCallback
             }
             While ($last -lt $total)
         }
+        
         end 
         {
             return $myvarResults
@@ -684,7 +693,7 @@ public class ServerCertificateValidationCallback
     }
 
     function Get-PrismCentralTaskStatus
-    {
+    {#loops on Prism Central task status until completed
         <#
         .SYNOPSIS
         Retrieves the status of a given task uuid from Prism and loops until it is completed.
@@ -726,6 +735,7 @@ public class ServerCertificateValidationCallback
             $url = "https://$($cluster):9440/api/nutanix/v3/tasks/$task"
             $method = "GET"
         }
+        
         process 
         {
             #region get initial task details
@@ -765,6 +775,7 @@ public class ServerCertificateValidationCallback
                 }
             }
         }
+        
         end
         {
             return $taskDetails.status
@@ -772,7 +783,7 @@ public class ServerCertificateValidationCallback
     }
 
     function Sync-Categories
-    {
+    {#syncs Prism categories used in a given network policy
         begin {}
 
         process 
@@ -984,7 +995,7 @@ public class ServerCertificateValidationCallback
     }
 
     function Sync-AddressGroups
-    {
+    {#syncs Prism address groups used in a given network policy
         begin {}
 
         process 
@@ -1094,7 +1105,7 @@ public class ServerCertificateValidationCallback
     }
 
     function Sync-ServiceGroups
-    {
+    {#syncs Prism service groups used in a given network policy
         begin {}
 
         process 
@@ -1217,6 +1228,9 @@ Date       By   Updates (newest updates at the top)
 09/22/2021 sb   Adding service and address groups sync (issue #9).
 09/23/2021 sb   Fixed an issue when categories were added to a rule in outbound
                 and/or outbound.
+09/26/2021 sb   Moved syncing of categories, address and service groups to
+                functions to avoid code duplication between the add and update
+                actions.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
