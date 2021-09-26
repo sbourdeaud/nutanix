@@ -683,7 +683,7 @@ public class ServerCertificateValidationCallback
         }
     }
 
-    Function Get-PrismCentralTaskStatus
+    function Get-PrismCentralTaskStatus
     {
         <#
         .SYNOPSIS
@@ -771,6 +771,437 @@ public class ServerCertificateValidationCallback
         }
     }
 
+    function Sync-Categories
+    {
+        begin {}
+
+        process 
+        {
+            #region which categories are used?
+            #* figure out categories used in this rule
+            Write-Host "$(get-date) [INFO] Examining categories..." -ForegroundColor Green
+            [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
+            #types of rules (where categories are listed varies depending on the type of rule): 
+            if ($rule.spec.resources.quarantine_rule)
+            {#this is a quarantine rule
+                Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
+                foreach ($category in ($rule.spec.resources.quarantine_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
+                {#process each category used in target_group
+                    foreach ($value in ($rule.spec.resources.quarantine_rule.target_group.filter.params."$category" | Where-Object {$_}))
+                    {#process each value for this category
+                        $category_value_pair = "$($category):$($value)"
+                        $used_categories_list.Add($category_value_pair) | Out-Null
+                    }
+                }
+            }
+            elseif ($rule.spec.resources.isolation_rule) 
+            {#this is an isolation rule
+                Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
+                foreach ($category in ($rule.spec.resources.isolation_rule.first_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
+                {#process each category used in first_entity_filter
+                    foreach ($value in ($rule.spec.resources.isolation_rule.first_entity_filter.params."$category" | Where-Object {$_}))
+                    {#process each value for this category
+                        $category_value_pair = "$($category):$($value)"
+                        $used_categories_list.Add($category_value_pair) | Out-Null
+                    }
+                }
+                foreach ($category in ($rule.spec.resources.isolation_rule.second_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
+                {#process each category used in second_entity_filter
+                    foreach ($value in ($rule.spec.resources.isolation_rule.second_entity_filter.params."$category" | Where-Object {$_}))
+                    {#process each value for this category
+                        $category_value_pair = "$($category):$($value)"
+                        $used_categories_list.Add($category_value_pair) | Out-Null
+                    }
+                }
+            }
+            elseif ($rule.spec.resources.app_rule) 
+            {#this is an app policy/rule
+                Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
+                foreach ($category in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
+                {#process each category used in outbound_allow_list
+                    foreach ($value in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category" | Where-Object {$_}))
+                    {#process each value for this category
+                        $category_value_pair = "$($category):$($value)"
+                        $used_categories_list.Add($category_value_pair) | Out-Null
+                    }
+                }
+                foreach ($category in ($rule.spec.resources.app_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
+                {#process each category used in target_group
+                    foreach ($value in ($rule.spec.resources.app_rule.target_group.filter.params."$category" | Where-Object {$_}))
+                    {#process each value for this category
+                        $category_value_pair = "$($category):$($value)"
+                        $used_categories_list.Add($category_value_pair) | Out-Null
+                    }
+                }
+                foreach ($category in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
+                {#process each category used in inbound_allow_list
+                    foreach ($value in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category" | Where-Object {$_}))
+                    {#process each value for this category
+                        $category_value_pair = "$($category):$($value)"
+                        $used_categories_list.Add($category_value_pair) | Out-Null
+                    }
+                }
+            }
+            else 
+            {#we don't know what type of rule this is
+                Write-Host "$(get-date) [WARNING] Rule $($rule.spec.Name) is not a supported rule type for replication!" -ForegroundColor Yellow
+            }
+
+            Write-Host "$(get-date) [DATA] Flow rule $($rule.spec.Name) uses the following category:value pairs:" -ForegroundColor White
+            $used_categories_list
+            #endregion
+            
+            #region are all used category:value pairs on target?
+                #* check each used category:value pair exists on target
+                [System.Collections.ArrayList]$missing_categories_list = New-Object System.Collections.ArrayList($null)
+                foreach ($category_value_pair in ($used_categories_list | Select-Object -Unique))
+                {#process each used category
+                    $category = ($category_value_pair -split ":")[0]
+                    $value = ($category_value_pair -split ":")[1]
+
+                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
+                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                    $method = "GET"
+
+                    Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
+                    try 
+                    {
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                        Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
+                    }
+                    catch 
+                    {
+                        $saved_error = $_.Exception.Message
+                        $error_code = ($saved_error -split " ")[3]
+                        if ($error_code -eq "404") 
+                        {
+                            Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
+                            $missing_categories_list.Add($category_value_pair) | Out-Null
+                            Continue
+                        }
+                        else 
+                        {
+                            Write-Host "$saved_error" -ForegroundColor Yellow
+                            Continue
+                        }
+                    }
+                }
+
+                if ($missing_categories_list)
+                {#there are missing categories on target
+                    Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
+                    $missing_categories_list
+                }
+            #endregion
+            
+            #region create missing category:value pairs on target
+                [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
+                foreach ($category_value_pair in $missing_categories_list)
+                {#process all missing categories and values
+                    #check if category exists
+                    $category = ($category_value_pair -split ":")[0]
+                    $value = ($category_value_pair -split ":")[1]
+
+                    if (!$processed_categories_list)
+                    {#we havent processed any category yet
+                        if ($category -notin $processed_categories_list)
+                        {#this category has not been found or added yet
+                            $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
+                            $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                            $method = "GET"
+
+                            Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
+                            try 
+                            {#get the category
+                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                                Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
+                                $processed_categories_list.Add($category) | Out-Null
+                            }
+                            catch 
+                            {#get category failed, or category was not found
+                                $saved_error = $_.Exception.Message
+                                $error_code = ($saved_error -split " ")[3]
+                                if ($error_code -eq "404") 
+                                {#category was not found
+                                    Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
+                                    #add category
+                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
+                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                                    $method = "PUT"
+                                    $content = @{
+                                        api_version="3.1.0";
+                                        description="added by Invoke-FlowRuleSync.ps1 script";
+                                        name="$category"
+                                    }
+                                    $payload = (ConvertTo-Json $content -Depth 4)
+                                    try 
+                                    {#add the category
+                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                        Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
+                                        if ($debugme) {$resp}
+                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                                        $processed_categories_list.Add($category) | Out-Null     
+                                    }
+                                    catch 
+                                    {#we couldn't add the category
+                                        Throw "$($_.Exception.Message)"
+                                    }  
+                                }
+                                else 
+                                {#we couldn't get the category
+                                    Throw "$($_.Exception.Message)"
+                                }
+                            }
+                        }
+                    }
+                    
+                    #add value
+                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
+                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                    $method = "PUT"
+                    $content = @{
+                        api_version="3.1.0";
+                        description="added by Invoke-FlowRuleSync.ps1 script";
+                        value="$value"
+                    }
+                    $payload = (ConvertTo-Json $content -Depth 4)
+                    try 
+                    {#add the value
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan
+                        if ($debugme) {$resp}
+                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                    }
+                    catch 
+                    {#we couldn't add the value
+                        Throw "$($_.Exception.Message)"
+                    }
+                }
+            #endregion
+        }
+
+        end {}
+    }
+
+    function Sync-AddressGroups
+    {
+        begin {}
+
+        process 
+        {
+            #region which address groups are used?
+                #* figure out address groups used in this rule
+                Write-Host "$(get-date) [INFO] Examining address groups..." -ForegroundColor Green
+                [System.Collections.ArrayList]$used_address_group_list = New-Object System.Collections.ArrayList($null)
+                #types of rules (where categories are listed varies depending on the type of rule): 
+                if ($rule.spec.resources.app_rule) 
+                {#this is an app rule
+                    foreach ($address_group in $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list)
+                    {#process each address group used in outbound_allow_list
+                        $used_address_group_list.Add($address_group) | Out-Null
+                    }
+                    foreach ($address_group in $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list)
+                    {#process each address group used in inbound_allow_list
+                        $used_address_group_list.Add($address_group) | Out-Null
+                    }
+                }
+            #endregion
+
+            #region are all used address groups on the target?
+
+                [System.Collections.ArrayList]$missing_address_groups_list = New-Object System.Collections.ArrayList($null)
+                foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
+                {#process each used address group
+
+                    #find out what the address group name is (only uuid is kept in rule definition)
+                    $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
+                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
+                    $method = "GET"
+
+                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                    if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
+                    {#based on its name, that address group does not exist on the target
+                        $missing_address_groups_list.Add($source_address_group) | Out-Null
+                    }
+                    else 
+                    {#the address group already exists on target, let's update the uuid reference in that rule
+                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
+                        {#that address group is used in inbound allow list
+                            ForEach ($address_group_item in $address_group_inbound)
+                            {
+                                $address_group_item.uuid = $target_address_group_uuid
+                            }
+                        }
+                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
+                        {#that address group is used in outbound allow list
+                            ForEach ($address_group_item in $address_group_outbound)
+                            {
+                                $address_group_item.uuid = $target_address_group_uuid
+                            }
+                        }
+                    }
+                }
+
+                if ($missing_address_groups_list)
+                {#there are missing address groups
+                    Write-Host "$(get-date) [DATA] The following address groups need to be added on $($targetPc):" -ForegroundColor White
+                    $missing_address_groups_list.address_group.name
+                }
+            #endregion
+
+            #region create missing address groups on target
+                [System.Collections.ArrayList]$processed_address_groups_list = New-Object System.Collections.ArrayList($null)
+                foreach ($address_group in $missing_address_groups_list)
+                {#process all missing address groups
+                    #add address group
+                    $api_server_endpoint = "/api/nutanix/v3/address_groups" -f $category,$value
+                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                    $method = "POST"
+                    $payload = (ConvertTo-Json $address_group.address_group -Depth 10)
+                    Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
+                    try 
+                    {#add address group
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        Write-Host "$(Get-Date) [SUCCESS] Added address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Cyan
+                        if ($debugme) {$resp}
+                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
+                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
+                        {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
+                            ForEach ($address_group_item in $address_group_inbound)
+                            {
+                                $address_group_item.uuid = $resp.uuid
+                            }
+                        }
+                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
+                        {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
+                            ForEach ($address_group_item in $address_group_outbound)
+                            {
+                                $address_group_item.uuid = $resp.uuid
+                            }
+                        }
+                    }
+                    catch 
+                    {#we couldn't add the address group
+                        Throw "$($_.Exception.Message)"
+                    }
+                }
+            #endregion
+        }
+
+        end {}
+    }
+
+    function Sync-ServiceGroups
+    {
+        begin {}
+
+        process 
+        {
+            #region which service groups are used?
+                #* figure out service groups used in this rule
+                Write-Host "$(get-date) [INFO] Examining service groups..." -ForegroundColor Green
+                [System.Collections.ArrayList]$used_service_group_list = New-Object System.Collections.ArrayList($null)
+                #types of rules (where categories are listed varies depending on the type of rule): 
+                if ($rule.spec.resources.app_rule) 
+                {#this is an app rule
+                    foreach ($service_group in $rule.spec.resources.app_rule.outbound_allow_list.service_group_list)
+                    {#process each service group used in outbound_allow_list
+                        $used_service_group_list.Add($service_group) | Out-Null
+                    }
+                    foreach ($service_group in $rule.spec.resources.app_rule.inbound_allow_list.service_group_list)
+                    {#process each service group used in inbound_allow_list
+                        $used_service_group_list.Add($service_group) | Out-Null
+                    }
+                }
+            #endregion
+
+            #region are all used service groups on the target?
+
+                [System.Collections.ArrayList]$missing_service_groups_list = New-Object System.Collections.ArrayList($null)
+                foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
+                {#process each used service group
+
+                    #find out what the service group name is (only uuid is kept in rule definition)
+                    $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
+                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
+                    $method = "GET"
+
+                    $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                    #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
+                    if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
+                    {#based on its name, that service group does not exist on the target
+                        $missing_service_groups_list.Add($source_service_group) | Out-Null
+                    }
+                    else 
+                    {#the service group already exists on target, let's update the uuid reference in that rule
+                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                        {#that service group is used in inbound allow list
+                            ForEach ($service_group_item in $service_group_inbound)
+                            {
+                                $service_group_item.uuid = $target_service_group_uuid
+                            } 
+                        }
+                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                        {#that service group is used in outbound allow list
+                            ForEach ($service_group_item in $service_group_outbound)
+                            {
+                                $service_group_item.uuid = $target_service_group_uuid
+                            }
+                        }
+                    }
+                }
+
+                if ($missing_service_groups_list)
+                {#there are missing service groups
+                    Write-Host "$(get-date) [DATA] The following service groups need to be added on $($targetPc):" -ForegroundColor White
+                    $missing_service_groups_list.service_group.name
+                }
+            #endregion
+
+            #region create missing service groups on target
+                [System.Collections.ArrayList]$processed_service_groups_list = New-Object System.Collections.ArrayList($null)
+                foreach ($service_group in $missing_service_groups_list)
+                {#process all missing service groups
+                    #add service group
+                    $api_server_endpoint = "/api/nutanix/v3/service_groups" -f $category,$value
+                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                    $method = "POST"
+                    $payload = (ConvertTo-Json $service_group.service_group -Depth 10)
+                    Write-Host "$(Get-Date) [INFO] Adding service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Green
+                    try 
+                    {#add service group
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
+                        if ($debugme) {$resp}
+                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                        {#that service group is used in inbound allow list
+                            ForEach ($service_group_item in $service_group_inbound)
+                            {
+                                $service_group_item.uuid = $resp.uuid
+                            } 
+                        }
+                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
+                        {#that service group is used in outbound allow list
+                            ForEach ($service_group_item in $service_group_outbound)
+                            {
+                                $service_group_item.uuid = $resp.uuid
+                            }
+                        }
+                    }
+                    catch 
+                    {#we couldn't add the service group
+                        Throw "$($_.Exception.Message)"
+                    }
+                }
+            #endregion
+        }
+
+        end {}
+    }
 #endregion
 
 
@@ -960,413 +1391,9 @@ Date       By   Updates (newest updates at the top)
                     foreach ($rule in $add_rules_list)
                     {#process each rule to add
                         
-                        #region deal with categories
-                            #region which categories are used?
-                                #* figure out categories used in this rule
-                                Write-Host "$(get-date) [INFO] Examining categories..." -ForegroundColor Green
-                                [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule): 
-                                if ($rule.spec.resources.quarantine_rule)
-                                {#this is a quarantine rule
-                                    Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
-                                    foreach ($category in ($rule.spec.resources.quarantine_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in target_group
-                                        foreach ($value in ($rule.spec.resources.quarantine_rule.target_group.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                }
-                                elseif ($rule.spec.resources.isolation_rule) 
-                                {#this is an isolation rule
-                                    Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
-                                    foreach ($category in ($rule.spec.resources.isolation_rule.first_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in first_entity_filter
-                                        foreach ($value in ($rule.spec.resources.isolation_rule.first_entity_filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                    foreach ($category in ($rule.spec.resources.isolation_rule.second_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in second_entity_filter
-                                        foreach ($value in ($rule.spec.resources.isolation_rule.second_entity_filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                }
-                                elseif ($rule.spec.resources.app_rule) 
-                                {#this is an app policy/rule
-                                    Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
-                                    foreach ($category in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in outbound_allow_list
-                                        foreach ($value in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                    foreach ($category in ($rule.spec.resources.app_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in target_group
-                                        foreach ($value in ($rule.spec.resources.app_rule.target_group.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                    foreach ($category in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in inbound_allow_list
-                                        foreach ($value in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                }
-                                else 
-                                {#we don't know what type of rule this is
-                                    Write-Host "$(get-date) [WARNING] Rule $($rule.spec.Name) is not a supported rule type for replication!" -ForegroundColor Yellow
-                                }
-
-                                Write-Host "$(get-date) [DATA] Flow rule $($rule.spec.Name) uses the following category:value pairs:" -ForegroundColor White
-                                $used_categories_list
-                            #endregion
-                            
-                            #region are all used category:value pairs on target?
-                                #* check each used category:value pair exists on target
-                                [System.Collections.ArrayList]$missing_categories_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($category_value_pair in ($used_categories_list | Select-Object -Unique))
-                                {#process each used category
-                                    $category = ($category_value_pair -split ":")[0]
-                                    $value = ($category_value_pair -split ":")[1]
-
-                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "GET"
-
-                                    Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
-                                    try 
-                                    {
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                                        Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
-                                    }
-                                    catch 
-                                    {
-                                        $saved_error = $_.Exception.Message
-                                        $error_code = ($saved_error -split " ")[3]
-                                        if ($error_code -eq "404") 
-                                        {
-                                            Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
-                                            $missing_categories_list.Add($category_value_pair) | Out-Null
-                                            Continue
-                                        }
-                                        else 
-                                        {
-                                            Write-Host "$saved_error" -ForegroundColor Yellow
-                                            Continue
-                                        }
-                                    }
-                                }
-
-                                if ($missing_categories_list)
-                                {#there are missing categories on target
-                                    Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_categories_list
-                                }
-                            #endregion
-                            
-                            #region create missing category:value pairs on target
-                                [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($category_value_pair in $missing_categories_list)
-                                {#process all missing categories and values
-                                    #check if category exists
-                                    $category = ($category_value_pair -split ":")[0]
-                                    $value = ($category_value_pair -split ":")[1]
-
-                                    if (!$processed_categories_list)
-                                    {#we havent processed any category yet
-                                        if ($category -notin $processed_categories_list)
-                                        {#this category has not been found or added yet
-                                            $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
-                                            $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                            $method = "GET"
-
-                                            Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
-                                            try 
-                                            {#get the category
-                                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                                                Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
-                                                $processed_categories_list.Add($category) | Out-Null
-                                            }
-                                            catch 
-                                            {#get category failed, or category was not found
-                                                $saved_error = $_.Exception.Message
-                                                $error_code = ($saved_error -split " ")[3]
-                                                if ($error_code -eq "404") 
-                                                {#category was not found
-                                                    Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
-                                                    #add category
-                                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
-                                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                                    $method = "PUT"
-                                                    $content = @{
-                                                        api_version="3.1.0";
-                                                        description="added by Invoke-FlowRuleSync.ps1 script";
-                                                        name="$category"
-                                                    }
-                                                    $payload = (ConvertTo-Json $content -Depth 4)
-                                                    try 
-                                                    {#add the category
-                                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                                        Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
-                                                        if ($debugme) {$resp}
-                                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                                        $processed_categories_list.Add($category) | Out-Null     
-                                                    }
-                                                    catch 
-                                                    {#we couldn't add the category
-                                                        Throw "$($_.Exception.Message)"
-                                                    }  
-                                                }
-                                                else 
-                                                {#we couldn't get the category
-                                                    Throw "$($_.Exception.Message)"
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    #add value
-                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "PUT"
-                                    $content = @{
-                                        api_version="3.1.0";
-                                        description="added by Invoke-FlowRuleSync.ps1 script";
-                                        value="$value"
-                                    }
-                                    $payload = (ConvertTo-Json $content -Depth 4)
-                                    try 
-                                    {#add the value
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan
-                                        if ($debugme) {$resp}
-                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                    }
-                                    catch 
-                                    {#we couldn't add the value
-                                        Throw "$($_.Exception.Message)"
-                                    }
-                                }
-                            #endregion
-                        #endregion
-
-                        #region deal with service groups
-                            #region which service groups are used?
-                                #* figure out service groups used in this rule
-                                Write-Host "$(get-date) [INFO] Examining service groups..." -ForegroundColor Green
-                                [System.Collections.ArrayList]$used_service_group_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule): 
-                                if ($rule.spec.resources.app_rule) 
-                                {#this is an app rule
-                                    foreach ($service_group in $rule.spec.resources.app_rule.outbound_allow_list.service_group_list)
-                                    {#process each service group used in outbound_allow_list
-                                        $used_service_group_list.Add($service_group) | Out-Null
-                                    }
-                                    foreach ($service_group in $rule.spec.resources.app_rule.inbound_allow_list.service_group_list)
-                                    {#process each service group used in inbound_allow_list
-                                        $used_service_group_list.Add($service_group) | Out-Null
-                                    }
-                                }
-                            #endregion
-
-                            #region are all used service groups on the target?
-
-                                [System.Collections.ArrayList]$missing_service_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
-                                {#process each used service group
-
-                                    #find out what the service group name is (only uuid is kept in rule definition)
-                                    $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
-                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
-                                    $method = "GET"
-
-                                    $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                                    #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
-                                    if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
-                                    {#based on its name, that service group does not exist on the target
-                                        $missing_service_groups_list.Add($source_service_group) | Out-Null
-                                    }
-                                    else 
-                                    {#the service group already exists on target, let's update the uuid reference in that rule
-                                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in inbound allow list
-                                            ForEach ($service_group_item in $service_group_inbound)
-                                            {
-                                                $service_group_item.uuid = $target_service_group_uuid
-                                            } 
-                                        }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in outbound allow list
-                                            ForEach ($service_group_item in $service_group_outbound)
-                                            {
-                                                $service_group_item.uuid = $target_service_group_uuid
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if ($missing_service_groups_list)
-                                {#there are missing service groups
-                                    Write-Host "$(get-date) [DATA] The following service groups need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_service_groups_list.service_group.name
-                                }
-                            #endregion
-
-                            #region create missing service groups on target
-                                [System.Collections.ArrayList]$processed_service_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($service_group in $missing_service_groups_list)
-                                {#process all missing service groups
-                                    #add service group
-                                    $api_server_endpoint = "/api/nutanix/v3/service_groups" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "POST"
-                                    $payload = (ConvertTo-Json $service_group.service_group -Depth 10)
-                                    Write-Host "$(Get-Date) [INFO] Adding service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Green
-                                    try 
-                                    {#add service group
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
-                                        if ($debugme) {$resp}
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in inbound allow list
-                                            ForEach ($service_group_item in $service_group_inbound)
-                                            {
-                                                $service_group_item.uuid = $resp.uuid
-                                            } 
-                                        }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in outbound allow list
-                                            ForEach ($service_group_item in $service_group_outbound)
-                                            {
-                                                $service_group_item.uuid = $resp.uuid
-                                            }
-                                        }
-                                    }
-                                    catch 
-                                    {#we couldn't add the service group
-                                        Throw "$($_.Exception.Message)"
-                                    }
-                                }
-                            #endregion
-                        #endregion
-                        
-                        #region deal with address groups
-                            #region which address groups are used?
-                                #* figure out address groups used in this rule
-                                Write-Host "$(get-date) [INFO] Examining address groups..." -ForegroundColor Green
-                                [System.Collections.ArrayList]$used_address_group_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule): 
-                                if ($rule.spec.resources.app_rule) 
-                                {#this is an app rule
-                                    foreach ($address_group in $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list)
-                                    {#process each address group used in outbound_allow_list
-                                        $used_address_group_list.Add($address_group) | Out-Null
-                                    }
-                                    foreach ($address_group in $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list)
-                                    {#process each address group used in inbound_allow_list
-                                        $used_address_group_list.Add($address_group) | Out-Null
-                                    }
-                                }
-                            #endregion
-
-                            #region are all used address groups on the target?
-
-                                [System.Collections.ArrayList]$missing_address_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
-                                {#process each used address group
-
-                                    #find out what the address group name is (only uuid is kept in rule definition)
-                                    $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
-                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
-                                    $method = "GET"
-
-                                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                                    if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
-                                    {#based on its name, that address group does not exist on the target
-                                        $missing_address_groups_list.Add($source_address_group) | Out-Null
-                                    }
-                                    else 
-                                    {#the address group already exists on target, let's update the uuid reference in that rule
-                                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
-                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
-                                        {#that address group is used in inbound allow list
-                                            ForEach ($address_group_item in $address_group_inbound)
-                                            {
-                                                $address_group_item.uuid = $target_address_group_uuid
-                                            }
-                                        }
-                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
-                                        {#that address group is used in outbound allow list
-                                            ForEach ($address_group_item in $address_group_outbound)
-                                            {
-                                                $address_group_item.uuid = $target_address_group_uuid
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if ($missing_address_groups_list)
-                                {#there are missing address groups
-                                    Write-Host "$(get-date) [DATA] The following address groups need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_address_groups_list.address_group.name
-                                }
-                            #endregion
-
-                            #region create missing address groups on target
-                                [System.Collections.ArrayList]$processed_address_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($address_group in $missing_address_groups_list)
-                                {#process all missing address groups
-                                    #add address group
-                                    $api_server_endpoint = "/api/nutanix/v3/address_groups" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "POST"
-                                    $payload = (ConvertTo-Json $address_group.address_group -Depth 10)
-                                    Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
-                                    try 
-                                    {#add address group
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Cyan
-                                        if ($debugme) {$resp}
-                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
-                                        {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
-                                            ForEach ($address_group_item in $address_group_inbound)
-                                            {
-                                                $address_group_item.uuid = $resp.uuid
-                                            }
-                                        }
-                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
-                                        {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
-                                            ForEach ($address_group_item in $address_group_outbound)
-                                            {
-                                                $address_group_item.uuid = $resp.uuid
-                                            }
-                                        }
-                                    }
-                                    catch 
-                                    {#we couldn't add the address group
-                                        Throw "$($_.Exception.Message)"
-                                    }
-                                }
-                            #endregion
-                        #endregion
+                        Sync-Categories
+                        Sync-ServiceGroups
+                        Sync-AddressGroups
 
                         #region add rule on target
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules"
@@ -1447,413 +1474,9 @@ Date       By   Updates (newest updates at the top)
                     foreach ($rule in $update_rules_list)
                     {#process each rule to update
                         
-                        #region deal with categories
-                            #region which categories are used?
-                                #* figure out categories used in this rule
-                                Write-Host "$(get-date) [INFO] Examining categories..." -ForegroundColor Green
-                                [System.Collections.ArrayList]$used_categories_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule): 
-                                if ($rule.spec.resources.quarantine_rule)
-                                {#this is a quarantine rule
-                                    Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is a Quarantine rule..." -ForegroundColor Green
-                                    foreach ($category in ($rule.spec.resources.quarantine_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in target_group
-                                        foreach ($value in ($rule.spec.resources.quarantine_rule.target_group.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                }
-                                elseif ($rule.spec.resources.isolation_rule) 
-                                {#this is an isolation rule
-                                    Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Isolation rule..." -ForegroundColor Green
-                                    foreach ($category in ($rule.spec.resources.isolation_rule.first_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in first_entity_filter
-                                        foreach ($value in ($rule.spec.resources.isolation_rule.first_entity_filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                    foreach ($category in ($rule.spec.resources.isolation_rule.second_entity_filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in second_entity_filter
-                                        foreach ($value in ($rule.spec.resources.isolation_rule.second_entity_filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                }
-                                elseif ($rule.spec.resources.app_rule) 
-                                {#this is an app policy/rule
-                                    Write-Host "$(get-date) [INFO] Rule $($rule.spec.Name) is an Application rule..." -ForegroundColor Green
-                                    foreach ($category in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in outbound_allow_list
-                                        foreach ($value in ($rule.spec.resources.app_rule.outbound_allow_list.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                    foreach ($category in ($rule.spec.resources.app_rule.target_group.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in target_group
-                                        foreach ($value in ($rule.spec.resources.app_rule.target_group.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                    foreach ($category in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue).Name)
-                                    {#process each category used in inbound_allow_list
-                                        foreach ($value in ($rule.spec.resources.app_rule.inbound_allow_list.filter.params."$category" | Where-Object {$_}))
-                                        {#process each value for this category
-                                            $category_value_pair = "$($category):$($value)"
-                                            $used_categories_list.Add($category_value_pair) | Out-Null
-                                        }
-                                    }
-                                }
-                                else 
-                                {#we don't know what type of rule this is
-                                    Write-Host "$(get-date) [WARNING] Rule $($rule.spec.Name) is not a supported rule type for replication!" -ForegroundColor Yellow
-                                }
-
-                                Write-Host "$(get-date) [DATA] Flow rule $($rule.spec.Name) uses the following category:value pairs:" -ForegroundColor White
-                                $used_categories_list
-                            #endregion
-                            
-                            #region are all used category:value pairs on target?
-                                #* check each used category:value pair exists on target
-                                [System.Collections.ArrayList]$missing_categories_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($category_value_pair in ($used_categories_list | Select-Object -Unique))
-                                {#process each used category
-                                    $category = ($category_value_pair -split ":")[0]
-                                    $value = ($category_value_pair -split ":")[1]
-
-                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "GET"
-
-                                    Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
-                                    try 
-                                    {
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                                        Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
-                                    }
-                                    catch 
-                                    {
-                                        $saved_error = $_.Exception.Message
-                                        $error_code = ($saved_error -split " ")[3]
-                                        if ($error_code -eq "404") 
-                                        {
-                                            Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
-                                            $missing_categories_list.Add($category_value_pair) | Out-Null
-                                            Continue
-                                        }
-                                        else 
-                                        {
-                                            Write-Host "$saved_error" -ForegroundColor Yellow
-                                            Continue
-                                        }
-                                    }
-                                }
-
-                                if ($missing_categories_list)
-                                {#there are missing categories on target
-                                    Write-Host "$(get-date) [DATA] The following category:value pairs need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_categories_list
-                                }
-                            #endregion
-                            
-                            #region create missing category:value pairs on target
-                                [System.Collections.ArrayList]$processed_categories_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($category_value_pair in $missing_categories_list)
-                                {#process all missing categories and values
-                                    #check if category exists
-                                    $category = ($category_value_pair -split ":")[0]
-                                    $value = ($category_value_pair -split ":")[1]
-
-                                    if (!$processed_categories_list)
-                                    {#we havent processed any category yet
-                                        if ($category -notin $processed_categories_list)
-                                        {#this category has not been found or added yet
-                                            $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
-                                            $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                            $method = "GET"
-
-                                            Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
-                                            try 
-                                            {#get the category
-                                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                                                Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
-                                                $processed_categories_list.Add($category) | Out-Null
-                                            }
-                                            catch 
-                                            {#get category failed, or category was not found
-                                                $saved_error = $_.Exception.Message
-                                                $error_code = ($saved_error -split " ")[3]
-                                                if ($error_code -eq "404") 
-                                                {#category was not found
-                                                    Write-Host "$(get-date) [WARNING] The category specified $($category) does not exist in Prism Central $targetPc" -ForegroundColor Yellow
-                                                    #add category
-                                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
-                                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                                    $method = "PUT"
-                                                    $content = @{
-                                                        api_version="3.1.0";
-                                                        description="added by Invoke-FlowRuleSync.ps1 script";
-                                                        name="$category"
-                                                    }
-                                                    $payload = (ConvertTo-Json $content -Depth 4)
-                                                    try 
-                                                    {#add the category
-                                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                                        Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
-                                                        if ($debugme) {$resp}
-                                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                                        $processed_categories_list.Add($category) | Out-Null     
-                                                    }
-                                                    catch 
-                                                    {#we couldn't add the category
-                                                        Throw "$($_.Exception.Message)"
-                                                    }  
-                                                }
-                                                else 
-                                                {#we couldn't get the category
-                                                    Throw "$($_.Exception.Message)"
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    #add value
-                                    $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "PUT"
-                                    $content = @{
-                                        api_version="3.1.0";
-                                        description="added by Invoke-FlowRuleSync.ps1 script";
-                                        value="$value"
-                                    }
-                                    $payload = (ConvertTo-Json $content -Depth 4)
-                                    try 
-                                    {#add the value
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan
-                                        if ($debugme) {$resp}
-                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                    }
-                                    catch 
-                                    {#we couldn't add the value
-                                        Throw "$($_.Exception.Message)"
-                                    }
-                                }
-                            #endregion
-                        #endregion
-
-                        #region deal with service groups
-                            #region which service groups are used?
-                                #* figure out service groups used in this rule
-                                Write-Host "$(get-date) [INFO] Examining service groups..." -ForegroundColor Green
-                                [System.Collections.ArrayList]$used_service_group_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule): 
-                                if ($rule.spec.resources.app_rule) 
-                                {#this is an app rule
-                                    foreach ($service_group in $rule.spec.resources.app_rule.outbound_allow_list.service_group_list)
-                                    {#process each service group used in outbound_allow_list
-                                        $used_service_group_list.Add($service_group) | Out-Null
-                                    }
-                                    foreach ($service_group in $rule.spec.resources.app_rule.inbound_allow_list.service_group_list)
-                                    {#process each service group used in inbound_allow_list
-                                        $used_service_group_list.Add($service_group) | Out-Null
-                                    }
-                                }
-                            #endregion
-
-                            #region are all used service groups on the target?
-
-                                [System.Collections.ArrayList]$missing_service_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
-                                {#process each used service group
-
-                                    #find out what the service group name is (only uuid is kept in rule definition)
-                                    $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
-                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
-                                    $method = "GET"
-
-                                    $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                                    #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
-                                    if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
-                                    {#based on its name, that service group does not exist on the target
-                                        $missing_service_groups_list.Add($source_service_group) | Out-Null
-                                    }
-                                    else 
-                                    {#the service group already exists on target, let's update the uuid reference in that rule
-                                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in inbound allow list
-                                            ForEach ($service_group_item in $service_group_inbound)
-                                            {
-                                                $service_group_item.uuid = $target_service_group_uuid
-                                            } 
-                                        }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in outbound allow list
-                                            ForEach ($service_group_item in $service_group_outbound)
-                                            {
-                                                $service_group_item.uuid = $target_service_group_uuid
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if ($missing_service_groups_list)
-                                {#there are missing service groups
-                                    Write-Host "$(get-date) [DATA] The following service groups need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_service_groups_list.service_group.name
-                                }
-                            #endregion
-
-                            #region create missing service groups on target
-                                [System.Collections.ArrayList]$processed_service_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($service_group in $missing_service_groups_list)
-                                {#process all missing service groups
-                                    #add service group
-                                    $api_server_endpoint = "/api/nutanix/v3/service_groups" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "POST"
-                                    $payload = (ConvertTo-Json $service_group.service_group -Depth 10)
-                                    Write-Host "$(Get-Date) [INFO] Adding service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Green
-                                    try 
-                                    {#add service group
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
-                                        if ($debugme) {$resp}
-                                        if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in inbound allow list
-                                            ForEach ($service_group_item in $service_group_inbound)
-                                            {
-                                                $service_group_item.uuid = $resp.uuid
-                                            } 
-                                        }
-                                        if ($service_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
-                                        {#that service group is used in outbound allow list
-                                            ForEach ($service_group_item in $service_group_outbound)
-                                            {
-                                                $service_group_item.uuid = $resp.uuid
-                                            }
-                                        }
-                                    }
-                                    catch 
-                                    {#we couldn't add the service group
-                                        Throw "$($_.Exception.Message)"
-                                    }
-                                }
-                            #endregion
-                        #endregion
-                        
-                        #region deal with address groups
-                            #region which address groups are used?
-                                #* figure out address groups used in this rule
-                                Write-Host "$(get-date) [INFO] Examining address groups..." -ForegroundColor Green
-                                [System.Collections.ArrayList]$used_address_group_list = New-Object System.Collections.ArrayList($null)
-                                #types of rules (where categories are listed varies depending on the type of rule): 
-                                if ($rule.spec.resources.app_rule) 
-                                {#this is an app rule
-                                    foreach ($address_group in $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list)
-                                    {#process each address group used in outbound_allow_list
-                                        $used_address_group_list.Add($address_group) | Out-Null
-                                    }
-                                    foreach ($address_group in $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list)
-                                    {#process each address group used in inbound_allow_list
-                                        $used_address_group_list.Add($address_group) | Out-Null
-                                    }
-                                }
-                            #endregion
-
-                            #region are all used address groups on the target?
-
-                                [System.Collections.ArrayList]$missing_address_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
-                                {#process each used address group
-
-                                    #find out what the address group name is (only uuid is kept in rule definition)
-                                    $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
-                                    $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
-                                    $method = "GET"
-
-                                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                                    if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
-                                    {#based on its name, that address group does not exist on the target
-                                        $missing_address_groups_list.Add($source_address_group) | Out-Null
-                                    }
-                                    else 
-                                    {#the address group already exists on target, let's update the uuid reference in that rule
-                                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
-                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
-                                        {#that address group is used in inbound allow list
-                                            ForEach ($address_group_item in $address_group_inbound)
-                                            {
-                                                $address_group_item.uuid = $target_address_group_uuid
-                                            }
-                                        }
-                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
-                                        {#that address group is used in outbound allow list
-                                            ForEach ($address_group_item in $address_group_outbound)
-                                            {
-                                                $address_group_item.uuid = $target_address_group_uuid
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if ($missing_address_groups_list)
-                                {#there are missing address groups
-                                    Write-Host "$(get-date) [DATA] The following address groups need to be added on $($targetPc):" -ForegroundColor White
-                                    $missing_address_groups_list.address_group.name
-                                }
-                            #endregion
-
-                            #region create missing address groups on target
-                                [System.Collections.ArrayList]$processed_address_groups_list = New-Object System.Collections.ArrayList($null)
-                                foreach ($address_group in $missing_address_groups_list)
-                                {#process all missing address groups
-                                    #add address group
-                                    $api_server_endpoint = "/api/nutanix/v3/address_groups" -f $category,$value
-                                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                                    $method = "POST"
-                                    $payload = (ConvertTo-Json $address_group.address_group -Depth 10)
-                                    Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
-                                    try 
-                                    {#add address group
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                                        Write-Host "$(Get-Date) [SUCCESS] Added address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Cyan
-                                        if ($debugme) {$resp}
-                                        #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
-                                        if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
-                                        {#that address group is used in inbound allow list, let's update the uuid with that of the newly created address group
-                                            ForEach ($address_group_item in $address_group_inbound)
-                                            {
-                                                $address_group_item.uuid = $resp.uuid
-                                            }
-                                        }
-                                        if ($address_group_outbound = $rule.spec.resources.app_rule.outbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $address_group.uuid})
-                                        {#that address group is used in outbound allow list, let's update the uuid with that of the newly created address group
-                                            ForEach ($address_group_item in $address_group_outbound)
-                                            {
-                                                $address_group_item.uuid = $resp.uuid
-                                            }
-                                        }
-                                    }
-                                    catch 
-                                    {#we couldn't add the address group
-                                        Throw "$($_.Exception.Message)"
-                                    }
-                                }
-                            #endregion
-                        #endregion
+                        Sync-Categories
+                        Sync-ServiceGroups
+                        Sync-AddressGroups
 
                         #region update rule on target
                             $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
