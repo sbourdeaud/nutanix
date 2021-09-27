@@ -676,6 +676,9 @@ Date       By   Updates (newest updates at the top)
 09/17/2021 sb   Fixing issue #19 (redirect output to log file with -log 
                 parameter)
 09/27/2021 sb   Addressing issue #19 with getting VMs in large environments.
+                Addressing issue #15 by making sure to compare VM host with
+                list of all hosts in the compute cluster (as opposed to hosts
+                in the targeted Nutanix cluster).
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1416,6 +1419,8 @@ $drs_rule2_name = "VMs_Should_In_GS"
                             }
                         #endregion
                         
+                        $myvar_compute_cluster_hosts = Get-Cluster -Name $myvar_vsphere_cluster_name | Get-VMHost
+
                         #$myvar_vm_view_list = Get-View -ViewType VirtualMachine #this is faster than a get-vm in large environments but does not give us the ability to look at IP addresses...
                         Write-Host "$(get-date) [INFO] Retrieving list of VMs in cluster $($myvar_vsphere_cluster_name) from $($myvar_vcenter_ip)..." -ForegroundColor Green
                         try 
@@ -1612,10 +1617,10 @@ $drs_rule2_name = "VMs_Should_In_GS"
                         ForEach ($myvar_datastore_poweredon_vm in $myvar_datastore_poweredon_vms)
                         {#let's make sure none of the powered on vms have DRS override
                             $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
-                            if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_ntnx_vmhosts)
+                            if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_compute_cluster_hosts)
                             {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
-                                Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is running on vmhost $(($myvar_datastore_poweredon_vm_details.VMHost).Name) which is not part of Nutanix cluster $($cluster). This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
-                                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of Nutanix cluster hosts:" -ForegroundColor White; $myvar_ntnx_vmhosts}
+                                Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is running on vmhost $(($myvar_datastore_poweredon_vm_details.VMHost).Name) which is not part of the compute cluster $($myvar_vsphere_cluster_name). This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
+                                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of Nutanix cluster hosts:" -ForegroundColor White; $myvar_compute_cluster_hosts}
                             }
                             elseif ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
                             {#this vm has a DRS override
