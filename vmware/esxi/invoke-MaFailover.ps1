@@ -124,48 +124,94 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 
         begin
         {
-
+            if (!$api_retries)
+            {
+                $api_retries = 3
+            }
+            $retry_counter = $api_retries
         }
+        
         process
         {
             Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-            try {
-                #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-                if ($PSVersionTable.PSVersion.Major -gt 5) {
-                    $headers = @{
-                        "Content-Type"="application/json";
-                        "Accept"="application/json"
-                    }
-                    if ($payload) {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            Do {
+                try 
+                {
+                    #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+                    if ($PSVersionTable.PSVersion.Major -gt 5) {
+                        $headers = @{
+                            "Content-Type"="application/json";
+                            "Accept"="application/json"
+                        }
+                        if ($payload) {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        } else {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        }
                     } else {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        $headers = @{
+                            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                            "Content-Type"="application/json";
+                            "Accept"="application/json"
+                        }
+                        if ($payload) {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                        } else {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                        }
                     }
-                } else {
-                    $headers = @{
-                        "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                        "Content-Type"="application/json";
-                        "Accept"="application/json"
+                    Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+                    $retry_counter = 0
+                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+                }
+                
+                catch 
+                {
+                    $saved_error = $_.Exception
+                    if ($_.Exception.Source -eq "System.Net.Http")
+                    {#some kind of network issue
+                        $saved_error_message = $_.ErrorDetails.Message
                     }
-                    if ($payload) {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-                    } else {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                    elseif ($saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue).message_list.message) 
+                    {#message is buried in a list
+                    }
+                    else 
+                    {#message is not buried in a list
+                        $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue).message
+                    }
+                    $resp_return_code = $_.Exception.Response.StatusCode.value__
+                    
+                    if ($resp_return_code -eq 409) 
+                    {
+                        Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
+                        Throw
+                    }
+                    elseif ($saved_error_message -eq "Operation timed out") 
+                    {
+                        $retry_counter = $retry_counter - 1
+                        if ($retry_counter -gt 0) 
+                        {
+                            Write-Host "$(Get-Date) [WARNING] $saved_error_message : retyring the operation $($retry_counter) times" -ForegroundColor Yellow
+                        }
+                        else 
+                        {
+                            Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+                        }
+                    }
+                    else 
+                    {
+                        if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                        Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
                     }
                 }
-                Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-            }
-            catch {
-                $saved_error = $_.Exception.Message
-                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                Throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally {
-                #add any last words here; this gets processed no matter what
-            }
+                
+                finally 
+                {
+                    #add any last words here; this gets processed no matter what
+                }
+            } while ($retry_counter -gt 0)
         }
+        
         end
         {
             return $resp
@@ -679,6 +725,8 @@ Date       By   Updates (newest updates at the top)
                 Addressing issue #15 by making sure to compare VM host with
                 list of all hosts in the compute cluster (as opposed to hosts
                 in the targeted Nutanix cluster).
+                Addressing issue #17 and adding api_max_retries to retry Prism
+                API calls that time out. Also enhanced REST API error messages.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -837,6 +885,7 @@ Function GetDrsObjectNames
     }
     return $drs_object_names
 }
+$api_retries = 3 #how many times are we retrying Prism REST API calls that time out?
 <#
 $ntnx1_cluster_name = "LABCL101"
 $drs_hg1_name = "MB_hosts"
