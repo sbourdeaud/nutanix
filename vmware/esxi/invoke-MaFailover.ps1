@@ -53,7 +53,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 28th 2021
+  Revision: October 6th 2021
 #>
 
 #region parameters
@@ -825,6 +825,9 @@ Date       By   Updates (newest updates at the top)
                 Addressing issue #17 and adding api_max_retries to retry Prism
                 API calls that time out. Also enhanced REST API error messages.
 09/28/2021 sb   Addressing issue #16 by adding the -DoNotUseDrs parameter.
+10/06/2021 sb   Fixing issue with -DoNotUseDrs (DRS is now set to manual instead
+                of disabling and test for VMs in datastore are made against the
+                correct vmhost group)
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
