@@ -1871,6 +1871,81 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 {#couldn't set DRS to manual
                     throw "$(get-date) [ERROR] Could not set DRS to manual on cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
                 }
+
+                #* find matching drs groups and rule(s)
+                #region matching drs groups and rules
+                Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                try 
+                {
+                    $myvar_cluster_compute_resource_view = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvar_vsphere_cluster_name}
+                    $myvar_cluster_drs_rules = $myvar_cluster_compute_resource_view.ConfigurationEx.Rule
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Cyan
+                }
+                catch 
+                {
+                    throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
+                }
+                #endregion
+
+                #* update matching drs rule(s) so VMs don't try to move back when we're done
+                #region update drs rule(s)
+                    #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    $source_drs_objects_names, $remote_drs_objects_names = @{}
+                    $source_drs_objects_names = GetDrsObjectNames($myvar_ntnx_cluster_name)
+                    $remote_drs_objects_names = GetDrsObjectNames($myvar_ntnx_remote_cluster_name)
+
+                    if ($source_drs_objects_names -and $remote_drs_objects_names)
+                    {#we found a match for custom DRS rule names
+                        if ($pd -eq "all")
+                        {#I am moving all pds with custom DRS rule names, so this is a failover: updating source rule with remote hostgroup
+                            $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                            $myvar_drs_rule_name = $source_drs_objects_names.drs_rule_name
+                            $myvar_drs_vm_group_name = $source_drs_objects_names.drs_vmg_name
+                        }
+                        else 
+                        {#I am moving some pds with custom DRS rule names, so this is a failback: updating remote rule with remote hostgroup
+                            $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                            $myvar_drs_rule_name = $remote_drs_objects_names.drs_rule_name
+                            $myvar_drs_vm_group_name = $remote_drs_objects_names.drs_vmg_name
+                        }
+
+                        Write-Host ""
+                        Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+
+                        if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                        {#houston we have a problem: DRS rule does not exist
+                            throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                        } else {
+                            #update drs rule
+                            Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                            Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                            Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                        }
+                    }
+                    else 
+                    {#I don't have custom DRS rules matching, so assuming one DRS rule per container
+                        $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
+                        foreach ($myvar_datastore in $ctr_list.name)
+                        {#process each datastore
+                            #! CUSTOMIZE: you can customize drs rules and vm group names here
+                            $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
+                            $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+
+                            if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                            {#houston we have a problem: DRS rule does not exist
+                                throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                            } else {
+                                #update drs rule
+                                Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                                Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                                Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                            }
+                        }                    
+                    }
+                
+                #endregion
                 
                 #* manual migrations for each datastore
                 foreach ($myvar_datastore in $ctr_list.name)
