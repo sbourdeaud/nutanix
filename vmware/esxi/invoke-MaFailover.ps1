@@ -30,7 +30,7 @@
 .PARAMETER DisableOnly
   Try to disabled specified active but decoupled metro protection domains. Do nothing else. This is useful when failing back after an unplanned failover.
 .PARAMETER DoNotUseDrs
-  Do not rely on DRS for evacuating VM but disable DRS and do the vmotions "manually". This is useful if your cluster capacity is insufficient for DRS to work properly.
+  Do not rely on DRS for evacuating VM but set DRS to manual and do the vmotions "manually". This is useful if your cluster capacity is insufficient for DRS to work properly.
 .PARAMETER reEnableDelay
   (Optional)Specifies in seconds how long the script should wait between each protection domain re-enablement. Default and minimum is 120 seconds (2 minutes). You can specify more if you want, but not less.
 .PARAMETER maxConcurrentRepl
@@ -53,7 +53,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 6th 2021
+  Revision: October 7th 2021
 #>
 
 #region parameters
@@ -605,52 +605,52 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
     #this function is used to prompt the user for a yes/no/skip response in order to control the workflow of a script
     function Write-CustomPrompt 
     {
-    <#
-    .SYNOPSIS
-    Creates a user prompt with a yes/no/skip response. Returns the response.
+        <#
+        .SYNOPSIS
+        Creates a user prompt with a yes/no/skip response. Returns the response.
 
-    .DESCRIPTION
-    Creates a user prompt with a yes/no/skip response. Returns the response in lowercase. Valid responses are "y" for yes, "n" for no, "s" for skip.
+        .DESCRIPTION
+        Creates a user prompt with a yes/no/skip response. Returns the response in lowercase. Valid responses are "y" for yes, "n" for no, "s" for skip.
 
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
 
-    .EXAMPLE
-    .\Write-CustomPrompt
-    Creates the prompt.
+        .EXAMPLE
+        .\Write-CustomPrompt
+        Creates the prompt.
 
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
 
-    param 
-    (
-        [Switch]$skip
-    )
+        param 
+        (
+            [Switch]$skip
+        )
 
-    begin 
-    {
-        [String]$userChoice = "" #initialize our returned variable
-    }
-    process 
-    {
-        if ($skip)
+        begin 
         {
-            do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o]/S[kip])"} #display the user prompt
-            while ($userChoice -notmatch '[ynsYNS]') #loop until the user input is valid
+            [String]$userChoice = "" #initialize our returned variable
         }
-        else 
+        process 
         {
-            do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o])"} #display the user prompt
-            while ($userChoice -notmatch '[ynYN]') #loop until the user input is valid
+            if ($skip)
+            {
+                do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o]/S[kip])"} #display the user prompt
+                while ($userChoice -notmatch '[ynsYNS]') #loop until the user input is valid
+            }
+            else 
+            {
+                do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o])"} #display the user prompt
+                while ($userChoice -notmatch '[ynYN]') #loop until the user input is valid
+            }
+            $userChoice = $userChoice.ToLower() #change to lowercase
         }
-        $userChoice = $userChoice.ToLower() #change to lowercase
-    }
-    end 
-    {
-        return $userChoice
-    }
+        end 
+        {
+            return $userChoice
+        }
 
     } #end Write-CustomPrompt function
 
@@ -828,6 +828,8 @@ Date       By   Updates (newest updates at the top)
 10/06/2021 sb   Fixing issue with -DoNotUseDrs (DRS is now set to manual instead
                 of disabling and test for VMs in datastore are made against the
                 correct vmhost group)
+10/07/2021 sb   Fixed minor output issues. Fixed an issue with loading VMware
+                PowerCLI module.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -850,7 +852,7 @@ Date       By   Updates (newest updates at the top)
 
     #check if we have all the required PoSH modules
     Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
-    if (!(Get-Module VMware.PowerCLI)) 
+    if (!(Get-Module VMware.VimAutomation.Core)) 
     {#module VMware.PowerCLI is not loaded
         try 
         {#load module VMware.PowerCLI
@@ -1863,7 +1865,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
             else 
             {#we are NOT using DRS for vmotions
                 #* set DRS to manual
-                Write-Host "$(get-date) [WARN] We are NOT using DRS for VM migrations! Setting DRS to manual on cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Yellow
+                Write-Host "$(get-date) [WARNING] We are NOT using DRS for VM migrations! Setting DRS to manual on cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Yellow
                 try 
                 {#set DRS to manual
                     $result = Set-Cluster -Cluster $myvar_vsphere_cluster -DrsAutomationLevel "Manual" -Confirm:$false -ErrorAction Stop
@@ -2080,7 +2082,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
                     if ($myvar_syncing_pds -ge $maxConcurrentRepl)
                     {
-                        Write-Host "$(get-date) [WARN] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                        Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
                         Start-Sleep 60
                     }
                 } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
@@ -2189,7 +2191,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                         Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
                         if ($myvar_syncing_pds -ge $maxConcurrentRepl)
                         {
-                            Write-Host "$(get-date) [WARN] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                            Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
                             Start-Sleep 60
                         }
                     } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
