@@ -762,6 +762,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #>
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
+#todo: count nb of processed pds vs total pds to avoid waiting 2 minutes after the last one has been re-enabled
 
 #region prepwork
     $ErrorActionPreference = "Continue"
@@ -1955,7 +1956,8 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 #* manual migrations for each datastore
                 foreach ($myvar_datastore in $ctr_list.name)
                 {#process each datastore
-                    Write-Host "$(get-date) [INFO] Processing virtual machines in datastore $($myvar_datastore)..." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Processing virtual machines in datastore $($myvar_datastore)..." -ForegroundColor Purple
                     #move vms
                     invoke-DatastoreVmDrain -datastore $myvar_datastore -vmhost_group $myvar_remote_ntnx_vmhosts
                 }
