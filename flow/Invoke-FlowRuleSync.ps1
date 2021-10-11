@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 23rd 2021
+  Revision: October 11th 2021
 #>
 
 
@@ -1236,6 +1236,8 @@ Date       By   Updates (newest updates at the top)
 09/26/2021 sb   Moved syncing of categories, address and service groups to
                 functions to avoid code duplication between the add and update
                 actions.
+10/11/2021 sb   Adding processing for multiple rules with the same name (issue
+                #21)
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
@@ -1290,7 +1292,6 @@ Date       By   Updates (newest updates at the top)
 
 
 #todo: what about service and address groups in target group?
-#todo: bug: dealing with multiple apps in target group
 #todo: improve: rule add/update/delete returns task uuid: check on task status: no task uuid is returned... check on status later?
 #todo: improve: add export action for rules from source to json (for backup purposes)
 #todo: improve: move code to figure out categories to a function
