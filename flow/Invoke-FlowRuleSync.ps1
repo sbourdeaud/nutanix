@@ -1396,9 +1396,31 @@ Date       By   Updates (newest updates at the top)
         $compared_rules = @()
         foreach ($rule in $filtered_target_rules_response) 
         {#compare target with source
+            $source_rules_list = $filtered_source_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+            $target_rules_list = $filtered_target_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+
             if ($rule.spec.name -notin $compared_rules)
             {#we haven't processed that rule yet
-                if ($rule.spec.name -notin $filtered_source_rules_response.spec.name)
+                if ($target_rules_list.count -gt 1)
+                {#we have multiple rules with the same name   
+                    Foreach ($target_rule_item in $target_rules_list)
+                    {#process each rule with a duplicate name
+                        $found_match = $false
+                        Foreach ($source_rule_item in $source_rules_list)
+                        {#compare with all rules with similar name on source
+                            if (([String]::Compare(($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($source_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                            {#we found a match for the target group
+                                $found_match = $true
+                            }
+                        }
+                        if (!$found_match)
+                        {#there is a rule with the same name, but not the same target group
+                            Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist with that specific target group on target Prism Central $($sourcePc)" -ForegroundColor Green
+                            $add_rules_list.Add($target_rule_item) | Out-Null
+                        }
+                    }
+                }
+                elseif ($rule.spec.name -notin $filtered_source_rules_response.spec.name)
                 {#rule exists on target but not on source
                     Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) no longer exists on source Prism Central $($sourcePc)" -ForegroundColor Green
                     $remove_rules_list.Add($rule) | Out-Null
@@ -1413,10 +1435,32 @@ Date       By   Updates (newest updates at the top)
         $compared_rules = @()
         foreach ($rule in $filtered_source_rules_response) 
         {#compare source with target
+            $source_rules_list = $filtered_source_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+            $target_rules_list = $filtered_target_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+
             if ($rule.spec.name -notin $compared_rules)
             {#we haven't processed that rule yet
                 #! currently, this will always not match if a service or address group is in use and there is no way to find out if this is a new group or the same since all we're tracking is the uuid...
-                if ($target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name})
+                if ($source_rules_list.count -gt 1)
+                {#we have multiple rules with the same name   
+                    Foreach ($source_rule_item in $source_rules_list)
+                    {#process each rule with a duplicate name
+                        $found_match = $false
+                        Foreach ($target_rule_item in $target_rules_list)
+                        {#compare with all rules with similar name on target
+                            if (([String]::Compare(($source_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                            {#we found a match for the target group
+                                if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
+                                {#rule configuration or description on source does not match rule configuration or description on target
+                                    Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) needs to be updated on target Prism Central $($targetPc)" -ForegroundColor Green
+                                    $update_rules_list.Add($rule) | Out-Null
+                                }
+                                $found_match = $true
+                            }
+                        }
+                    }
+                }
+                elseif ($target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name})
                 {#we have a matching rule on target, let's compare
                     if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
                     {#rule configuration or description on source does not match rule configuration or description on target
