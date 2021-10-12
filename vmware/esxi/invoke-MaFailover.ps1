@@ -2140,6 +2140,127 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #region reEnableOnly
         if ($reEnableOnly)
         {
+
+            if ($DoNotUseDrs)
+            {#we don't want to use DRS, so we'll need to set DRS to manual before we start re-enabling protection domains
+                #region connect to vcenter
+                    Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
+                    try 
+                    {#try connecting to vcenter
+                        $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
+                    }
+                    catch 
+                    {#could not connect to vcenter
+                        throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                #endregion
+                
+                #region figure out HA/DRS cluster name  
+                    #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
+                    $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
+                    $myvar_remote_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the remote Nutanix cluster
+                    Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    try 
+                    {#get all the vmhosts registered in vCenter
+                        $myvar_vmhosts = Get-VMHost -ErrorAction Stop 
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                    }
+                    catch
+                    {#couldn't get all the vmhosts registered in vCenter
+                        throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                    }
+
+                    foreach ($myvar_vmhost in $myvar_vmhosts) 
+                    {#let's look at each host and determine which is which
+                        Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
+                        try 
+                        {#retrieve all vmk NICs for that host
+                            $myvar_host_vmks = $myvar_vmhost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
+                            Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $($myvar_vmhost)" -ForegroundColor Cyan
+                        }
+                        catch
+                        {#couldn't retrieve all vmk NICs for that host
+                            throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $($myvar_vmhost) : $($_.Exception.Message)"
+                        }
+                        
+                        foreach ($myvar_host_vmk in $myvar_host_vmks) 
+                        {#examine all VMKs
+                            foreach ($myvar_host_ip in $myvar_ntnx_hosts_ips) 
+                            {#compare to the host IP addresses we got from the Nutanix cluster
+                                if ($myvar_host_vmk.IP -eq $myvar_host_ip)
+                                {#if we get a match, that vcenter host is in cluster 1
+                                    Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor White
+                                    $myvar_ntnx_vmhosts += $myvar_vmhost
+                                }
+                            }#end foreach IP loop
+                            
+                            foreach ($myvar_remote_host_ip in $myvar_remote_ntnx_hosts_ips) 
+                            {#compare to the host IP addresses we got from the Nutanix cluster
+                                if ($myvar_host_vmk.IP -eq $myvar_remote_host_ip)
+                                {#if we get a match, that vcenter host is in cluster 2
+                                    Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor White
+                                    $myvar_remote_ntnx_vmhosts += $myvar_vmhost
+                                }
+                            }#end foreach IP loop
+                        }#end foreach VMK loop
+                    }#end foreach VMhost loop
+                    
+                    if (!$myvar_ntnx_vmhosts) 
+                    {#couldn't find hosts in cluster
+                        throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $($myvar_ntnx_cluster_name) in vCenter server $($myvar_vcenter_ip)"
+                    }
+
+                    #figure out vsphere cluster name
+                    Write-Host "$(get-date) [INFO] Checking which compute cluster contains hosts from $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
+                    try 
+                    {#we look at which cluster the first vmhost in cluster belongs to.
+                        $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
+                        $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
+
+                        Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
+
+                        foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
+                        {#make sure all hosts are part of the same cluster
+                            try 
+                            {
+                                $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
+                                $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
+                                if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
+                                {#houston we have a problem: some nutanix hosts are not in the same compute cluster
+                                    throw "$(get-date) [ERROR] Nutanix host $($myvar_vmhost) is in vsphere cluster $($myvar_vmhost_vsphere_cluster_name) instead of vsphere cluster $($myvar_vsphere_cluster_name)! Exiting."
+                                }
+                            }
+                            catch 
+                            {
+                                throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                            }
+                        }
+                    }
+                    catch 
+                    {#couldn't retrieve cluster
+                        throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                    }
+                    
+                    
+                    $myvar_compute_cluster_hosts = Get-Cluster -Name $myvar_vsphere_cluster_name | Get-VMHost
+                #endregion
+
+                #region set DRS to manual
+                    Write-Host "$(get-date) [WARNING] We are NOT using DRS for VM migrations! Setting DRS to manual on cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Yellow
+                    try 
+                    {#set DRS to manual
+                        $result = Set-Cluster -Cluster $myvar_vsphere_cluster -DrsAutomationLevel "Manual" -Confirm:$false -ErrorAction Stop
+                        $drs_disabled = $true
+                        Write-Host "$(get-date) [SUCCESS] Successfully set DRS to manual on cluster $($myvar_vsphere_cluster_name)" -ForegroundColor Cyan
+                    }
+                    catch
+                    {#couldn't set DRS to manual
+                        throw "$(get-date) [ERROR] Could not set DRS to manual on cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
+                    }
+                #endregion
+            }
+
             [System.Collections.ArrayList]$myvar_processed_pd_list = New-Object System.Collections.ArrayList($null)
             foreach ($myvar_pd in $pd_list) 
             {#main processing loop
