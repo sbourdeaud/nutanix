@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 11th 2021
+  Revision: October 12th 2021
 #>
 
 
@@ -1238,12 +1238,13 @@ Date       By   Updates (newest updates at the top)
                 actions.
 10/11/2021 sb   Adding processing for multiple rules with the same name (issue
                 #21)
+10/11/2021 sb   Closing issue #21 for remove and update of rules.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
 
     if ($log) 
-    {
+    {#we want to create a log transcript
         $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
         Start-Transcript -Path ./$myvar_output_log_file
     }
@@ -1274,13 +1275,13 @@ Date       By   Updates (newest updates at the top)
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
-    { #we are using custom credentials, so let's grab the username and password from that
+    {#we are using custom credentials, so let's grab the username and password from that
         try 
-        {
+        {#retrieve credentials
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
         }
         catch 
-        {
+        {#could not retrieve credentials
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
         }
@@ -1373,6 +1374,7 @@ Date       By   Updates (newest updates at the top)
                             if (([String]::Compare(($source_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
                             {#we found a match for the target group
                                 $found_match = $true
+                                continue
                             }
                         }
                         if (!$found_match)
@@ -1417,7 +1419,7 @@ Date       By   Updates (newest updates at the top)
                         if (!$found_match)
                         {#there is a rule with the same name, but not the same target group
                             Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist with that specific target group on target Prism Central $($sourcePc)" -ForegroundColor Green
-                            $add_rules_list.Add($target_rule_item) | Out-Null
+                            $remove_rules_list.Add($target_rule_item) | Out-Null
                         }
                     }
                 }
@@ -1454,7 +1456,7 @@ Date       By   Updates (newest updates at the top)
                                 if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
                                 {#rule configuration or description on source does not match rule configuration or description on target
                                     Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) needs to be updated on target Prism Central $($targetPc)" -ForegroundColor Green
-                                    $update_rules_list.Add($rule) | Out-Null
+                                    $update_rules_list.Add($source_rule_item) | Out-Null
                                 }
                                 $found_match = $true
                             }
@@ -1582,6 +1584,19 @@ Date       By   Updates (newest updates at the top)
 
                         #region update rule on target
                             $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
+                            #! add code here to deal with the fact that there might be multiple target rules with the same name
+                            if ($target_rule.count -gt 1)
+                            {#we have multiple rules with the same name on the target, let's identify which ne we are updating based on the target group   
+                                Foreach ($target_rule_item in $target_rule)
+                                {#compare with all rules with similar name on target
+                                    if (([String]::Compare(($rule.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                                    {#we found a match for the target group
+                                        $target_rule = $target_rule_item
+                                        continue
+                                    }
+                                }
+                            }
+
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
                             $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
                             $method = "PUT"
