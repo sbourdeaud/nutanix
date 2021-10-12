@@ -53,7 +53,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 7th 2021
+  Revision: October 12th 2021
 #>
 
 #region parameters
@@ -717,8 +717,8 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
                 Write-Host "$(get-date) [INFO] Moving vm $($vm.Name) to host $($target_host.Name)" -ForegroundColor Green
                 try 
                 {#move-vm
-                    $result = Move-Vm -VM $vm -Destination $target_host -confirm:$false -RunAsync:$false -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) has moved to host $($target_host)" -ForegroundColor Cyan
+                    $result = Move-Vm -VM $vm -Destination $target_host -confirm:$false -RunAsync:$true -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) is moving to host $($target_host)..." -ForegroundColor Cyan
                 }
                 catch 
                 {#couldn't move-vm
@@ -729,6 +729,30 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 
         end 
         {
+            Do
+            {#loop until there are no active vmotion task for vms in this datastore
+                try 
+                {#get running tasks
+                    Write-Host "$(get-date) [INFO] Getting list of active vmotion tasks from vCenter" -ForegroundColor Green
+                    $active_vmotion_vm_list = (Get-Task -Status Running -ErrorAction Stop | Where-Object {$_.Name -eq "RelocateVM_Task"}).ExtensionData.Info.EntityName
+                    $running_tasks = $false
+                    foreach ($vm_name in $active_vmotion_vm_list) 
+                    {#look at all currently moving vms to see if they are in our datastore
+                        if ($vm_name -in $myvar_datastore_vms.Name)
+                        {#there is a vm with an active vmotion task in this datastore, so we're not done moving vms yet
+                            Write-Host "$(get-date) [WARNING] VM $($vm_name) is still migrating! Waiting 5 seconds..." -ForegroundColor Yellow
+                            $running_tasks = $true
+                            Start-Sleep -Seconds 5
+                            continue
+                        }
+                    }
+                }
+                catch 
+                {#could not get running tasks
+                    throw "$(get-date) [ERROR] Could not get tasks from vCenter : $($_.Exception.Message)" 
+                }
+            } While (!$running_tasks)
+            
             try 
             {#getting vms on this datastore
                 Write-Host "$(get-date) [INFO] Getting VMs hosted on datastore $($myvar_datastore)..." -ForegroundColor Green
@@ -742,7 +766,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             foreach ($myvar_vm in $myvar_datastore_vms)
             {#process each vm in this datastore...
                 if ($myvar_vm.vmhost.name -in $myvar_ntnx_vmhosts.name) 
-                {
+                {#there is still a vm on the wrong host in this datastore
                     throw "$(get-date) [ERROR] VM $($myvar_vm.Name) in datastore $($myvar_datastore) is still running on host $($myvar_vm.vmhost.name) in cluster $($myvar_ntnx_cluster_name)!"
                 }
             }
@@ -831,6 +855,14 @@ Date       By   Updates (newest updates at the top)
                 correct vmhost group)
 10/07/2021 sb   Fixed minor output issues. Fixed an issue with loading VMware
                 PowerCLI module.
+10/12/2021 sb   Adding code to address issues #23 and #24:
+                When using -DoNotUseDrs, VMs will now be migrated asynchronous-
+                ly and a loop will check that there are no active migrations
+                before making sure all vms in the datastore are running on the
+                correct host group.
+                In addition, when doing a -reEnableOnly, if -DoNotUseDrs is set
+                DRS will be set to manual before starting to re-enable protec-
+                tion domains.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1756,7 +1788,8 @@ $drs_rule2_name = "VMs_Should_In_GS"
                         Write-Host ""
                         Write-Host "$(get-date) [STEP] Checking all VMs have moved to the remote site for datastore $($myvar_datastore)..." -ForegroundColor Magenta
                         $myvar_drs_done = $false
-                        Do {#loop until all vms have been moved
+                        Do 
+                        {#loop until all vms have been moved
                             #figure out which vmhosts have vms running in this datastore
                             try 
                             {#getting vms on this datastore
@@ -1880,17 +1913,17 @@ $drs_rule2_name = "VMs_Should_In_GS"
 
                 #* find matching drs groups and rule(s)
                 #region matching drs groups and rules
-                Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-                try 
-                {
-                    $myvar_cluster_compute_resource_view = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvar_vsphere_cluster_name}
-                    $myvar_cluster_drs_rules = $myvar_cluster_compute_resource_view.ConfigurationEx.Rule
-                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Cyan
-                }
-                catch 
-                {
-                    throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
-                }
+                    Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    try 
+                    {#retrieve existing drs rules
+                        $myvar_cluster_compute_resource_view = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvar_vsphere_cluster_name}
+                        $myvar_cluster_drs_rules = $myvar_cluster_compute_resource_view.ConfigurationEx.Rule
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Cyan
+                    }
+                    catch 
+                    {#could not retrieve existing drs rules
+                        throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
+                    }
                 #endregion
 
                 #* update matching drs rule(s) so VMs don't try to move back when we're done
