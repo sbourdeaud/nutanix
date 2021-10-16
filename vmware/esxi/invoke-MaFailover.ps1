@@ -751,7 +751,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
                 {#could not get running tasks
                     throw "$(get-date) [ERROR] Could not get tasks from vCenter : $($_.Exception.Message)" 
                 }
-            } While (!$running_tasks)
+            } While ($running_tasks)
             
             try 
             {#getting vms on this datastore
@@ -863,6 +863,8 @@ Date       By   Updates (newest updates at the top)
                 In addition, when doing a -reEnableOnly, if -DoNotUseDrs is set
                 DRS will be set to manual before starting to re-enable protec-
                 tion domains.
+10/16/2021 sb   Fixing a logic issue in the DoNotUseDrs Do while loop (thanks to
+                Benjamin Fabian from Unisys for catching this!)
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
