@@ -630,6 +630,18 @@ public class ServerCertificateValidationCallback
             Do {
                 try {
                     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                    <# $listLength = 0
+                    if ($resp.metadata.offset) {
+                        $firstItem = $resp.metadata.offset
+                    } else {
+                        $firstItem = 0
+                    }
+                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+                        $listLength = $resp.metadata.length
+                    } else {
+                        $listLength = $resp.metadata.total_matches
+                    }
+                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green #>
                     
                     if ($total -eq 0) {$total = $resp.metadata.total_matches} #this is the first time we go thru this loop, so let's assign the total number of objects
                     $first = $offset #this is the first object for this iteration
@@ -771,12 +783,13 @@ public class ServerCertificateValidationCallback
 
     function Sync-Categories
     {#syncs Prism categories used in a given network policy
+    
         param
         (
             [Parameter(Mandatory)]
             $rule
         )
-
+        
         begin {}
 
         process 
@@ -853,6 +866,7 @@ public class ServerCertificateValidationCallback
 
             Write-Host "$(get-date) [DATA] Flow rule $($rule.spec.Name) uses the following category:value pairs:" -ForegroundColor White
             $used_categories_list | Select-Object -Unique
+            
             #endregion
             
             #region are all used category:value pairs on target?
@@ -989,12 +1003,13 @@ public class ServerCertificateValidationCallback
 
     function Sync-AddressGroups
     {#syncs Prism address groups used in a given network policy
+    
         param
         (
             [Parameter(Mandatory)]
             $rule
         )
-
+        
         begin {}
 
         process 
@@ -1105,12 +1120,13 @@ public class ServerCertificateValidationCallback
 
     function Sync-ServiceGroups
     {#syncs Prism service groups used in a given network policy
+    
         param
         (
             [Parameter(Mandatory)]
             $rule
         )
-
+        
         begin {}
 
         process 
@@ -1243,7 +1259,7 @@ Date       By   Updates (newest updates at the top)
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
 
-    if ($log) 
+    if ($log)
     {#we want to create a log transcript
         $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
         Start-Transcript -Path ./$myvar_output_log_file
@@ -1293,6 +1309,7 @@ Date       By   Updates (newest updates at the top)
 
 
 #todo: what about service and address groups in target group?
+#todo: bug: dealing with multiple apps in target group
 #todo: improve: rule add/update/delete returns task uuid: check on task status: no task uuid is returned... check on status later?
 #todo: improve: add export action for rules from source to json (for backup purposes)
 #todo: improve: move code to figure out categories to a function
@@ -1472,7 +1489,7 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
                 $compared_rules += $rule.spec.name
-            }  
+            }
         }
         Write-Host "$(get-date) [DATA] There are $($update_rules_list.count) Flow rules to update on target Prism Central $($targetPc)" -ForegroundColor White
 
@@ -1486,7 +1503,6 @@ Date       By   Updates (newest updates at the top)
 
         if ($action -eq "sync")
         {#synchronize (ADD, DELETE, UPDATE)
-            
             #region process ADD
                 if ($add_rules_list)
                 {#there are rules to be added
@@ -1494,7 +1510,6 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Adding Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $add_rules_list)
                     {#process each rule to add
-                        
                         Sync-Categories -rule $rule
                         Sync-ServiceGroups -rule $rule
                         Sync-AddressGroups -rule $rule
@@ -1538,7 +1553,6 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
             #endregion
-
             
             #region process DELETE
                 if ($remove_rules_list)
@@ -1568,7 +1582,6 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
             #endregion
-
             
             #region process UPDATE 
                 if ($update_rules_list)
@@ -1577,7 +1590,7 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Updating Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $update_rules_list)
                     {#process each rule to update
-                        
+                    
                         Sync-Categories -rule $rule
                         Sync-ServiceGroups -rule $rule
                         Sync-AddressGroups -rule $rule
@@ -1596,7 +1609,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                             }
-
+                            
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
                             $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
                             $method = "PUT"

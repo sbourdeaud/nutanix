@@ -148,266 +148,271 @@ if ((Get-PowerCLIConfiguration | where-object `
 
 #! customize this section
 #region variables
-#misc variables
-#used to store script begin timestamp
-$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
-#used to store the list of all the vCenter servers we must connect to
-$myvarvCenterServers = @() 
-#! edit the constants below to match your environment. Only 2 host groups are `
-#! supported
-#constants
-$myvar_host_group_01 = @("host1","host2","host3","host4")
-$myvar_host_group_02 = @("host5","host6","host7","host8")
+    #used to store script begin timestamp
+    $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
+    #used to store the list of all the vCenter servers we must connect to
+    $myvarvCenterServers = @() 
+    
+    #! edit the constants below to match your environment. Only 2 host groups are `
+    #! supported
+    #constants
+    $myvar_host_group_01 = @("host1","host2","host3","host4")
+    $myvar_host_group_02 = @("host5","host6","host7","host8")
 #endregion
 
 #region parameters validation
-#let's initialize parameters if they haven't been specified
-if (!$vcenter) {$vcenter = read-host "Enter vCenter server name or IP address"}
-#make sure we parse the argument in case it contains several entries
-$myvarvCenterServers = $vcenter.Split(",") 
-if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the `
-vmhost you want to drain"}
+    #let's initialize parameters if they haven't been specified
+    if (!$vcenter) {$vcenter = read-host "Enter vCenter server name or IP address"}
+    #make sure we parse the argument in case it contains several entries
+    $myvarvCenterServers = $vcenter.Split(",") 
+    if (!$balance -and !$vmhost) {$vmhost = read-host "Enter the name of the `
+    vmhost you want to drain"}
 #endregion
 
 #region processing
     #region balance
-    if ($balance) {
-        if ($balance -eq 1) {
-            $myvar_vmhosts = $myvar_host_group_01
-        } 
-        elseif ($balance -eq 2) {
-            $myvar_vmhosts = $myvar_host_group_02
-        }
-        else {
-            throw "$(get-date) [ERROR] Balance must be 1 or 2"
-        }
-
-        #* foreach vcenter loop
-        foreach ($myvarvCenter in $myvarvCenterServers)	
-        {
-            #* connect to vcenter
-            try {
-                Write-Host "$(get-date) [INFO] Connecting to vCenter server `
-                $myvarvCenter..." -ForegroundColor Green
-                $myvarvCenterObject = Connect-VIServer $myvarvCenter `
-                -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Connected to vCenter server `
-                $myvarvCenter" -ForegroundColor Cyan
-            }
-            catch {throw "$(get-date) [ERROR] Could not connect to vCenter `
-            server $myvarvCenter : $($_.Exception.Message)"}
-            
-            #* determine the number of vms on each host
-            $vm_qty = 0
-            $total_vm_qty = 0
-            $base_qty = 0
-            $target_host = ""
-            foreach ($myvar_vmhost in $myvar_vmhosts) {
-                $vm_qty = (Get-VMHost -Name $myvar_vmhost | Get-VM | `
-                Where-Object {$_.Name -notlike "NTNX-*-CVM"}).length
-                $total_vm_qty += $vm_qty
-                if ($debugme) {Write-Host "$(get-date) [DEBUG] $myvar_vmhost `
-                has $vm_qty vms" -ForegroundColor White}
-                if ($base_qty -eq 0) {
-                    $base_qty = $vm_qty
-                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                    $myvar_vmhost has $vm_qty vms" -ForegroundColor White}
-                    $target_host = $myvar_vmhost
-                    $target_host_vm_qty = $vm_qty
-                    if ($debugme) {Write-Host "$(get-date) [DEBUG] target host `
-                    is $myvar_vmhost" -ForegroundColor White}
-                } 
-                elseif ($vm_qty -lt $base_qty) {
-                    $target_host = $myvar_vmhost
-                    $target_host_vm_qty = $vm_qty
-                    if ($debugme) {Write-Host "$(get-date) [DEBUG] $vm_qty is `
-                    less than $base_qty" -ForegroundColor White}
-                    if ($debugme) {Write-Host "$(get-date) [DEBUG] target host `
-                    is $myvar_vmhost" -ForegroundColor White}
-                }
-                else {
-                    if ($debugme) {Write-Host "$(get-date) [DEBUG] $vm_qty is `
-                    more than $base_qty" -ForegroundColor White}
-                    if ($debugme) {Write-Host "$(get-date) [DEBUG] target `
-                    stays $target_host" -ForegroundColor White}
-                }
-            }
-            $vm_qty_per_vmhost = [math]::Round($total_vm_qty / `
-            $myvar_vmhosts.length)
-            
-            if ($target_host_vm_qty -ge $vm_qty_per_vmhost) {
-                write-host "$(get-date) [WARNING] No rebalancing is required." `
-                -ForegroundColor Yellow
+        if ($balance) {
+            if ($balance -eq 1) {
+                $myvar_vmhosts = $myvar_host_group_01
+            } 
+            elseif ($balance -eq 2) {
+                $myvar_vmhosts = $myvar_host_group_02
             }
             else {
-                $vm_qty_required = $vm_qty_per_vmhost - $target_host_vm_qty
-                $vm_qty_to_move_per_host = [math]::Round($vm_qty_required / `
-                ($myvar_vmhosts.length - 1))
-                $myvar_vmhosts = $myvar_vmhosts | Where-Object `
-                {$_ -ne $target_host}
-                foreach ($target in $myvar_vmhosts) {
-                    $vms_to_move = Get-VMHost -Name $target | Get-VM | `
-                    Where-Object {$_.Name -notlike "NTNX-*-CVM"} | `
-                    Select-Object -First $vm_qty_to_move_per_host
-                    foreach ($vm in $vms_to_move) {
-                        try {
-                            Write-Host "$(get-date) [INFO] Moving vm `
-                            $($vm.Name) from $target to host $($target_host)" `
-                            -ForegroundColor Green
-                            if (!$debugme) {
+                throw "$(get-date) [ERROR] Balance must be 1 or 2"
+            }
+
+            #* foreach vcenter loop
+            foreach ($myvarvCenter in $myvarvCenterServers)	
+            {
+                #* connect to vcenter
+                try {
+                    Write-Host "$(get-date) [INFO] Connecting to vCenter server `
+                    $myvarvCenter..." -ForegroundColor Green
+                    $myvarvCenterObject = Connect-VIServer $myvarvCenter `
+                    -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] Connected to vCenter server `
+                    $myvarvCenter" -ForegroundColor Cyan
+                }
+                catch {throw "$(get-date) [ERROR] Could not connect to vCenter `
+                server $myvarvCenter : $($_.Exception.Message)"}
+                
+                #* determine the number of vms on each host
+                $vm_qty = 0
+                $total_vm_qty = 0
+                $base_qty = 0
+                $target_host = ""
+                foreach ($myvar_vmhost in $myvar_vmhosts) {
+                    $vm_qty = (Get-VMHost -Name $myvar_vmhost | Get-VM | `
+                    Where-Object {$_.Name -notlike "NTNX-*-CVM"}).length
+                    $total_vm_qty += $vm_qty
+                    if ($debugme) {Write-Host "$(get-date) [DEBUG] $myvar_vmhost `
+                    has $vm_qty vms" -ForegroundColor White}
+                    if ($base_qty -eq 0) {
+                        $base_qty = $vm_qty
+                        if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                        $myvar_vmhost has $vm_qty vms" -ForegroundColor White}
+                        $target_host = $myvar_vmhost
+                        $target_host_vm_qty = $vm_qty
+                        if ($debugme) {Write-Host "$(get-date) [DEBUG] target host `
+                        is $myvar_vmhost" -ForegroundColor White}
+                    } 
+                    elseif ($vm_qty -lt $base_qty) {
+                        $target_host = $myvar_vmhost
+                        $target_host_vm_qty = $vm_qty
+                        if ($debugme) {Write-Host "$(get-date) [DEBUG] $vm_qty is `
+                        less than $base_qty" -ForegroundColor White}
+                        if ($debugme) {Write-Host "$(get-date) [DEBUG] target host `
+                        is $myvar_vmhost" -ForegroundColor White}
+                    }
+                    else {
+                        if ($debugme) {Write-Host "$(get-date) [DEBUG] $vm_qty is `
+                        more than $base_qty" -ForegroundColor White}
+                        if ($debugme) {Write-Host "$(get-date) [DEBUG] target `
+                        stays $target_host" -ForegroundColor White}
+                    }
+                }
+                $vm_qty_per_vmhost = [math]::Round($total_vm_qty / `
+                $myvar_vmhosts.length)
+                
+                if ($target_host_vm_qty -ge $vm_qty_per_vmhost) {
+                    write-host "$(get-date) [WARNING] No rebalancing is required." `
+                    -ForegroundColor Yellow
+                }
+                else {
+                    $vm_qty_required = $vm_qty_per_vmhost - $target_host_vm_qty
+                    $vm_qty_to_move_per_host = [math]::Round($vm_qty_required / `
+                    ($myvar_vmhosts.length - 1))
+                    $myvar_vmhosts = $myvar_vmhosts | Where-Object `
+                    {$_ -ne $target_host}
+                    foreach ($target in $myvar_vmhosts) {
+                        $vms_to_move = Get-VMHost -Name $target | Get-VM | `
+                        Where-Object {$_.Name -notlike "NTNX-*-CVM"} | `
+                        Select-Object -First $vm_qty_to_move_per_host
+                        foreach ($vm in $vms_to_move) {
+                            try {
+                                Write-Host "$(get-date) [INFO] Moving vm `
+                                $($vm.Name) from $target to host $($target_host)" `
+                                -ForegroundColor Green
+                                if (!$debugme) {
+                                    $result = Move-Vm -VM $vm -Destination `
+                                    $target_host -confirm:$false -RunAsync:$false `
+                                    -ErrorAction Stop
+                                    Write-Host "$(get-date) [SUCCESS] VM `
+                                    $($vm.Name) has moved from $target to host `
+                                    $($target_host)" -ForegroundColor Cyan
+                                }
+                            }
+                            catch{
+                                Write-Host "$(get-date) [WARNING] Could not move `
+                                vm $($vm.Name) from $target to host `
+                                $($target_host) : $($_.Exception.Message)" `
+                                -ForegroundColor Yellow
+                            }
+                        }
+                    }
+                }
+
+                Write-Host "$(get-date) [INFO] Disconnecting from vCenter server `
+                $vcenter..." -ForegroundColor Green
+                Disconnect-viserver * -Confirm:$False
+            }#end foreach vCenter        
+        }
+    #endregion
+    
+    #region drain
+        else {
+            #* check the specified host belongs to a defined host group
+            if ($myvar_host_group_01 -contains $vmhost) {
+                $myvar_vmhosts = $myvar_host_group_01 | where-object `
+                {$_ -ne $vmhost}
+            }
+            elseif ($myvar_host_group_02 -contains $vmhost) {
+                $myvar_vmhosts = $myvar_host_group_02 | where-object `
+                {$_ -ne $vmhost}
+            }
+            else {
+                throw "$(get-date) [ERROR] $vmhost does not belong to any `
+                pre-defined host groups!"
+            }
+
+            #* foreach vcenter loop
+            foreach ($myvarvCenter in $myvarvCenterServers)	
+            {
+                #* connect to vcenter
+                try 
+                {#connect to vcenter
+                    Write-Host "$(get-date) [INFO] Connecting to vCenter server `
+                    $myvarvCenter..." -ForegroundColor Green
+                    $myvarvCenterObject = Connect-VIServer $myvarvCenter `
+                    -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] Connected to vCenter server `
+                    $myvarvCenter" -ForegroundColor Cyan
+                }
+                catch {throw "$(get-date) [ERROR] Could not connect to vCenter `
+                server $myvarvCenter : $($_.Exception.Message)"}
+
+                #* check the vmhost exists
+                try 
+                {#get-vmhost
+                    Write-Host "$(get-date) [INFO] Checking hosts $vmhost exists `
+                    in vCenter $myvarvCenter..." -ForegroundColor Green
+                    $myvar_vmhostObject = Get-VMHost $vmhost -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] Found host $vmhost in `
+                    $myvarvCenter" -ForegroundColor Cyan
+                }
+                catch {throw "$(get-date) [ERROR] Could not find host $vmhost in `
+                vCenter server $myvarvCenter : $($_.Exception.Message)"}
+
+                #* get the list of vms running on that host and exclude the cvm
+                try 
+                {#get-vm on vmhost
+                    $myvar_vms = $myvar_vmhostObject | get-vm -ErrorAction Stop | `
+                    where-object {$_.Name -notlike "NTNX-*-CVM"}
+                }
+                catch {
+                    throw "$(get-date) [ERROR] Could not retrieve the list of VMs `
+                    on host $vmhost : $($_.Exception.Message)"
+                }
+                if ($myvar_vms.length -eq 0) 
+                {#there are no vms to move
+                    throw "$(get-date) [ERROR] There are no VMs except the CVM on `
+                    host $vmhost"
+                }
+
+                #* vmotion loop
+                foreach ($vm in $myvar_vms) {
+                    try {
+                        #* determine which host in the host group has the least VMs
+                        $base_qty = 0
+                        $target_host = ""
+                        foreach ($target in $myvar_vmhosts) {
+                            try {
+                                $vm_qty = (Get-VMHost -Name $target | Get-Vm | `
+                                where-object {$_.PowerState -eq "PoweredOn"}).length
+                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                $target has $vm_qty vms" -ForegroundColor White}
+                                if ($base_qty -eq 0) {
+                                    $base_qty = $vm_qty
+                                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                    $target has $vm_qty vms" -ForegroundColor White}
+                                    $target_host = $target
+                                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                    target host is $target" -ForegroundColor White}
+                                } 
+                                elseif ($vm_qty -lt $base_qty) {
+                                    $target_host = $target
+                                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                    $vm_qty is less than $base_qty" `
+                                    -ForegroundColor White}
+                                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                    target host is $target" -ForegroundColor White}
+                                }
+                                else {
+                                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                    $vm_qty is more than $base_qty" `
+                                    -ForegroundColor White}
+                                    if ($debugme) {Write-Host "$(get-date) [DEBUG] `
+                                    target stays $target_host" `
+                                    -ForegroundColor White}
+                                }
+                            }
+                            catch {
+                                throw "$(get-date) [ERROR] Could not find `
+                                $target_host"
+                            }
+                        }
+
+                        Write-Host "$(get-date) [INFO] Moving vm $($vm.Name) to `
+                        host $($target_host)" -ForegroundColor Green
+                        if (!$debugme) {
+                            try {
                                 $result = Move-Vm -VM $vm -Destination `
                                 $target_host -confirm:$false -RunAsync:$false `
                                 -ErrorAction Stop
-                                Write-Host "$(get-date) [SUCCESS] VM `
-                                $($vm.Name) has moved from $target to host `
-                                $($target_host)" -ForegroundColor Cyan
+                                Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) `
+                                has moved to host $($target_host)" `
+                                -ForegroundColor Cyan
+                            }
+                            catch {
+                                Write-Host "$(get-date) [WARNING] Could not move `
+                                vm $($vm.Name) to host $($myvar_vmhosts[$index]) : `
+                                $($_.Exception.Message)" -ForegroundColor Yellow
                             }
                         }
-                        catch{
-                            Write-Host "$(get-date) [WARNING] Could not move `
-                            vm $($vm.Name) from $target to host `
-                            $($target_host) : $($_.Exception.Message)" `
-                            -ForegroundColor Yellow
-                        }
+                    }
+                    catch {
+                        Write-Host "$(get-date) [WARNING] Could not move vm `
+                        $($vm.Name) to host $($myvar_vmhosts[$index]) : `
+                        $($_.Exception.Message)" -ForegroundColor Yellow
                     }
                 }
-            }
 
-            Write-Host "$(get-date) [INFO] Disconnecting from vCenter server `
-            $vcenter..." -ForegroundColor Green
-            Disconnect-viserver * -Confirm:$False
-        }#end foreach vCenter        
-    }
-    #endregion
-    #region drain
-    else {
-        #* check the specified host belongs to a defined host group
-        if ($myvar_host_group_01 -contains $vmhost) {
-            $myvar_vmhosts = $myvar_host_group_01 | where-object `
-            {$_ -ne $vmhost}
+                Write-Host "$(get-date) [INFO] Disconnecting from vCenter server `
+                $vcenter..." -ForegroundColor Green
+                Disconnect-viserver * -Confirm:$False
+            }#end foreach vCenter
         }
-        elseif ($myvar_host_group_02 -contains $vmhost) {
-            $myvar_vmhosts = $myvar_host_group_02 | where-object `
-            {$_ -ne $vmhost}
-        }
-        else {
-            throw "$(get-date) [ERROR] $vmhost does not belong to any `
-            pre-defined host groups!"
-        }
-
-        #* foreach vcenter loop
-        foreach ($myvarvCenter in $myvarvCenterServers)	
-        {
-            #* connect to vcenter
-            try {
-                Write-Host "$(get-date) [INFO] Connecting to vCenter server `
-                $myvarvCenter..." -ForegroundColor Green
-                $myvarvCenterObject = Connect-VIServer $myvarvCenter `
-                -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Connected to vCenter server `
-                $myvarvCenter" -ForegroundColor Cyan
-            }
-            catch {throw "$(get-date) [ERROR] Could not connect to vCenter `
-            server $myvarvCenter : $($_.Exception.Message)"}
-
-            #* check the vmhost exists
-            try {
-                Write-Host "$(get-date) [INFO] Checking hosts $vmhost exists `
-                in vCenter $myvarvCenter..." -ForegroundColor Green
-                $myvar_vmhostObject = Get-VMHost $vmhost -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Found host $vmhost in `
-                $myvarvCenter" -ForegroundColor Cyan
-            }
-            catch {throw "$(get-date) [ERROR] Could not find host $vmhost in `
-            vCenter server $myvarvCenter : $($_.Exception.Message)"}
-
-            #* get the list of vms running on that host and exclude the cvm
-            try {
-                $myvar_vms = $myvar_vmhostObject | get-vm -ErrorAction Stop | `
-                where-object {$_.Name -notlike "NTNX-*-CVM"}
-            }
-            catch {
-                throw "$(get-date) [ERROR] Could not retrieve the list of VMs `
-                on host $vmhost : $($_.Exception.Message)"
-            }
-            if ($myvar_vms.length -eq 0) {
-                throw "$(get-date) [ERROR] There are no VMs except the CVM on `
-                host $vmhost"
-            }
-
-            #* vmotion loop
-            foreach ($vm in $myvar_vms) {
-                try {
-                    #* determine which host in the host group has the least VMs
-                    $base_qty = 0
-                    $target_host = ""
-                    foreach ($target in $myvar_vmhosts) {
-                        try {
-                            $vm_qty = (Get-VMHost -Name $target | Get-Vm | `
-                            where-object {$_.PowerState -eq "PoweredOn"}).length
-                            if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                            $target has $vm_qty vms" -ForegroundColor White}
-                            if ($base_qty -eq 0) {
-                                $base_qty = $vm_qty
-                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                                $target has $vm_qty vms" -ForegroundColor White}
-                                $target_host = $target
-                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                                target host is $target" -ForegroundColor White}
-                            } 
-                            elseif ($vm_qty -lt $base_qty) {
-                                $target_host = $target
-                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                                $vm_qty is less than $base_qty" `
-                                -ForegroundColor White}
-                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                                target host is $target" -ForegroundColor White}
-                            }
-                            else {
-                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                                $vm_qty is more than $base_qty" `
-                                -ForegroundColor White}
-                                if ($debugme) {Write-Host "$(get-date) [DEBUG] `
-                                target stays $target_host" `
-                                -ForegroundColor White}
-                            }
-                        }
-                        catch {
-                            throw "$(get-date) [ERROR] Could not find `
-                            $target_host"
-                        }
-                    }
-
-                    Write-Host "$(get-date) [INFO] Moving vm $($vm.Name) to `
-                    host $($target_host)" -ForegroundColor Green
-                    if (!$debugme) {
-                        try {
-                            $result = Move-Vm -VM $vm -Destination `
-                            $target_host -confirm:$false -RunAsync:$false `
-                            -ErrorAction Stop
-                            Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) `
-                            has moved to host $($target_host)" `
-                            -ForegroundColor Cyan
-                        }
-                        catch {
-                            Write-Host "$(get-date) [WARNING] Could not move `
-                            vm $($vm.Name) to host $($myvar_vmhosts[$index]) : `
-                            $($_.Exception.Message)" -ForegroundColor Yellow
-                        }
-                    }
-                }
-                catch {
-                    Write-Host "$(get-date) [WARNING] Could not move vm `
-                    $($vm.Name) to host $($myvar_vmhosts[$index]) : `
-                    $($_.Exception.Message)" -ForegroundColor Yellow
-                }
-            }
-
-            Write-Host "$(get-date) [INFO] Disconnecting from vCenter server `
-            $vcenter..." -ForegroundColor Green
-            Disconnect-viserver * -Confirm:$False
-        }#end foreach vCenter
-    }
     #endregion
 #endregion
 
