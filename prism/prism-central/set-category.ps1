@@ -680,18 +680,16 @@ Date       By   Updates (newest updates at the top)
       try 
       {
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
       catch 
       {
           Set-CustomCredentials -credname $prismCreds
           $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-          $username = $prismCredentials.UserName
-          $PrismSecurePassword = $prismCredentials.Password
       }
-      $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
   }
+  $username = $prismCredentials.UserName
+  $PrismSecurePassword = $prismCredentials.Password
+  $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 #endregion
 
 #region processing

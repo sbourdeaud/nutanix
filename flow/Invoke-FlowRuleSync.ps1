@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: September 23rd 2021
+  Revision: October 12th 2021
 #>
 
 
@@ -630,7 +630,6 @@ public class ServerCertificateValidationCallback
             Do {
                 try {
                     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                    
                     <# $listLength = 0
                     if ($resp.metadata.offset) {
                         $firstItem = $resp.metadata.offset
@@ -784,6 +783,13 @@ public class ServerCertificateValidationCallback
 
     function Sync-Categories
     {#syncs Prism categories used in a given network policy
+    
+        param
+        (
+            [Parameter(Mandatory)]
+            $rule
+        )
+        
         begin {}
 
         process 
@@ -859,7 +865,8 @@ public class ServerCertificateValidationCallback
             }
 
             Write-Host "$(get-date) [DATA] Flow rule $($rule.spec.Name) uses the following category:value pairs:" -ForegroundColor White
-            $used_categories_list
+            $used_categories_list | Select-Object -Unique
+            
             #endregion
             
             #region are all used category:value pairs on target?
@@ -996,6 +1003,13 @@ public class ServerCertificateValidationCallback
 
     function Sync-AddressGroups
     {#syncs Prism address groups used in a given network policy
+    
+        param
+        (
+            [Parameter(Mandatory)]
+            $rule
+        )
+        
         begin {}
 
         process 
@@ -1106,6 +1120,13 @@ public class ServerCertificateValidationCallback
 
     function Sync-ServiceGroups
     {#syncs Prism service groups used in a given network policy
+    
+        param
+        (
+            [Parameter(Mandatory)]
+            $rule
+        )
+        
         begin {}
 
         process 
@@ -1231,12 +1252,15 @@ Date       By   Updates (newest updates at the top)
 09/26/2021 sb   Moved syncing of categories, address and service groups to
                 functions to avoid code duplication between the add and update
                 actions.
+10/11/2021 sb   Adding processing for multiple rules with the same name (issue
+                #21)
+10/11/2021 sb   Closing issue #21 for remove and update of rules.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
 
-    if ($log) 
-    {
+    if ($log)
+    {#we want to create a log transcript
         $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
         Start-Transcript -Path ./$myvar_output_log_file
     }
@@ -1267,13 +1291,13 @@ Date       By   Updates (newest updates at the top)
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
-    { #we are using custom credentials, so let's grab the username and password from that
+    {#we are using custom credentials, so let's grab the username and password from that
         try 
-        {
+        {#retrieve credentials
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
         }
         catch 
-        {
+        {#could not retrieve credentials
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
         }
@@ -1349,42 +1373,123 @@ Date       By   Updates (newest updates at the top)
 
         #* rules to add ($add_rules_list)
         [System.Collections.ArrayList]$add_rules_list = New-Object System.Collections.ArrayList($null)
+        $compared_rules = @()
         foreach ($rule in $filtered_source_rules_response) 
         {#compare source with target
-            if ($rule.spec.name -notin $filtered_target_rules_response.spec.name)
-            {#rule exists on source but not on target
-                Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist yet on target Prism Central $($targetPc)" -ForegroundColor Green
-                $add_rules_list.Add($rule) | Out-Null
+            
+            $source_rules_list = $filtered_source_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+            $target_rules_list = $filtered_target_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+            if ($rule.spec.name -notin $compared_rules)
+            {#we haven't processed that rule yet
+                if ($source_rules_list.count -gt 1)
+                {#we have multiple rules with the same name   
+                    Foreach ($source_rule_item in $source_rules_list)
+                    {#process each rule with a duplicate name
+                        $found_match = $false
+                        Foreach ($target_rule_item in $target_rules_list)
+                        {#compare with all rules with similar name on target
+                            if (([String]::Compare(($source_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                            {#we found a match for the target group
+                                $found_match = $true
+                                continue
+                            }
+                        }
+                        if (!$found_match)
+                        {#there is a rule with the same name, but not the same target group
+                            Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist with that specific target group on target Prism Central $($targetPc)" -ForegroundColor Green
+                            $add_rules_list.Add($source_rule_item) | Out-Null
+                        }
+                    }
+                }
+                elseif ($rule.spec.name -notin $filtered_target_rules_response.spec.name)
+                {#rule exists on source but not on target
+                    Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist yet on target Prism Central $($targetPc)" -ForegroundColor Green
+                    $add_rules_list.Add($rule) | Out-Null
+                }
+                $compared_rules += $rule.spec.name
             }
         }
         Write-Host "$(get-date) [DATA] There are $($add_rules_list.count) Flow rules to add on target Prism Central $($targetPc)" -ForegroundColor White
 
         #* rules to remove ($remove_rules_list)
         [System.Collections.ArrayList]$remove_rules_list = New-Object System.Collections.ArrayList($null)
+        $compared_rules = @()
         foreach ($rule in $filtered_target_rules_response) 
         {#compare target with source
-            if ($rule.spec.name -notin $filtered_source_rules_response.spec.name)
-            {#rule exists on target but not on source
-                Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) no longer exists on source Prism Central $($sourcePc)" -ForegroundColor Green
-                $remove_rules_list.Add($rule) | Out-Null
+            $source_rules_list = $filtered_source_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+            $target_rules_list = $filtered_target_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+
+            if ($rule.spec.name -notin $compared_rules)
+            {#we haven't processed that rule yet
+                if ($target_rules_list.count -gt 1)
+                {#we have multiple rules with the same name   
+                    Foreach ($target_rule_item in $target_rules_list)
+                    {#process each rule with a duplicate name
+                        $found_match = $false
+                        Foreach ($source_rule_item in $source_rules_list)
+                        {#compare with all rules with similar name on source
+                            if (([String]::Compare(($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($source_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                            {#we found a match for the target group
+                                $found_match = $true
+                            }
+                        }
+                        if (!$found_match)
+                        {#there is a rule with the same name, but not the same target group
+                            Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) does not exist with that specific target group on target Prism Central $($sourcePc)" -ForegroundColor Green
+                            $remove_rules_list.Add($target_rule_item) | Out-Null
+                        }
+                    }
+                }
+                elseif ($rule.spec.name -notin $filtered_source_rules_response.spec.name)
+                {#rule exists on target but not on source
+                    Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) no longer exists on source Prism Central $($sourcePc)" -ForegroundColor Green
+                    $remove_rules_list.Add($rule) | Out-Null
+                }
+                $compared_rules += $rule.spec.name
             }
         }
         Write-Host "$(get-date) [DATA] There are $($remove_rules_list.count) Flow rules to remove on target Prism Central $($targetPc)" -ForegroundColor White
 
         #* rules to update ($update_rules_list)
         [System.Collections.ArrayList]$update_rules_list = New-Object System.Collections.ArrayList($null)
+        $compared_rules = @()
         foreach ($rule in $filtered_source_rules_response) 
         {#compare source with target
-            #! currently, this will always not match if a service or address group is in use and there is no way to find out if this is a new group or the same since all we're tracking is the uuid...
-            if ($target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name})
-            {#we have a matching rule on target, let's compare
-                if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
-                {#rule configuration or description on source does not match rule configuration or description on target
-                    Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) needs to be updated on target Prism Central $($targetPc)" -ForegroundColor Green
-                    $update_rules_list.Add($rule) | Out-Null
+            $source_rules_list = $filtered_source_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+            $target_rules_list = $filtered_target_rules_response | Where-Object {$_.spec.name -eq $rule.spec.name}
+
+            if ($rule.spec.name -notin $compared_rules)
+            {#we haven't processed that rule yet
+                #! currently, this will always not match if a service or address group is in use and there is no way to find out if this is a new group or the same since all we're tracking is the uuid...
+                if ($source_rules_list.count -gt 1)
+                {#we have multiple rules with the same name   
+                    Foreach ($source_rule_item in $source_rules_list)
+                    {#process each rule with a duplicate name
+                        $found_match = $false
+                        Foreach ($target_rule_item in $target_rules_list)
+                        {#compare with all rules with similar name on target
+                            if (([String]::Compare(($source_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                            {#we found a match for the target group
+                                if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
+                                {#rule configuration or description on source does not match rule configuration or description on target
+                                    Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) needs to be updated on target Prism Central $($targetPc)" -ForegroundColor Green
+                                    $update_rules_list.Add($source_rule_item) | Out-Null
+                                }
+                                $found_match = $true
+                            }
+                        }
+                    }
                 }
+                elseif ($target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name})
+                {#we have a matching rule on target, let's compare
+                    if (($($rule.spec.resources | ConvertTo-Json -depth 100) -ne $($target_rule.spec.resources | ConvertTo-Json -depth 100)) -or ($rule.spec.description -ne $target_rule.spec.description))
+                    {#rule configuration or description on source does not match rule configuration or description on target
+                        Write-Host "$(get-date) [INFO] Flow rule $($rule.spec.name) needs to be updated on target Prism Central $($targetPc)" -ForegroundColor Green
+                        $update_rules_list.Add($rule) | Out-Null
+                    }
+                }
+                $compared_rules += $rule.spec.name
             }
-            
         }
         Write-Host "$(get-date) [DATA] There are $($update_rules_list.count) Flow rules to update on target Prism Central $($targetPc)" -ForegroundColor White
 
@@ -1398,36 +1503,6 @@ Date       By   Updates (newest updates at the top)
 
         if ($action -eq "sync")
         {#synchronize (ADD, DELETE, UPDATE)
-            
-            #region process DELETE
-            if ($remove_rules_list)
-            {#there are rules to be removed
-                Write-Host ""
-                Write-Host "$(get-date) [STEP] Removing Flow rules" -ForegroundColor Magenta
-                foreach ($rule in $remove_rules_list)
-                {#process each rule to remove
-                    #todo: for each category, figure out if it is used anywhere else in rules on source: if not, delete the category
-                    #? delete rule on target
-                    $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
-                    $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
-                    $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
-                    $method = "DELETE"
-
-                    Write-Host "$(get-date) [STEP] Deleting Flow rule $($rule.spec.Name) on $($targetPc)" -ForegroundColor Green
-                    try 
-                    {#delete the rule
-                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                        Write-Host "$(Get-Date) [SUCCESS] Deleted Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan
-                        
-                    }
-                    catch 
-                    {#we couldn't delete the rule
-                        Throw "$($_.Exception.Message)"
-                    }
-                }
-            }
-            #endregion
-
             #region process ADD
                 if ($add_rules_list)
                 {#there are rules to be added
@@ -1435,10 +1510,9 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Adding Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $add_rules_list)
                     {#process each rule to add
-                        
-                        Sync-Categories
-                        Sync-ServiceGroups
-                        Sync-AddressGroups
+                        Sync-Categories -rule $rule
+                        Sync-ServiceGroups -rule $rule
+                        Sync-AddressGroups -rule $rule
 
                         #region add rule on target
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules"
@@ -1480,6 +1554,35 @@ Date       By   Updates (newest updates at the top)
                 }
             #endregion
             
+            #region process DELETE
+                if ($remove_rules_list)
+                {#there are rules to be removed
+                    Write-Host ""
+                    Write-Host "$(get-date) [STEP] Removing Flow rules" -ForegroundColor Magenta
+                    foreach ($rule in $remove_rules_list)
+                    {#process each rule to remove
+                        #todo: for each category, figure out if it is used anywhere else in rules on source: if not, delete the category
+                        #? delete rule on target
+                        $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
+                        $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
+                        $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                        $method = "DELETE"
+
+                        Write-Host "$(get-date) [STEP] Deleting Flow rule $($rule.spec.Name) on $($targetPc)" -ForegroundColor Green
+                        try 
+                        {#delete the rule
+                            $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                            Write-Host "$(Get-Date) [SUCCESS] Deleted Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan
+                            
+                        }
+                        catch 
+                        {#we couldn't delete the rule
+                            Throw "$($_.Exception.Message)"
+                        }
+                    }
+                }
+            #endregion
+            
             #region process UPDATE 
                 if ($update_rules_list)
                 {#there are rules to be updated
@@ -1487,13 +1590,26 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(get-date) [STEP] Updating Flow rules" -ForegroundColor Magenta
                     foreach ($rule in $update_rules_list)
                     {#process each rule to update
-                        
-                        Sync-Categories
-                        Sync-ServiceGroups
-                        Sync-AddressGroups
+                    
+                        Sync-Categories -rule $rule
+                        Sync-ServiceGroups -rule $rule
+                        Sync-AddressGroups -rule $rule
 
                         #region update rule on target
                             $target_rule = $filtered_target_rules_response | Where-Object {$_.spec.Name -eq $rule.spec.Name}
+                            #! add code here to deal with the fact that there might be multiple target rules with the same name
+                            if ($target_rule.count -gt 1)
+                            {#we have multiple rules with the same name on the target, let's identify which ne we are updating based on the target group   
+                                Foreach ($target_rule_item in $target_rule)
+                                {#compare with all rules with similar name on target
+                                    if (([String]::Compare(($rule.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),($target_rule_item.spec.resources.app_rule.target_group.filter.params | ConvertTo-Json -Depth 100),$true)) -eq 0)
+                                    {#we found a match for the target group
+                                        $target_rule = $target_rule_item
+                                        continue
+                                    }
+                                }
+                            }
+                            
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
                             $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
                             $method = "PUT"

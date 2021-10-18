@@ -193,25 +193,23 @@ Create a new image called _template-windows2016 in the image library of AHV clus
 #region parameters validation
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
         try 
         {
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
         catch 
         {
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
+    $username = $prismCredentials.UserName
+    $PrismSecurePassword = $prismCredentials.Password
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
     if (!$device) {
         $device = "scsi.0"

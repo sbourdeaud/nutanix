@@ -1099,7 +1099,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
         {
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        }    
+        }
     }
     $username = $prismCredentials.UserName
     $PrismSecurePassword = $prismCredentials.Password
@@ -1109,23 +1109,21 @@ $drs_rule2_name = "VMs_Should_In_GS"
     {#vcenterCreds was specified
         try 
         {
-            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
-            $vcenterUsername = $vcenterCredentials.UserName
-            $vcenterSecurePassword = $vcenterCredentials.Password
+            $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop 
         }
         catch 
         {
             Set-CustomCredentials -credname $vcenterCreds
             $vcenterCredentials = Get-CustomCredentials -credname $vcenterCreds -ErrorAction Stop
-            $vcenterUsername = $vcenterCredentials.UserName
-            $vcenterSecurePassword = $vcenterCredentials.Password
         }
-        $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
     }
     else 
     {#no vcenter creds were given
         $vcenterCredentials = Get-Credential -Message "Please enter vCenter credentials"
     }
+    $vcenterUsername = $vcenterCredentials.UserName
+    $vcenterSecurePassword = $vcenterCredentials.Password
+    $vcenterCredentials = New-Object PSCredential $vcenterUsername, $vcenterSecurePassword
 
     if ($action -and !$cvmCreds) 
     {#we have specified an action, but we did not specify cvm credentials
