@@ -769,6 +769,7 @@ function Get-PrismCentralTaskStatus
     }
 }
 
+
 function Sync-Categories
 {#syncs Prism categories used in a given network policy
     param
@@ -1295,6 +1296,7 @@ $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
 
 #todo: what about service and address groups in target group?
+#todo: bug: dealing with multiple apps in target group
 #todo: improve: rule add/update/delete returns task uuid: check on task status: no task uuid is returned... check on status later?
 #todo: improve: add export action for rules from source to json (for backup purposes)
 #todo: improve: move code to figure out categories to a function

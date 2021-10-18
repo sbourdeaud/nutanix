@@ -7,6 +7,8 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
+.PARAMETER log
+  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
@@ -27,6 +29,8 @@
   Try to enable specified active but disabled metro protection domains. Do nothing else.
 .PARAMETER DisableOnly
   Try to disabled specified active but decoupled metro protection domains. Do nothing else. This is useful when failing back after an unplanned failover.
+.PARAMETER DoNotUseDrs
+  Do not rely on DRS for evacuating VM but set DRS to manual and do the vmotions "manually". This is useful if your cluster capacity is insufficient for DRS to work properly.
 .PARAMETER reEnableDelay
   (Optional)Specifies in seconds how long the script should wait between each protection domain re-enablement. Default and minimum is 120 seconds (2 minutes). You can specify more if you want, but not less.
 .PARAMETER maxConcurrentRepl
@@ -49,7 +53,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 31st 2021
+  Revision: October 12th 2021
 #>
 
 #region parameters
@@ -58,6 +62,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
+		[parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $false)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$pd,
@@ -72,6 +77,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         [parameter(mandatory = $false)] [int]$timer,
         [parameter(mandatory = $false)] [switch]$reEnableOnly,
         [parameter(mandatory = $false)] [switch]$DisableOnly,
+        [parameter(mandatory = $false)] [switch]$DoNotUseDrs,
         [parameter(mandatory = $false)] [int]$reEnableDelay,
         [parameter(mandatory = $false)] [int]$maxConcurrentRepl
     )
@@ -121,48 +127,94 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 
         begin
         {
-
+            if (!$api_retries)
+            {
+                $api_retries = 3
+            }
+            $retry_counter = $api_retries
         }
+        
         process
         {
             Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-            try {
-                #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-                if ($PSVersionTable.PSVersion.Major -gt 5) {
-                    $headers = @{
-                        "Content-Type"="application/json";
-                        "Accept"="application/json"
-                    }
-                    if ($payload) {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            Do {
+                try 
+                {
+                    #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+                    if ($PSVersionTable.PSVersion.Major -gt 5) {
+                        $headers = @{
+                            "Content-Type"="application/json";
+                            "Accept"="application/json"
+                        }
+                        if ($payload) {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        } else {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        }
                     } else {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        $headers = @{
+                            "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
+                            "Content-Type"="application/json";
+                            "Accept"="application/json"
+                        }
+                        if ($payload) {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                        } else {
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                        }
                     }
-                } else {
-                    $headers = @{
-                        "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                        "Content-Type"="application/json";
-                        "Accept"="application/json"
+                    Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+                    $retry_counter = 0
+                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+                }
+                
+                catch 
+                {
+                    $saved_error = $_.Exception
+                    if ($_.Exception.Source -eq "System.Net.Http")
+                    {#some kind of network issue
+                        $saved_error_message = $_.ErrorDetails.Message
                     }
-                    if ($payload) {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-                    } else {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                    elseif ($saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue).message_list.message) 
+                    {#message is buried in a list
+                    }
+                    else 
+                    {#message is not buried in a list
+                        $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json -ErrorAction SilentlyContinue).message
+                    }
+                    $resp_return_code = $_.Exception.Response.StatusCode.value__
+                    
+                    if ($resp_return_code -eq 409) 
+                    {
+                        Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
+                        Throw
+                    }
+                    elseif ($saved_error_message -eq "Operation timed out") 
+                    {
+                        $retry_counter = $retry_counter - 1
+                        if ($retry_counter -gt 0) 
+                        {
+                            Write-Host "$(Get-Date) [WARNING] $saved_error_message : retyring the operation $($retry_counter) times" -ForegroundColor Yellow
+                        }
+                        else 
+                        {
+                            Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+                        }
+                    }
+                    else 
+                    {
+                        if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                        Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
                     }
                 }
-                Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-            }
-            catch {
-                $saved_error = $_.Exception.Message
-                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                Throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally {
-                #add any last words here; this gets processed no matter what
-            }
+                
+                finally 
+                {
+                    #add any last words here; this gets processed no matter what
+                }
+            } while ($retry_counter -gt 0)
         }
+        
         end
         {
             return $resp
@@ -553,54 +605,174 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
     #this function is used to prompt the user for a yes/no/skip response in order to control the workflow of a script
     function Write-CustomPrompt 
     {
-    <#
-    .SYNOPSIS
-    Creates a user prompt with a yes/no/skip response. Returns the response.
+        <#
+        .SYNOPSIS
+        Creates a user prompt with a yes/no/skip response. Returns the response.
 
-    .DESCRIPTION
-    Creates a user prompt with a yes/no/skip response. Returns the response in lowercase. Valid responses are "y" for yes, "n" for no, "s" for skip.
+        .DESCRIPTION
+        Creates a user prompt with a yes/no/skip response. Returns the response in lowercase. Valid responses are "y" for yes, "n" for no, "s" for skip.
 
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
 
-    .EXAMPLE
-    .\Write-CustomPrompt
-    Creates the prompt.
+        .EXAMPLE
+        .\Write-CustomPrompt
+        Creates the prompt.
 
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
 
-    param 
-    (
-        [Switch]$skip
-    )
+        param 
+        (
+            [Switch]$skip
+        )
 
-    begin 
-    {
-        [String]$userChoice = "" #initialize our returned variable
-    }
-    process 
-    {
-        if ($skip)
+        begin 
         {
-            do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o]/S[kip])"} #display the user prompt
-            while ($userChoice -notmatch '[ynsYNS]') #loop until the user input is valid
+            [String]$userChoice = "" #initialize our returned variable
         }
-        else 
+        process 
         {
-            do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o])"} #display the user prompt
-            while ($userChoice -notmatch '[ynYN]') #loop until the user input is valid
+            if ($skip)
+            {
+                do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o]/S[kip])"} #display the user prompt
+                while ($userChoice -notmatch '[ynsYNS]') #loop until the user input is valid
+            }
+            else 
+            {
+                do {$userChoice = Read-Host -Prompt "Do you want to continue? (Y[es]/N[o])"} #display the user prompt
+                while ($userChoice -notmatch '[ynYN]') #loop until the user input is valid
+            }
+            $userChoice = $userChoice.ToLower() #change to lowercase
         }
-        $userChoice = $userChoice.ToLower() #change to lowercase
-    }
-    end 
-    {
-        return $userChoice
-    }
+        end 
+        {
+            return $userChoice
+        }
 
     } #end Write-CustomPrompt function
+
+    function invoke-DatastoreVmDrain
+    {#migrate all virtual machines in a given datastore to a given vmhost group
+
+        param 
+        (
+            $datastore,
+            $vmhost_group
+        )
+
+        begin {}
+
+        process 
+        {
+            #*figure out vms in this datastore
+            try 
+            {#getting vms on this datastore
+                Write-Host "$(get-date) [INFO] Getting VMs hosted on datastore $($myvar_datastore)..." -ForegroundColor Green
+                $myvar_datastore_vms = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop
+                $myvar_datastore_vms_to_move = @()
+                ForEach ($myvar_vm in $myvar_datastore_vms)
+                {#see which host the vm is running on and if it needs to be moved
+                    if ($myvar_vm.vmhost.name -in $myvar_ntnx_vmhosts.name) 
+                    {#the vm is running on a host in the wrong vmhost group
+                        $myvar_datastore_vms_to_move += $myvar_vm
+                    }
+                }
+            }
+            catch 
+            {#could not get vms on datastore
+                throw "$(get-date) [ERROR] Could not get VMs hosted on datastore $($myvar_datastore) : $($_.Exception.Message)"
+            }
+
+            #*process each vm
+            ForEach ($vm in $myvar_datastore_vms_to_move)
+            {
+                #* determine which host in the host group has the least VMs
+                $base_qty = 0
+                $target_host = ""
+                foreach ($vmhost in $vmhost_group) 
+                {#process each vmhost
+                    try 
+                    {#count vms on host by looking at its view
+                        $vm_qty = (($vmhost| get-view).Vm).count
+                        if ($base_qty -eq 0) 
+                        {#this is the first host we count vms on, so it's the baseline
+                            $base_qty = $vm_qty
+                            $target_host = $vmhost
+                        } 
+                        elseif ($vm_qty -lt $base_qty) 
+                        {#this host has less vms than our baseline, so it becomes the new baseline
+                            $target_host = $vmhost
+                        }
+                    }
+                    catch 
+                    {#couldn't get host view
+                        throw "$(get-date) [ERROR] Could not get $($vmhost.Name) view: $($_.Exception.Message)"
+                    }
+                }
+                
+                #* migrate vm
+                Write-Host "$(get-date) [INFO] Moving vm $($vm.Name) to host $($target_host.Name)" -ForegroundColor Green
+                try 
+                {#move-vm
+                    $result = Move-Vm -VM $vm -Destination $target_host -confirm:$false -RunAsync:$true -ErrorAction Stop
+                    Write-Host "$(get-date) [SUCCESS] VM $($vm.Name) is moving to host $($target_host)..." -ForegroundColor Cyan
+                }
+                catch 
+                {#couldn't move-vm
+                    Write-Host "$(get-date) [WARNING] Could not move vm $($vm.Name) to host $($target_host.Name) : $($_.Exception.Message)" -ForegroundColor Yellow
+                }   
+            }
+        }
+
+        end 
+        {
+            Do
+            {#loop until there are no active vmotion task for vms in this datastore
+                try 
+                {#get running tasks
+                    Write-Host "$(get-date) [INFO] Getting list of active vmotion tasks from vCenter" -ForegroundColor Green
+                    $active_vmotion_vm_list = (Get-Task -Status Running -ErrorAction Stop | Where-Object {$_.Name -eq "RelocateVM_Task"}).ExtensionData.Info.EntityName
+                    $running_tasks = $false
+                    foreach ($vm_name in $active_vmotion_vm_list) 
+                    {#look at all currently moving vms to see if they are in our datastore
+                        if ($vm_name -in $myvar_datastore_vms.Name)
+                        {#there is a vm with an active vmotion task in this datastore, so we're not done moving vms yet
+                            Write-Host "$(get-date) [WARNING] VM $($vm_name) is still migrating! Waiting 5 seconds..." -ForegroundColor Yellow
+                            $running_tasks = $true
+                            Start-Sleep -Seconds 5
+                            continue
+                        }
+                    }
+                }
+                catch 
+                {#could not get running tasks
+                    throw "$(get-date) [ERROR] Could not get tasks from vCenter : $($_.Exception.Message)" 
+                }
+            } While ($running_tasks)
+            
+            try 
+            {#getting vms on this datastore
+                Write-Host "$(get-date) [INFO] Getting VMs hosted on datastore $($myvar_datastore)..." -ForegroundColor Green
+                $myvar_datastore_vms = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop
+            }
+            catch 
+            {#could not get vms on datastore
+                throw "$(get-date) [ERROR] Could not get VMs hosted on datastore $($myvar_datastore) : $($_.Exception.Message)"
+            }
+
+            foreach ($myvar_vm in $myvar_datastore_vms)
+            {#process each vm in this datastore...
+                if ($myvar_vm.vmhost.name -in $myvar_ntnx_vmhosts.name) 
+                {#there is still a vm on the wrong host in this datastore
+                    throw "$(get-date) [ERROR] VM $($myvar_vm.Name) in datastore $($myvar_datastore) is still running on host $($myvar_vm.vmhost.name) in cluster $($myvar_ntnx_cluster_name)!"
+                }
+            }
+        }
+
+    }
 #endregion
 
 #! if the cluster stop command does not work for you, it may be because you are running an older version of AOS, in which case you'll need to replace "I agree" with "y". This code is in the Set-NtnxVmhostsToMaintenanceMode function.
@@ -614,11 +786,16 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #>
 #todo find a way to deal with ssh on non-windows systems
 #todo test if vm or host drs group does not exist (and enhance with drs groups presence check)
-
-#todo: when doing cluster shutdown (or anything that uses ssh sessions), ssh session is opened at the beginning as part of the checks.  Assuming the failvoer will take a long time, the ssh session should be reset before invoking any action in the functions.
+#todo: count nb of processed pds vs total pds to avoid waiting 2 minutes after the last one has been re-enabled
 
 #region prepwork
     $ErrorActionPreference = "Continue"
+
+    if ($log) 
+    {
+        $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
+        Start-Transcript -Path ./$myvar_output_log_file
+    }
 
     Write-Host ""
     Write-Host "$(get-date) [STEP] Checking PowerShell configuration ..." -ForegroundColor Magenta
@@ -664,6 +841,30 @@ Date       By   Updates (newest updates at the top)
 08/31/2021 sb   Fixed issue when not specifying creds, issue with ping test on 
                 posh 5 and output issue on unplanned loop. Adding DisableOnly 
                 parameter to facilitate failback after unplanned failover
+09/17/2021 sb   Fixing issue #19 (redirect output to log file with -log 
+                parameter)
+09/27/2021 sb   Addressing issue #19 with getting VMs in large environments.
+                Addressing issue #15 by making sure to compare VM host with
+                list of all hosts in the compute cluster (as opposed to hosts
+                in the targeted Nutanix cluster).
+                Addressing issue #17 and adding api_max_retries to retry Prism
+                API calls that time out. Also enhanced REST API error messages.
+09/28/2021 sb   Addressing issue #16 by adding the -DoNotUseDrs parameter.
+10/06/2021 sb   Fixing issue with -DoNotUseDrs (DRS is now set to manual instead
+                of disabling and test for VMs in datastore are made against the
+                correct vmhost group)
+10/07/2021 sb   Fixed minor output issues. Fixed an issue with loading VMware
+                PowerCLI module.
+10/12/2021 sb   Adding code to address issues #23 and #24:
+                When using -DoNotUseDrs, VMs will now be migrated asynchronous-
+                ly and a loop will check that there are no active migrations
+                before making sure all vms in the datastore are running on the
+                correct host group.
+                In addition, when doing a -reEnableOnly, if -DoNotUseDrs is set
+                DRS will be set to manual before starting to re-enable protec-
+                tion domains.
+10/16/2021 sb   Fixing a logic issue in the DoNotUseDrs Do while loop (thanks to
+                Benjamin Fabian from Unisys for catching this!)
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -686,7 +887,7 @@ Date       By   Updates (newest updates at the top)
 
     #check if we have all the required PoSH modules
     Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
-    if (!(Get-Module VMware.PowerCLI)) 
+    if (!(Get-Module VMware.VimAutomation.Core)) 
     {#module VMware.PowerCLI is not loaded
         try 
         {#load module VMware.PowerCLI
@@ -822,6 +1023,7 @@ Function GetDrsObjectNames
     }
     return $drs_object_names
 }
+$api_retries = 3 #how many times are we retrying Prism REST API calls that time out?
 <#
 $ntnx1_cluster_name = "LABCL101"
 $drs_hg1_name = "MB_hosts"
@@ -886,7 +1088,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
-    } 
+    }
     else 
     { #we are using custom credentials, so let's grab the username and password from that
         try 
@@ -959,7 +1161,6 @@ $drs_rule2_name = "VMs_Should_In_GS"
     if (!$timer) {$timer = 300}
     if ((!$reEnableDelay) -or ($reEnableDelay -lt 120)) {$reEnableDelay = 120}
     if (!$maxConcurrentRepl) {$maxConcurrentRepl = 3}
-    $timeout = 5 #timeout in seconds for remote site ping when using -unplanned
 #endregion
 
 #region execute
@@ -1209,19 +1410,20 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 Throw "$(get-date) [ERROR] Cluster $($cluster) has metro availability protection domains which are pointing to different remote sites. Exiting."
             } 
             else 
-            {
+            {#we figured out the remote site name
                 Write-Host "$(get-date) [DATA] Remote site name is $($remote_site_name)" -ForegroundColor White
             }
+
             #* query prism for remote sites
             Write-Host "$(get-date) [INFO] Retrieving remote sites from Nutanix cluster $($cluster) ..." -ForegroundColor Green
             $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/remote_sites/" -f $cluster
             $method = "GET"
             try 
-            {
+            {#get remote site info
                 $myvar_remote_sites = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
             }
             catch
-            {
+            {#couldn't get remote site info
                 throw "$(get-date) [ERROR] Could not retrieve remote sites from Nutanix cluster $($cluster) : $($_.Exception.Message)"
             }
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved remote sites from Nutanix cluster $($cluster)" -ForegroundColor Cyan
@@ -1236,11 +1438,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $myvar_remote_site_ip
                 $method = "GET"
                 try 
-                {
+                {#get remote cluster information
                     $myvar_ntnx_remote_cluster_info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 }
                 catch
-                {
+                {#couldn't get remote cluster information
                     throw "$(get-date) [ERROR] Could not retrieve cluster information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
                 }
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
@@ -1254,7 +1456,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     Throw "$(get-date) [ERROR] There is more than 1 registered management server for remote cluster $($myvar_ntnx_remote_cluster_name). Exiting."
                 } 
                 else 
-                {
+                {#we figured out the vcenter information
                     $myvar_remote_site_vcenter_ip = ($myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
                     Write-Host "$(get-date) [DATA] vCenter IP address for remote Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_remote_site_vcenter_ip)" -ForegroundColor White
                     if ($myvar_remote_site_vcenter_ip -ne $myvar_vcenter_ip) {#houston we have a problem, both sites have different registered vcenters
@@ -1270,11 +1472,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $myvar_remote_site_ip
                     $method = "GET"
                     try 
-                    {
+                    {#get remote cluster hosts
                         $myvar_remote_ntnx_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                     }
                     catch
-                    {
+                    {#couldn't get remote cluster hosts
                         throw "$(get-date) [ERROR] Could not retrieve hosts information from Nutanix cluster $($myvar_remote_site_ip) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts information from Nutanix cluster $($myvar_remote_site_ip)" -ForegroundColor Cyan
@@ -1299,7 +1501,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
             }
         #endregion
 
-        #* trying to connect to vcenter
+        #* trying to connect to vcenter and retrieve essential information
         #region connect-viserver
             if (!$reEnableOnly -and !$unplanned -and !$DisableOnly)
             {
@@ -1314,50 +1516,138 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 }
                 Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
                 
-                if ($action) 
-                {#figure out the vCenter and CVM VM names
-                    try 
-                    {
-                        Write-Host "$(get-date) [INFO] Figuring out vCenter VM name..." -ForegroundColor Green
-                        $myvar_vcenter_vm_name = (Get-VM -ErrorAction Stop| Select-Object Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | Where-Object {$_."IP address" -eq $myvar_vcenter_ip}).Name
-                        Write-Host "$(get-date) [SUCCESS] Successfully queried VMs from $($myvar_vcenter_ip)" -ForegroundColor Cyan
-                        Write-Host "$(get-date) [DATA] vCenter VM name is $($myvar_vcenter_vm_name)" -ForegroundColor White
+                
+                try 
+                {#retrieve information from vcenter
+                    #region figure out compute cluster name
+                        #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
+                        $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
+                        $myvar_remote_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the remote Nutanix cluster
+                        Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                        try 
+                        {#get all the vmhosts registered in vCenter
+                            $myvar_vmhosts = Get-VMHost -ErrorAction Stop 
+                            Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                        }
+                        catch
+                        {#couldn't get all the vmhosts registered in vCenter
+                            throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                        }
 
-                        #figure out the CVM VM names
-                        [System.Collections.ArrayList]$myvar_cvm_names = New-Object System.Collections.ArrayList($null)
-                        Write-Host "$(get-date) [INFO] Figuring out CVM VM names..." -ForegroundColor Green
-                        ForEach ($myvar_cvm_ip in $myvar_cvm_ips) 
-                        {
+                        foreach ($myvar_vmhost in $myvar_vmhosts) 
+                        {#let's look at each host and determine which is which
+                            Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
                             try 
-                            {
-                                $myvar_cvm_name = (Get-VM -ErrorAction Stop | Select-Object Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}} | Where-Object {$_."IP address" -eq $myvar_cvm_ip}).Name
+                            {#retrieve all vmk NICs for that host
+                                $myvar_host_vmks = $myvar_vmhost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
+                                Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $($myvar_vmhost)" -ForegroundColor Cyan
                             }
-                            catch 
-                            {
-                                throw "Could not retrieve list of VMs from $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                            catch
+                            {#couldn't retrieve all vmk NICs for that host
+                                throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $($myvar_vmhost) : $($_.Exception.Message)"
                             }
-                            $myvar_cvm_names += $myvar_cvm_name
-                            Write-Host "$(get-date) [DATA] CVM with ip $($myvar_cvm_ip) VM name is $($myvar_cvm_name)" -ForegroundColor White
+                            
+                            foreach ($myvar_host_vmk in $myvar_host_vmks) 
+                            {#examine all VMKs
+                                foreach ($myvar_host_ip in $myvar_ntnx_hosts_ips) 
+                                {#compare to the host IP addresses we got from the Nutanix cluster
+                                    if ($myvar_host_vmk.IP -eq $myvar_host_ip)
+                                    {#if we get a match, that vcenter host is in cluster 1
+                                        Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor White
+                                        $myvar_ntnx_vmhosts += $myvar_vmhost
+                                    }
+                                }#end foreach IP loop
+                                
+                                foreach ($myvar_remote_host_ip in $myvar_remote_ntnx_hosts_ips) 
+                                {#compare to the host IP addresses we got from the Nutanix cluster
+                                    if ($myvar_host_vmk.IP -eq $myvar_remote_host_ip)
+                                    {#if we get a match, that vcenter host is in cluster 2
+                                        Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor White
+                                        $myvar_remote_ntnx_vmhosts += $myvar_vmhost
+                                    }
+                                }#end foreach IP loop
+                            }#end foreach VMK loop
+                        }#end foreach VMhost loop
+                        
+                        if (!$myvar_ntnx_vmhosts) 
+                        {#couldn't find hosts in cluster
+                            throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $($myvar_ntnx_cluster_name) in vCenter server $($myvar_vcenter_ip)"
                         }
 
-                        #figure out if the vCenter VM runs on one of the Nutanix compute cluster
-                        #todo assess if this necessary
-                        $myvar_vcenter_vm_cluster = Get-VM -Name $myvar_vcenter_vm_name | Get-Cluster
-                        if ($myvar_vsphere_cluster_name  -eq $myvar_vcenter_vm_cluster.Name) 
-                        {
-                            $myvar_vcenter_ntnx_hosted = $true
-                            Write-Host "$(get-date) [DATA] vCenter VM is hosted in the Nutanix cluster" -ForegroundColor White
-                        } 
-                        else 
-                        {
-                            $myvar_vcenter_ntnx_hosted = $false
-                            Write-Host "$(get-date) [DATA] vCenter VM is not hosted in the Nutanix cluster" -ForegroundColor White
+                        #figure out vsphere cluster name
+                        Write-Host "$(get-date) [INFO] Checking which compute cluster contains hosts from $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
+                        try 
+                        {#we look at which cluster the first vmhost in cluster belongs to.
+                            $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
+                            $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
+
+                            Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
+
+                            foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
+                            {#make sure all hosts are part of the same cluster
+                                try 
+                                {
+                                    $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
+                                    $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
+                                    if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
+                                    {#houston we have a problem: some nutanix hosts are not in the same compute cluster
+                                        throw "$(get-date) [ERROR] Nutanix host $($myvar_vmhost) is in vsphere cluster $($myvar_vmhost_vsphere_cluster_name) instead of vsphere cluster $($myvar_vsphere_cluster_name)! Exiting."
+                                    }
+                                }
+                                catch 
+                                {
+                                    throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                                }
+                            }
                         }
+                        catch 
+                        {#couldn't retrieve cluster
+                            throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                        }
+                    #endregion
+                    
+                    $myvar_compute_cluster_hosts = Get-Cluster -Name $myvar_vsphere_cluster_name | Get-VMHost
+
+                    #$myvar_vm_view_list = Get-View -ViewType VirtualMachine #this is faster than a get-vm in large environments but does not give us the ability to look at IP addresses...
+                    Write-Host "$(get-date) [INFO] Retrieving list of VMs in cluster $($myvar_vsphere_cluster_name) from $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    try 
+                    {#get vms on the cluster
+                        $myvar_vm_list = Get-Cluster -Name $myvar_vsphere_cluster_name | Get-VM -ErrorAction Stop
+                        Write-Host "$(get-date) [SUCCESS] Successfully queried VMs from $($myvar_vcenter_ip)" -ForegroundColor Cyan
                     }
                     catch 
-                    {
-                        Write-Host "$(get-date) [WARNING] Could not retrieve vCenter VM from $($myvar_vcenter_ip) : $($_.Exception.Message)" -ForegroundColor Yellow
+                    {#couldn't get vms on the cluster
+                        throw "$(get-date) [ERROR] Could not retrieve list of VMs in cluster $($myvar_vsphere_cluster_name) from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
                     }
+                    
+                    Write-Host "$(get-date) [INFO] Figuring out VM IP addresses..." -ForegroundColor Green
+                    $myvar_vm_ip_list = $myvar_vm_list | Select-Object Name, @{N="IP Address";E={@($_.guest.IPAddress[0])}}
+                    Write-Host "$(get-date) [INFO] Figuring out vCenter VM name..." -ForegroundColor Green
+                    if ($myvar_vcenter_vm_name = ($myvar_vm_ip_list | Where-Object {$_."IP address" -eq $myvar_vcenter_ip}).Name)
+                    {#vcenter vm is running on our cluster
+                        $myvar_vcenter_ntnx_hosted = $true
+                        Write-Host "$(get-date) [DATA] vCenter VM is hosted in the Nutanix cluster" -ForegroundColor White
+                        Write-Host "$(get-date) [DATA] vCenter VM name is $($myvar_vcenter_vm_name)" -ForegroundColor White
+                    }
+                    else 
+                    {#vcenter vm is NOT running on our cluster
+                        $myvar_vcenter_ntnx_hosted = $false
+                        Write-Host "$(get-date) [DATA] vCenter VM is not hosted in the Nutanix cluster" -ForegroundColor White
+                    }
+
+                    #figure out the CVM VM names
+                    [System.Collections.ArrayList]$myvar_cvm_names = New-Object System.Collections.ArrayList($null)
+                    Write-Host "$(get-date) [INFO] Figuring out CVM VM names..." -ForegroundColor Green
+                    ForEach ($myvar_cvm_ip in $myvar_cvm_ips) 
+                    {#process each cvm ip
+                        $myvar_cvm_name = ($myvar_vm_ip_list | Where-Object {$_."IP address" -eq $myvar_cvm_ip}).Name
+                        $myvar_cvm_names += $myvar_cvm_name
+                        Write-Host "$(get-date) [DATA] CVM with ip $($myvar_cvm_ip) VM name is $($myvar_cvm_name)" -ForegroundColor White
+                    }
+                }
+                catch 
+                {#could not retrieve information from vcenter
+                    Write-Host "$(get-date) [WARNING] Could not retrieve vCenter VM from $($myvar_vcenter_ip) : $($_.Exception.Message)" -ForegroundColor Yellow
                 }
             }
         #endregion
@@ -1385,95 +1675,13 @@ $drs_rule2_name = "VMs_Should_In_GS"
         
     #endregion
 
-    #region move vms using drs
+    #region move vms (with or without DRS)
         #* identify HA/DRS cluster and making sure HA and DRS are enabled
-        #region figure out vsphere cluster name ($myvar_vsphere_cluster_name)
+        #region figure out vsphere cluster configuration
             if (!$reEnableOnly -and !$unplanned -and !$DisableOnly)
             {#we are not just renabling pds, so figure out the vcenter information
                 Write-Host ""
                 Write-Host "$(get-date) [STEP] Figuring out information required to move metro protected virtual machines from vmhosts in $($myvar_ntnx_cluster_name) to vmhosts in $($myvar_ntnx_remote_cluster_name) for specified metro availability protection domains..." -ForegroundColor Magenta
-
-                #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
-                $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
-                $myvar_remote_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the remote Nutanix cluster
-                Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-                try 
-                {#get all the vmhosts registered in vCenter
-                    $myvar_vmhosts = Get-VMHost -ErrorAction Stop 
-                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
-                }
-                catch
-                {#couldn't get all the vmhosts registered in vCenter
-                    throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-                }
-
-                foreach ($myvar_vmhost in $myvar_vmhosts) 
-                {#let's look at each host and determine which is which
-                    Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
-                    try 
-                    {#retrieve all vmk NICs for that host
-                        $myvar_host_vmks = $myvar_vmhost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
-                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $($myvar_vmhost)" -ForegroundColor Cyan
-                    }
-                    catch
-                    {#couldn't retrieve all vmk NICs for that host
-                        throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $($myvar_vmhost) : $($_.Exception.Message)"
-                    }
-                    foreach ($myvar_host_vmk in $myvar_host_vmks) 
-                    {#examine all VMKs
-                        foreach ($myvar_host_ip in $myvar_ntnx_hosts_ips) 
-                        {#compare to the host IP addresses we got from the Nutanix cluster
-                            if ($myvar_host_vmk.IP -eq $myvar_host_ip)
-                            {#if we get a match, that vcenter host is in cluster 1
-                                Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor White
-                                $myvar_ntnx_vmhosts += $myvar_vmhost
-                            }
-                        }#end foreach IP loop
-                        foreach ($myvar_remote_host_ip in $myvar_remote_ntnx_hosts_ips) 
-                        {#compare to the host IP addresses we got from the Nutanix cluster
-                            if ($myvar_host_vmk.IP -eq $myvar_remote_host_ip)
-                            {#if we get a match, that vcenter host is in cluster 2
-                                Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor White
-                                $myvar_remote_ntnx_vmhosts += $myvar_vmhost
-                            }
-                        }#end foreach IP loop
-                    }#end foreach VMK loop
-                }#end foreach VMhost loop
-                if (!$myvar_ntnx_vmhosts) 
-                {#couldn't find hosts in cluster
-                    throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $($myvar_ntnx_cluster_name) in vCenter server $($myvar_vcenter_ip)"
-                }
-
-                #figure out vsphere cluster name
-                Write-Host "$(get-date) [INFO] Checking which compute cluster contains hosts from $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
-                try 
-                {#we look at which cluster the first vmhost in cluster belongs to.
-                    $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
-                    $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
-
-                    Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
-
-                    foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
-                    {#make sure all hosts are part of the same cluster
-                        try 
-                        {
-                            $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
-                            $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
-                            if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
-                            {#houston we have a problem: some nutanix hosts are not in the same compute cluster
-                                throw "$(get-date) [ERROR] Nutanix host $($myvar_vmhost) is in vsphere cluster $($myvar_vmhost_vsphere_cluster_name) instead of vsphere cluster $($myvar_vsphere_cluster_name)! Exiting."
-                            }
-                        }
-                        catch 
-                        {
-                            throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
-                        }
-                    }
-                }
-                catch 
-                {#couldn't retrieve cluster
-                    throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
-                }
 
                 #checking vsphere cluster configuration
                 Write-Host "$(get-date) [INFO] Checking HA is enabled on vSphere cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
@@ -1486,8 +1694,8 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 {#DRS is not enabled on this cluster
                     throw "$(get-date) [ERROR] DRS is not enabled on vSphere cluster $($myvar_vsphere_cluster_name)!"
                 }
-                if ($myvar_vsphere_cluster.DrsAutomationLevel -ne "FullyAutomated")
-                {#DRS is not fully automated on this cluster
+                if (($myvar_vsphere_cluster.DrsAutomationLevel -ne "FullyAutomated") -and !$DoNotUseDrs)
+                {#DRS is not fully automated on this cluster and we intend on using DRS
                     Throw "$(get-date) [ERROR] DRS is not fully automated on VMware cluster $($myvar_vsphere_cluster_name)"
                 }
             }
@@ -1495,64 +1703,46 @@ $drs_rule2_name = "VMs_Should_In_GS"
         
         if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
         {#we are not skipping failover nor reenabling pds only
-            #* find matching drs groups and rule(s)
-            #region matching drs groups and rules
-                Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-                try 
-                {
-                    $myvar_cluster_compute_resource_view = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvar_vsphere_cluster_name}
-                    $myvar_cluster_drs_rules = $myvar_cluster_compute_resource_view.ConfigurationEx.Rule
-                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Cyan
-                }
-                catch 
-                {
-                    throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
-                }
-            #endregion
 
-            #* update matching drs rule(s)
-            #region update drs rule(s)
-                #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
-                $source_drs_objects_names, $remote_drs_objects_names = @{}
-                $source_drs_objects_names = GetDrsObjectNames($myvar_ntnx_cluster_name)
-                $remote_drs_objects_names = GetDrsObjectNames($myvar_ntnx_remote_cluster_name)
-
-                if ($source_drs_objects_names -and $remote_drs_objects_names)
-                {#we found a match for custom DRS rule names
-                    if ($pd -eq "all")
-                    {#I am moving all pds with custom DRS rule names, so this is a failover: updating source rule with remote hostgroup
-                        $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
-                        $myvar_drs_rule_name = $source_drs_objects_names.drs_rule_name
-                        $myvar_drs_vm_group_name = $source_drs_objects_names.drs_vmg_name
+            if (!$DoNotUseDrs)
+            {#we are using DRS to handle vmotions
+                #* find matching drs groups and rule(s)
+                #region matching drs groups and rules
+                    Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    try 
+                    {
+                        $myvar_cluster_compute_resource_view = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvar_vsphere_cluster_name}
+                        $myvar_cluster_drs_rules = $myvar_cluster_compute_resource_view.ConfigurationEx.Rule
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Cyan
                     }
-                    else 
-                    {#I am moving some pds with custom DRS rule names, so this is a failback: updating remote rule with remote hostgroup
-                        $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
-                        $myvar_drs_rule_name = $remote_drs_objects_names.drs_rule_name
-                        $myvar_drs_vm_group_name = $remote_drs_objects_names.drs_vmg_name
+                    catch 
+                    {
+                        throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
                     }
+                #endregion
 
-                    Write-Host ""
-                    Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+                #* update matching drs rule(s)
+                #region update drs rule(s)
+                    #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    $source_drs_objects_names, $remote_drs_objects_names = @{}
+                    $source_drs_objects_names = GetDrsObjectNames($myvar_ntnx_cluster_name)
+                    $remote_drs_objects_names = GetDrsObjectNames($myvar_ntnx_remote_cluster_name)
 
-                    if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
-                    {#houston we have a problem: DRS rule does not exist
-                        throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
-                    } else {
-                        #update drs rule
-                        Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
-                        Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
-                        Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
-                    }
-                }
-                else 
-                {#I don't have custom DRS rules matching, so assuming one DRS rule per container
-                    $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
-                    foreach ($myvar_datastore in $ctr_list.name)
-                    {#process each datastore
-                        #! CUSTOMIZE: you can customize drs rules and vm group names here
-                        $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
-                        $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
+                    if ($source_drs_objects_names -and $remote_drs_objects_names)
+                    {#we found a match for custom DRS rule names
+                        if ($pd -eq "all")
+                        {#I am moving all pds with custom DRS rule names, so this is a failover: updating source rule with remote hostgroup
+                            $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                            $myvar_drs_rule_name = $source_drs_objects_names.drs_rule_name
+                            $myvar_drs_vm_group_name = $source_drs_objects_names.drs_vmg_name
+                        }
+                        else 
+                        {#I am moving some pds with custom DRS rule names, so this is a failback: updating remote rule with remote hostgroup
+                            $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                            $myvar_drs_rule_name = $remote_drs_objects_names.drs_rule_name
+                            $myvar_drs_vm_group_name = $remote_drs_objects_names.drs_vmg_name
+                        }
+
                         Write-Host ""
                         Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
 
@@ -1565,124 +1755,247 @@ $drs_rule2_name = "VMs_Should_In_GS"
                             Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
                             Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
                         }
-                    }                    
-                }
-            
-            #endregion
+                    }
+                    else 
+                    {#I don't have custom DRS rules matching, so assuming one DRS rule per container
+                        $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
+                        foreach ($myvar_datastore in $ctr_list.name)
+                        {#process each datastore
+                            #! CUSTOMIZE: you can customize drs rules and vm group names here
+                            $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
+                            $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
 
-            #* loop until all vms in each datastore have been moved
-            #region wait for drs to do his job
+                            if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                            {#houston we have a problem: DRS rule does not exist
+                                throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                            } else {
+                                #update drs rule
+                                Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                                Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                                Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                            }
+                        }                    
+                    }
+                
+                #endregion
+
+                #* loop until all vms in each datastore have been moved
+                #region wait for drs to do his job
+                    foreach ($myvar_datastore in $ctr_list.name)
+                    {#process each datastore
+                        Write-Host ""
+                        Write-Host "$(get-date) [STEP] Checking all VMs have moved to the remote site for datastore $($myvar_datastore)..." -ForegroundColor Magenta
+                        $myvar_drs_done = $false
+                        Do 
+                        {#loop until all vms have been moved
+                            #figure out which vmhosts have vms running in this datastore
+                            try 
+                            {#getting vms on this datastore
+                                #$myvar_datastore_vmhosts = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop | get-vmhost -ErrorAction Stop | Select-Object -Unique -Property name
+                                $myvar_datastore_vms = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop
+                                $myvar_datastore_poweredoff_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOff"}
+                                $myvar_datastore_poweredon_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOn"}
+                            }
+                            catch 
+                            {#could not get vms on datastore
+                                throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                            }
+
+                            #* process powered on vms; dealing with DRS overrides here
+                            ForEach ($myvar_datastore_poweredon_vm in $myvar_datastore_poweredon_vms)
+                            {#let's make sure none of the powered on vms have DRS override
+                                $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
+                                if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_compute_cluster_hosts)
+                                {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
+                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is running on vmhost $(($myvar_datastore_poweredon_vm_details.VMHost).Name) which is not part of the compute cluster $($myvar_vsphere_cluster_name). This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
+                                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of Nutanix cluster hosts:" -ForegroundColor White; $myvar_compute_cluster_hosts}
+                                }
+                                elseif ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
+                                {#this vm has a DRS override
+                                    #check vmhost for that vm
+                                    Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
+                                    if (!$resetOverrides)
+                                    {#user hasn't specified he want to remove DRS override by default, so prompting
+                                        $myvar_user_choice = Write-CustomPrompt
+                                    }
+                                    else 
+                                    {#user has already said he wanted to remove DRS overrides by default
+                                        $myvar_user_choice = "y"
+                                    }
+                                    
+                                    if ($myvar_user_choice -match '[yY]')
+                                    {#user wants to remove drs override
+                                        try 
+                                        {#remove VM DRS override
+                                            $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
+                                        }
+                                        catch 
+                                        {#could not remove VM DRS override
+                                            Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
+                                            Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
+                                        }
+                                    }
+                                    else 
+                                    {#user does not want to remove override
+                                        Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
+                                    }
+                                }                                
+                            }
+                            
+                            $myvar_vmhost_found = $false
+                            $myvar_vms_to_move = (($myvar_datastore_vms.vmhost).Name | Where-Object {$_ -in $myvar_ntnx_vmhosts.Name}).count
+                            foreach ($myvar_ntnx_vmhost in $myvar_ntnx_vmhosts) 
+                            {#process each host on this site and make sure on this datastore, vms are not running on any of those hosts
+                                if (($myvar_datastore_vms.vmhost).Name -contains $myvar_ntnx_vmhost.Name) 
+                                {#a vm is running on a host on this site still
+                                    $myvar_vmhost_found = $true
+                                }
+                            }
+                            if ($myvar_vmhost_found) 
+                            {#at least one vm is running on a host on this site still
+                                Write-Host "$(get-date) [WARNING] There are still $($myvar_vms_to_move) virtual machines running on vmhosts from Nutanix cluster $($myvar_ntnx_cluster_name) in datastore $($myvar_datastore). Waiting 15 seconds..." -ForegroundColor Yellow
+                                Start-Sleep 15
+                            } 
+                            else 
+                            {#all vms in this datastore are running on hosts in the remote site
+                                $myvar_drs_done = $true
+                            }
+
+                            #* force migrate any powered off vms
+                            ForEach ($myvar_poweredoff_vm in $myvar_datastore_poweredoff_vms)
+                            {#process each powered off vm
+                                if (($myvar_poweredoff_vm.vmhost).Name -in $myvar_ntnx_vmhosts.Name)
+                                {#that powered off VM needs to be moved
+                                    try 
+                                    {#moving vm
+                                        Write-Host "$(get-date) [WARNING] Moving powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name)" -ForegroundColor Yellow
+                                        $result = Move-VM -Location $myvar_remote_ntnx_vmhosts[0] -VM $myvar_poweredoff_vm -ErrorAction Stop
+                                    }
+                                    catch 
+                                    {#couldn't move vm
+                                        Write-Host "$(get-date) [ERROR] Could not move powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name) : $($_.Exception.Message)" -ForegroundColor Red
+                                    }
+                                }
+                                else 
+                                {#that vm is not in the same cluster
+                                    Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_poweredoff_vm.Name) is powered off, on a metro datastore we need to move but is not part of this Nutanix cluster. This should not prevent failover completion but is unexpected." -ForegroundColor Yellow
+                                }
+                            }
+                        } While (!$myvar_drs_done)
+                        Write-Host "$(get-date) [DATA] All virtual machines on datastore $($myvar_datastore) have been moved to $($remote_site_name)..." -ForegroundColor White
+                    }
+                    if ($pd -eq "all") 
+                    {#we've been processing all pds
+                        Write-Host "$(get-date) [DATA] All virtual machines on all active metro protected datastores have been moved to $($remote_site_name)..." -ForegroundColor White
+                    } 
+                    else 
+                    {#we only processed some pds
+                        Write-Host "$(get-date) [DATA] All virtual machines on specified active metro protected datastore(s) have been moved to $($remote_site_name)..." -ForegroundColor White
+                    }
+                #endregion
+            }
+            else 
+            {#we are NOT using DRS for vmotions
+                #* set DRS to manual
+                Write-Host "$(get-date) [WARNING] We are NOT using DRS for VM migrations! Setting DRS to manual on cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Yellow
+                try 
+                {#set DRS to manual
+                    $result = Set-Cluster -Cluster $myvar_vsphere_cluster -DrsAutomationLevel "Manual" -Confirm:$false -ErrorAction Stop
+                    $drs_disabled = $true
+                    Write-Host "$(get-date) [SUCCESS] Successfully set DRS to manual on cluster $($myvar_vsphere_cluster_name)" -ForegroundColor Cyan
+                }
+                catch
+                {#couldn't set DRS to manual
+                    throw "$(get-date) [ERROR] Could not set DRS to manual on cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
+                }
+
+                #* find matching drs groups and rule(s)
+                #region matching drs groups and rules
+                    Write-Host "$(get-date) [INFO] Getting DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    try 
+                    {#retrieve existing drs rules
+                        $myvar_cluster_compute_resource_view = Get-View -ErrorAction Stop -ViewType ClusterComputeResource -Property Name, ConfigurationEx | where-object {$_.Name -eq $myvar_vsphere_cluster_name}
+                        $myvar_cluster_drs_rules = $myvar_cluster_compute_resource_view.ConfigurationEx.Rule
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved DRS rules from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Cyan
+                    }
+                    catch 
+                    {#could not retrieve existing drs rules
+                        throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
+                    }
+                #endregion
+
+                #* update matching drs rule(s) so VMs don't try to move back when we're done
+                #region update drs rule(s)
+                    #Write-Host "$(get-date) [INFO] Updating DRS rules in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    $source_drs_objects_names, $remote_drs_objects_names = @{}
+                    $source_drs_objects_names = GetDrsObjectNames($myvar_ntnx_cluster_name)
+                    $remote_drs_objects_names = GetDrsObjectNames($myvar_ntnx_remote_cluster_name)
+
+                    if ($source_drs_objects_names -and $remote_drs_objects_names)
+                    {#we found a match for custom DRS rule names
+                        if ($pd -eq "all")
+                        {#I am moving all pds with custom DRS rule names, so this is a failover: updating source rule with remote hostgroup
+                            $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                            $myvar_drs_rule_name = $source_drs_objects_names.drs_rule_name
+                            $myvar_drs_vm_group_name = $source_drs_objects_names.drs_vmg_name
+                        }
+                        else 
+                        {#I am moving some pds with custom DRS rule names, so this is a failback: updating remote rule with remote hostgroup
+                            $myvar_ntnx_remote_drs_host_group_name = $remote_drs_objects_names.drs_hg_name
+                            $myvar_drs_rule_name = $remote_drs_objects_names.drs_rule_name
+                            $myvar_drs_vm_group_name = $remote_drs_objects_names.drs_vmg_name
+                        }
+
+                        Write-Host ""
+                        Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+
+                        if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                        {#houston we have a problem: DRS rule does not exist
+                            throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                        } else {
+                            #update drs rule
+                            Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                            Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                            Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                        }
+                    }
+                    else 
+                    {#I don't have custom DRS rules matching, so assuming one DRS rule per container
+                        $myvar_ntnx_remote_drs_host_group_name = "DRS_HG_MA_" + $myvar_ntnx_remote_cluster_name
+                        foreach ($myvar_datastore in $ctr_list.name)
+                        {#process each datastore
+                            #! CUSTOMIZE: you can customize drs rules and vm group names here
+                            $myvar_drs_rule_name = "DRS_Rule_MA_" + $myvar_datastore
+                            $myvar_drs_vm_group_name = "DRS_VM_MA_" + $myvar_datastore
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Processing DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Magenta
+
+                            if (!($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name})) 
+                            {#houston we have a problem: DRS rule does not exist
+                                throw "$(get-date) [ERROR] DRS rule $($myvar_drs_rule_name) does not exist! Exiting."
+                            } else {
+                                #update drs rule
+                                Write-Host "$(get-date) [INFO] Updating DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Green
+                                Update-DRSVMToHostRule -VMGroup $myvar_drs_vm_group_name -HostGroup $myvar_ntnx_remote_drs_host_group_name -Name $myvar_drs_rule_name -Cluster $myvar_vsphere_cluster -RuleKey $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).Key) -RuleUuid $(($myvar_cluster_drs_rules | Where-Object {$_.Name -eq $myvar_drs_rule_name}).RuleUuid)
+                                Write-Host "$(get-date) [SUCCESS] Successfully updated DRS rule $($myvar_drs_rule_name) in vCenter server $($myvar_vcenter_ip) to match VM group $($myvar_drs_vm_group_name) to host group $($myvar_ntnx_remote_drs_host_group_name)..." -ForegroundColor Cyan
+                            }
+                        }                    
+                    }
+                
+                #endregion
+                
+                #* manual migrations for each datastore
                 foreach ($myvar_datastore in $ctr_list.name)
                 {#process each datastore
                     Write-Host ""
-                    Write-Host "$(get-date) [STEP] Checking all VMs have moved to the remote site for datastore $($myvar_datastore)..." -ForegroundColor Magenta
-                    $myvar_drs_done = $false
-                    Do {#loop until all vms have been moved
-                        #figure out which vmhosts have vms running in this datastore
-                        try 
-                        {#getting vms on this datastore
-                            #$myvar_datastore_vmhosts = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop | get-vmhost -ErrorAction Stop | Select-Object -Unique -Property name
-                            $myvar_datastore_vms = get-datastore -name $myvar_datastore -ErrorAction Stop | get-vm -ErrorAction Stop
-                            $myvar_datastore_poweredoff_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOff"}
-                            $myvar_datastore_poweredon_vms = $myvar_datastore_vms | Where-Object {$_.PowerState -eq "PoweredOn"}
-                        }
-                        catch 
-                        {#could not get vms on datastore
-                            throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
-                        }
-
-                        #* process powered on vms; dealing with DRS overrides here
-                        ForEach ($myvar_datastore_poweredon_vm in $myvar_datastore_poweredon_vms)
-                        {#let's make sure none of the powered on vms have DRS override
-                            $myvar_datastore_poweredon_vm_details = Get-VM -Name $myvar_datastore_poweredon_vm.Name #this is required as somehow, when we get VM objects from a get-datastore pipe, the DrsAutomationLevel property does not get populated
-                            if ($myvar_datastore_poweredon_vm_details.VMHost -notin $myvar_ntnx_vmhosts)
-                            {#this VM is not in the same HA/DRS cluster. It could be a backup proxy or some other vm with data in the datastore
-                                Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) is running on vmhost $(($myvar_datastore_poweredon_vm_details.VMHost).Name) which is not part of Nutanix cluster $($cluster). This could be a backup proxy server or some other vm which has a disk or data in the metro datastore. You will need to correct this manually!" -ForegroundColor Red
-                                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of Nutanix cluster hosts:" -ForegroundColor White; $myvar_ntnx_vmhosts}
-                            }
-                            elseif ($myvar_datastore_poweredon_vm_details.DrsAutomationLevel -ne "AsSpecifiedByCluster")
-                            {#this vm has a DRS override
-                                #check vmhost for that vm
-                                Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel). Changing it back to default AsSpecifiedByCluster" -ForegroundColor Yellow
-                                if (!$resetOverrides)
-                                {#user hasn't specified he want to remove DRS override by default, so prompting
-                                    $myvar_user_choice = Write-CustomPrompt
-                                }
-                                else 
-                                {#user has already said he wanted to remove DRS overrides by default
-                                    $myvar_user_choice = "y"
-                                }
-                                
-                                if ($myvar_user_choice -match '[yY]')
-                                {#user wants to remove drs override
-                                    try 
-                                    {#remove VM DRS override
-                                        $result = Set-VM -VM $myvar_datastore_poweredon_vm -DrsAutomationLevel "AsSpecifiedByCluster" -Confirm:$false -ErrorAction Stop
-                                    }
-                                    catch 
-                                    {#could not remove VM DRS override
-                                        Write-Host "$(get-date) [ERROR] Could not remove DRS override on VM $($myvar_datastore_poweredon_vm.Name): $($_.Exception.Message)" -ForegroundColor Red
-                                        Write-Host "$(get-date) [ERROR] You will have to move that VM manually to get out of this loop!" -ForegroundColor Red
-                                    }
-                                }
-                                else 
-                                {#user does not want to remove override
-                                    Write-Host "$(Get-Date) [ERROR] Virtual Machine $($myvar_datastore_poweredon_vm.Name) has a DRS override configured to $($myvar_datastore_poweredon_vm_details.DrsAutomationLevel) and you have chosen not to remove the override.  You will have to migrate the VM manually in order to get out of this loop!" -ForegroundColor Red
-                                }
-                            }                                
-                        }
-                        
-                        $myvar_vmhost_found = $false
-                        $myvar_vms_to_move = (($myvar_datastore_vms.vmhost).Name | Where-Object {$_ -in $myvar_ntnx_vmhosts.Name}).count
-                        foreach ($myvar_ntnx_vmhost in $myvar_ntnx_vmhosts) 
-                        {#process each host on this site and make sure on this datastore, vms are not running on any of those hosts
-                            if (($myvar_datastore_vms.vmhost).Name -contains $myvar_ntnx_vmhost.Name) 
-                            {#a vm is running on a host on this site still
-                                $myvar_vmhost_found = $true
-                            }
-                        }
-                        if ($myvar_vmhost_found) 
-                        {#at least one vm is running on a host on this site still
-                            Write-Host "$(get-date) [WARNING] There are still $($myvar_vms_to_move) virtual machines running on vmhosts from Nutanix cluster $($myvar_ntnx_cluster_name) in datastore $($myvar_datastore). Waiting 15 seconds..." -ForegroundColor Yellow
-                            Start-Sleep 15
-                        } 
-                        else 
-                        {#all vms in this datastore are running on hosts in the remote site
-                            $myvar_drs_done = $true
-                        }
-
-                        #* force migrate any powered off vms
-                        ForEach ($myvar_poweredoff_vm in $myvar_datastore_poweredoff_vms)
-                        {#process each powered off vm
-                            if (($myvar_poweredoff_vm.vmhost).Name -in $myvar_ntnx_vmhosts.Name)
-                            {#that powered off VM needs to be moved
-                                try 
-                                {#moving vm
-                                    Write-Host "$(get-date) [WARNING] Moving powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name)" -ForegroundColor Yellow
-                                    $result = Move-VM -Location $myvar_remote_ntnx_vmhosts[0] -VM $myvar_poweredoff_vm -ErrorAction Stop
-                                }
-                                catch 
-                                {#couldn't move vm
-                                    Write-Host "$(get-date) [ERROR] Could not move powered off VM $($myvar_poweredoff_vm.Name) to remote site host $($myvar_remote_ntnx_vmhosts[0].Name) : $($_.Exception.Message)" -ForegroundColor Red
-                                }
-                            }
-                            else 
-                            {#that vm is not in the same cluster
-                                Write-Host "$(Get-Date) [WARNING] Virtual Machine $($myvar_poweredoff_vm.Name) is powered off, on a metro datastore we need to move but is not part of this Nutanix cluster. This should not prevent failover completion but is unexpected." -ForegroundColor Yellow
-                            }
-                        }
-                    } While (!$myvar_drs_done)
-                    Write-Host "$(get-date) [DATA] All virtual machines on datastore $($myvar_datastore) have been moved to $($remote_site_name)..." -ForegroundColor White
+                    Write-Host "$(get-date) [STEP] Processing virtual machines in datastore $($myvar_datastore)..." -ForegroundColor Purple
+                    #move vms
+                    invoke-DatastoreVmDrain -datastore $myvar_datastore -vmhost_group $myvar_remote_ntnx_vmhosts
                 }
-                if ($pd -eq "all") 
-                {#we've been processing all pds
-                    Write-Host "$(get-date) [DATA] All virtual machines on all active metro protected datastores have been moved to $($remote_site_name)..." -ForegroundColor White
-                } 
-                else 
-                {#we only processed some pds
-                    Write-Host "$(get-date) [DATA] All virtual machines on specified active metro protected datastore(s) have been moved to $($remote_site_name)..." -ForegroundColor White
-                }
-            #endregion
+            }
+
         }
     #endregion
         
@@ -1717,7 +2030,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 #Start-Sleep 30
                 #* check remote pd is active
                 Do 
-                {
+                {#loop while remote pd is not active
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_remote_site_ip
                     $method = "GET"
@@ -1743,7 +2056,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 
                 #* step 2 of 3: if necessary, disable pd
                 if ($myvar_pd.failure_handling -ne "Witness")
-                {
+                {#witness is not used
                     Write-Host "$(get-date) [INFO] Witness is not in use, so disabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/metro_avail_disable" -f $cluster,$myvar_pd.name
                     $method = "POST"
@@ -1804,7 +2117,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
                     if ($myvar_syncing_pds -ge $maxConcurrentRepl)
                     {
-                        Write-Host "$(get-date) [WARN] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                        Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
                         Start-Sleep 60
                     }
                 } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
@@ -1860,6 +2173,127 @@ $drs_rule2_name = "VMs_Should_In_GS"
     #region reEnableOnly
         if ($reEnableOnly)
         {
+
+            if ($DoNotUseDrs)
+            {#we don't want to use DRS, so we'll need to set DRS to manual before we start re-enabling protection domains
+                #region connect to vcenter
+                    Write-Host "$(get-date) [INFO] Connecting to vCenter server $($myvar_vcenter_ip) ..." -ForegroundColor Green
+                    try 
+                    {#try connecting to vcenter
+                        $myvar_vcenter_connection = Connect-VIServer -Server $myvar_vcenter_ip -Credential $vcenterCredentials -ErrorAction Stop
+                    }
+                    catch 
+                    {#could not connect to vcenter
+                        throw "$(get-date) [ERROR] Could not connect to vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                    }
+                    Write-Host "$(get-date) [SUCCESS] Successfully connected to vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                #endregion
+                
+                #region figure out HA/DRS cluster name  
+                    #let's match host IP addresses we got from the Nutanix clusters to VMHost objects in vCenter
+                    $myvar_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the Nutanix cluster
+                    $myvar_remote_ntnx_vmhosts = @() #this is where we will save the hostnames of the hosts which make up the remote Nutanix cluster
+                    Write-Host "$(get-date) [INFO] Getting hosts registered in vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green
+                    try 
+                    {#get all the vmhosts registered in vCenter
+                        $myvar_vmhosts = Get-VMHost -ErrorAction Stop 
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmhosts from vCenter server $($myvar_vcenter_ip)" -ForegroundColor Cyan
+                    }
+                    catch
+                    {#couldn't get all the vmhosts registered in vCenter
+                        throw "$(get-date) [ERROR] Could not retrieve vmhosts from vCenter server $($myvar_vcenter_ip) : $($_.Exception.Message)"
+                    }
+
+                    foreach ($myvar_vmhost in $myvar_vmhosts) 
+                    {#let's look at each host and determine which is which
+                        Write-Host "$(get-date) [INFO] Retrieving vmk interfaces for host $($myvar_vmhost)..." -ForegroundColor Green
+                        try 
+                        {#retrieve all vmk NICs for that host
+                            $myvar_host_vmks = $myvar_vmhost | Get-VMHostNetworkAdapter -ErrorAction Stop | Where-Object {$_.DeviceName -like "vmk*"} 
+                            Write-Host "$(get-date) [SUCCESS] Successfully retrieved vmk interfaces for host $($myvar_vmhost)" -ForegroundColor Cyan
+                        }
+                        catch
+                        {#couldn't retrieve all vmk NICs for that host
+                            throw "$(get-date) [ERROR] Could not retrieve vmk interfaces for host $($myvar_vmhost) : $($_.Exception.Message)"
+                        }
+                        
+                        foreach ($myvar_host_vmk in $myvar_host_vmks) 
+                        {#examine all VMKs
+                            foreach ($myvar_host_ip in $myvar_ntnx_hosts_ips) 
+                            {#compare to the host IP addresses we got from the Nutanix cluster
+                                if ($myvar_host_vmk.IP -eq $myvar_host_ip)
+                                {#if we get a match, that vcenter host is in cluster 1
+                                    Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor White
+                                    $myvar_ntnx_vmhosts += $myvar_vmhost
+                                }
+                            }#end foreach IP loop
+                            
+                            foreach ($myvar_remote_host_ip in $myvar_remote_ntnx_hosts_ips) 
+                            {#compare to the host IP addresses we got from the Nutanix cluster
+                                if ($myvar_host_vmk.IP -eq $myvar_remote_host_ip)
+                                {#if we get a match, that vcenter host is in cluster 2
+                                    Write-Host "$(get-date) [DATA] $($myvar_vmhost.Name) is a host in Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor White
+                                    $myvar_remote_ntnx_vmhosts += $myvar_vmhost
+                                }
+                            }#end foreach IP loop
+                        }#end foreach VMK loop
+                    }#end foreach VMhost loop
+                    
+                    if (!$myvar_ntnx_vmhosts) 
+                    {#couldn't find hosts in cluster
+                        throw "$(get-date) [ERROR] No vmhosts were found for Nutanix cluster $($myvar_ntnx_cluster_name) in vCenter server $($myvar_vcenter_ip)"
+                    }
+
+                    #figure out vsphere cluster name
+                    Write-Host "$(get-date) [INFO] Checking which compute cluster contains hosts from $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
+                    try 
+                    {#we look at which cluster the first vmhost in cluster belongs to.
+                        $myvar_vsphere_cluster = $myvar_ntnx_vmhosts[0] | Get-Cluster -ErrorAction Stop
+                        $myvar_vsphere_cluster_name = $myvar_vsphere_cluster.Name
+
+                        Write-Host "$(get-date) [DATA] vSphere compute cluster name is $($myvar_vsphere_cluster_name) for Nutanix cluster $($myvar_ntnx_cluster_name)." -ForegroundColor White
+
+                        foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
+                        {#make sure all hosts are part of the same cluster
+                            try 
+                            {
+                                $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
+                                $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
+                                if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
+                                {#houston we have a problem: some nutanix hosts are not in the same compute cluster
+                                    throw "$(get-date) [ERROR] Nutanix host $($myvar_vmhost) is in vsphere cluster $($myvar_vmhost_vsphere_cluster_name) instead of vsphere cluster $($myvar_vsphere_cluster_name)! Exiting."
+                                }
+                            }
+                            catch 
+                            {
+                                throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                            }
+                        }
+                    }
+                    catch 
+                    {#couldn't retrieve cluster
+                        throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
+                    }
+                    
+                    
+                    $myvar_compute_cluster_hosts = Get-Cluster -Name $myvar_vsphere_cluster_name | Get-VMHost
+                #endregion
+
+                #region set DRS to manual
+                    Write-Host "$(get-date) [WARNING] We are NOT using DRS for VM migrations! Setting DRS to manual on cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Yellow
+                    try 
+                    {#set DRS to manual
+                        $result = Set-Cluster -Cluster $myvar_vsphere_cluster -DrsAutomationLevel "Manual" -Confirm:$false -ErrorAction Stop
+                        $drs_disabled = $true
+                        Write-Host "$(get-date) [SUCCESS] Successfully set DRS to manual on cluster $($myvar_vsphere_cluster_name)" -ForegroundColor Cyan
+                    }
+                    catch
+                    {#couldn't set DRS to manual
+                        throw "$(get-date) [ERROR] Could not set DRS to manual on cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)"
+                    }
+                #endregion
+            }
+
             [System.Collections.ArrayList]$myvar_processed_pd_list = New-Object System.Collections.ArrayList($null)
             foreach ($myvar_pd in $pd_list) 
             {#main processing loop
@@ -1913,7 +2347,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                         Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
                         if ($myvar_syncing_pds -ge $maxConcurrentRepl)
                         {
-                            Write-Host "$(get-date) [WARN] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                            Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
                             Start-Sleep 60
                         }
                     } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
@@ -2128,9 +2562,24 @@ $drs_rule2_name = "VMs_Should_In_GS"
     Write-Host ""
     Write-Host "$(get-date) [STEP] Cleaning up ..." -ForegroundColor Magenta
 
-    #disconnect viserver
+    #re-enabling DRS and disconnecting from vCenter
     if (!$reEnableOnly -and !$DisableOnly -and !$unplanned)
-    {
+    {#we've done stuff on vCenter
+        if ($drs_disabled)
+        {#DRS was disabled previously, trying to re-enable it (assuming vCenter VM is available)
+            #!re-enable DRS at the end of operations
+            Write-Host "$(get-date) [INFO] Setting DRS to fully automated on cluster $($myvar_vsphere_cluster_name)..." -ForegroundColor Green
+            try
+            {#enable DRS
+                $result = Set-Cluster -Cluster $myvar_vsphere_cluster -DrsAutomationLevel "FullyAutomated" -Confirm:$false -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Successfully set DRS to fully automated on cluster $($myvar_vsphere_cluster_name)" -ForegroundColor Cyan
+                $drs_disabled = $false
+            } 
+            catch
+            {#couldn't enable DRS
+                Write-Host "$(get-date) [WARNING] Could not re-enable DRS on cluster $($myvar_vsphere_cluster_name) : $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
         Write-Host "$(get-date) [INFO] Disconnecting from vCenter $($myvar_vcenter_ip)" -ForegroundColor Green
         $myvar_vcenter_disconnect_command = Disconnect-viserver * -Confirm:$False -ErrorAction SilentlyContinue
     }
@@ -2150,6 +2599,8 @@ $drs_rule2_name = "VMs_Should_In_GS"
 
     #let's figure out how much time this all took
     Write-Host "$(get-date) [SUM] total processing time: $($myvar_elapsed_time.Elapsed.ToString())" -ForegroundColor Magenta
+
+    if ($log) {Stop-Transcript}
 
     #cleanup after ourselves and delete all custom variables
     Remove-Variable myvar* -ErrorAction SilentlyContinue
