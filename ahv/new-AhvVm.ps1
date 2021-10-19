@@ -51,7 +51,6 @@ Connect to a Nutanix Prism Central VM of your choice and create all the VMs defi
 #>
 
 #todo: add ability to specify image to mount on cdrom
-#todo: make source image and customization optional
 
 #region parameters
     Param
@@ -1558,7 +1557,7 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
                 $payload = (ConvertTo-Json $content -Depth 9)
-                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Paylod: $($payload)" -ForegroundColor White}
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Payload: $($payload)" -ForegroundColor White}
             #endregion
 
             #region make api call
