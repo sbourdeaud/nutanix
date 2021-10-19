@@ -68,7 +68,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
         [parameter(mandatory = $true)] [array]$net,
         [parameter(mandatory = $false)] [string]$cust,
         [parameter(mandatory = $false)] [ValidateSet('linux','windows')] [string]$ostype,
-        [parameter(mandatory = $true)] [int]$qty
+        [parameter(mandatory = $false)] [int]$qty
     )
 #endregion
 
@@ -632,7 +632,8 @@ Date       By   Updates (newest updates at the top)
 07/03/2019 sb   Initial release.
 04/06/2020 sb   Do over with sbourdeaud module
 02/06/2021 sb   Replaced username with get-credential
-10/19/2021 sb   Added the qty parameter and made image optional
+10/19/2021 sb   Added the qty parameter and made image optional.
+                Removed dependency on external module sbourdeaud.
 ################################################################################
 '@
     $myvarScriptName = ".\new-AhvVm.ps1"
