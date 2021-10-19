@@ -29,6 +29,8 @@
   GiB amount for data disks (optional). If you specify multiple values separated by a comma, multiple disks will be added.
 .PARAMETER net
   Name of the AHV network the VM should be attached to.  If you specify multiple values separated by a comma, multiple vnics will be added.
+.PARAMETER qty
+  Specifies how many virtual machines with same configuration you want to create.  By default, this is equal to 1.
 .PARAMETER cust
   Name of the guest OS customization file you want to inject (optional; use cloud-init.yaml for linux and unattend.xml for windows).
 .PARAMETER ostype
@@ -40,8 +42,12 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 19th 2021
 #>
+
+#todo: modify script to be able to add multiple vms
+#todo: from a source csv, or just by specifying qty
+#todo: make source image and customization optional
 
 #region parameters
     Param
@@ -57,11 +63,12 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
         [parameter(mandatory = $true)] [string]$vm,
         [parameter(mandatory = $true)] [int]$cpu,
         [parameter(mandatory = $true)] [int]$ram,
-        [parameter(mandatory = $true)] [string]$image,
+        [parameter(mandatory = $false)] [string]$image,
         [parameter(mandatory = $false)] [array]$disk,
         [parameter(mandatory = $true)] [array]$net,
         [parameter(mandatory = $false)] [string]$cust,
-        [parameter(mandatory = $false)] [ValidateSet('linux','windows')] [string]$ostype
+        [parameter(mandatory = $false)] [ValidateSet('linux','windows')] [string]$ostype,
+        [parameter(mandatory = $true)] [int]$qty
     )
 #endregion
 
@@ -170,6 +177,10 @@ Date       By   Updates (newest updates at the top)
         "Accept"="application/json"
     }
     #>
+
+    #defaults vm quantity to 1
+    if (!$qty) {$qty=1}
+    $user_specified_qty = $qty
 #endregion
 
 #*STEP1/4: RETRIEVE CLUSTERS
@@ -372,101 +383,107 @@ Date       By   Updates (newest updates at the top)
 
 #*STEP3/4: RETRIEVE IMAGES
 #region retrieve images 
+    if ($image)
+    {#an image was specified
+        #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/images/list"
+            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+            $method = "POST"
 
-    #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/images/list"
-        $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-        $method = "POST"
+            # this is used to capture the content of the payload
+            $content = @{
+                kind="image";
+                offset=0;
+                length=$length;
+                sort_order="ASCENDING";
+                sort_attribute="name"
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
 
-        # this is used to capture the content of the payload
-        $content = @{
-            kind="image";
-            offset=0;
-            length=$length;
-            sort_order="ASCENDING";
-            sort_attribute="name"
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
-    #endregion
-
-    #region make api call
-        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-        Do 
-        {
-            try 
+        #region make api call
+            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+            Do 
             {
-                $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                $listLength = 0
-                if ($resp.metadata.offset) 
+                try 
                 {
-                    $firstItem = $resp.metadata.offset
-                } 
-                else 
-                {
-                    $firstItem = 0
-                }
-                if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) 
-                {
-                    $listLength = $resp.metadata.length
-                } 
-                else 
-                {
-                    $listLength = $resp.metadata.total_matches
-                }
-                Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-
-                #grab the information we need in each entity
-                ForEach ($entity in $resp.entities) 
-                {
-                    if ($entity.spec.name -eq $image) 
+                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                    $listLength = 0
+                    if ($resp.metadata.offset) 
                     {
-                        if ($entity.spec.resources.image_type -ne "DISK_IMAGE") 
-                        {
-                            Write-Host "$(Get-Date) [ERROR] Image $($image) is not a disk image" -ForegroundColor Red
-                            Exit 1
-                        }
-                        $image_uuid = $entity.metadata.uuid
+                        $firstItem = $resp.metadata.offset
+                    } 
+                    else 
+                    {
+                        $firstItem = 0
                     }
+                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) 
+                    {
+                        $listLength = $resp.metadata.length
+                    } 
+                    else 
+                    {
+                        $listLength = $resp.metadata.total_matches
+                    }
+                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+
+                    #grab the information we need in each entity
+                    ForEach ($entity in $resp.entities) 
+                    {
+                        if ($entity.spec.name -eq $image) 
+                        {
+                            if ($entity.spec.resources.image_type -ne "DISK_IMAGE") 
+                            {
+                                Write-Host "$(Get-Date) [ERROR] Image $($image) is not a disk image" -ForegroundColor Red
+                                Exit 1
+                            }
+                            $image_uuid = $entity.metadata.uuid
+                        }
+                    }
+
+                    #prepare the json payload for the next batch of entities/response
+                    $content = @{
+                        kind="image";
+                        offset=($resp.metadata.length + $resp.metadata.offset);
+                        length=$length;
+                        sort_order="ASCENDING";
+                        sort_attribute="name"
+                    }
+                    $payload = (ConvertTo-Json $content -Depth 4)
                 }
-
-                #prepare the json payload for the next batch of entities/response
-                $content = @{
-                    kind="image";
-                    offset=($resp.metadata.length + $resp.metadata.offset);
-                    length=$length;
-                    sort_order="ASCENDING";
-                    sort_attribute="name"
+                catch 
+                {
+                    $saved_error = $_.Exception.Message
+                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                    Throw "$(get-date) [ERROR] $saved_error"
                 }
-                $payload = (ConvertTo-Json $content -Depth 4)
+                finally 
+                {
+                    #add any last words here; this gets processed no matter what
+                }
             }
-            catch 
-            {
-                $saved_error = $_.Exception.Message
-                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                Throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally 
-            {
-                #add any last words here; this gets processed no matter what
-            }
-        }
-        While ($resp.metadata.length -eq $length)
+            While ($resp.metadata.length -eq $length)
 
-        if ($debugme) 
-        {
-            Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
-            $myvarResults
-        }
+            if ($debugme) 
+            {
+                Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+                $myvarResults
+            }
 
-        if (!$image_uuid) 
-        {
-            Write-Host "$(Get-Date) [ERROR] Could not find image $($image)" -ForegroundColor Red
-            Exit 1
-        }
-        Write-Host "$(Get-Date) [SUCCESS] Image $($image) has uuid $($image_uuid)" -ForegroundColor Cyan
-    #endregion
+            if (!$image_uuid) 
+            {
+                Write-Host "$(Get-Date) [ERROR] Could not find image $($image)" -ForegroundColor Red
+                Exit 1
+            }
+            Write-Host "$(Get-Date) [SUCCESS] Image $($image) has uuid $($image_uuid)" -ForegroundColor Cyan
+        #endregion
+    }
+    else 
+    {#no image was specified
+        
+    }
 
 #endregion
 
@@ -485,333 +502,383 @@ Date       By   Updates (newest updates at the top)
             $base64_string = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($guest_customization_file))    
         }
     #endregion
-
-    #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/vms"
-        $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-        $method = "POST"
-
-        # this is used to capture the content of the payload
-        $i = 0 #used for device index
-        if ($cust -and ($ostype -eq "linux")) 
-        {
-            $content = @{
-                spec = @{
-                    name = $vm
-                    description = "Created using REST API on $(Get-Date)"
-                    resources = @{
-                        num_threads_per_core = 1
-                        num_vcpus_per_socket = 1
-                        num_sockets = $cpu
-                        memory_size_mib = $($ram * 1024)
-                        vnuma_config = @{
-                            num_vnuma_nodes = 0
-                        }
-                        vga_console_enabled = $true
-                        serial_port_list = @()
-                        gpu_list = @()
-                        nic_list = @(ForEach ($subnet in $myvarNetResults) {
-                            @{
-                                nic_type = "NORMAL_NIC"
-                                subnet_reference = @{
-                                    kind = "subnet"
-                                    name = $subnet.name
-                                    uuid = $subnet.uuid
-                                }
-                                is_connected = $true
-                            }
-                        }
-                        )
-                        boot_config = @{
-                            boot_device = @{
-                                disk_address = @{
-                                    device_index = 0
-                                    adapter_type = "SCSI"
-                                }
-                            }
-                        }
-                        disk_list = @(
-                            @{
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = 1
-                                        adapter_type = "IDE"
-                                    }
-                                    device_type = "CDROM"
-                                }
-                            }
-                            @{
-                                data_source_reference = @{
-                                    kind = "image"
-                                    uuid = $image_uuid
-                                }
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = 0
-                                        adapter_type = "SCSI"
-                                    }
-                                    device_type = "DISK"
-                                }
-                            }
-                            ForEach ($drive in $disk) 
-                            {
-                                @{
-                                    device_properties = @{
-                                        disk_address = @{
-                                            device_index = (++$i)
-                                            adapter_type = "SCSI"
-                                        }
-                                        device_type = "DISK"
-                                    }
-                                    disk_size_mib = $($drive * 1024)
-                                }
-                            }
-                        )
-                        guest_customization = @{
-                            cloud_init = @{
-                            user_data = $base64_string
-                            }
-                            is_overridable = $false
-                        }
-                    }
-                    cluster_reference = @{
-                        kind = "cluster"
-                        name = $cluster
-                        uuid = $cluster_uuid
-                    }
-            
-                }
-                metadata = @{
-                    kind = "vm"
-                    spec_version = 3
-                    categories = @{}
-                }
-            }
-        } 
-        elseif ($cust -and ($ostype -eq "windows")) 
-        {
-            $content = @{
-                spec = @{
-                    name = $vm
-                    description = "Created using REST API on $(Get-Date)"
-                    resources = @{
-                        num_threads_per_core = 1
-                        num_vcpus_per_socket = 1
-                        num_sockets = $cpu
-                        memory_size_mib = $($ram * 1024)
-                        vnuma_config = @{
-                            num_vnuma_nodes = 0
-                        }
-                        vga_console_enabled = $true
-                        serial_port_list = @()
-                        gpu_list = @()
-                        nic_list = @(ForEach ($subnet in $myvarNetResults) {
-                            @{
-                                nic_type = "NORMAL_NIC"
-                                subnet_reference = @{
-                                    kind = "subnet"
-                                    name = $subnet.name
-                                    uuid = $subnet.uuid
-                                }
-                                is_connected = $true
-                            }
-                        }
-                        )
-                        boot_config = @{
-                            boot_device = @{
-                                disk_address = @{
-                                    device_index = 0
-                                    adapter_type = "SCSI"
-                                }
-                            }
-                        }
-                        disk_list = @(
-                            @{
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = 1
-                                        adapter_type = "IDE"
-                                    }
-                                    device_type = "CDROM"
-                                }
-                            }
-                            @{
-                                data_source_reference = @{
-                                    kind = "image"
-                                    uuid = $image_uuid
-                                }
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = 0
-                                        adapter_type = "SCSI"
-                                    }
-                                    device_type = "DISK"
-                                }
-                            }
-                            ForEach ($drive in $disk) 
-                            {
-                                @{
-                                    device_properties = @{
-                                        disk_address = @{
-                                            device_index = (++$i)
-                                            adapter_type = "SCSI"
-                                        }
-                                        device_type = "DISK"
-                                    }
-                                    disk_size_mib = $($drive * 1024)
-                                }
-                            }
-                        )
-                        guest_customization = @{
-                            sysprep = @{
-                            unattend_xml = $base64_string
-                            }
-                            is_overridable = $false
-                        }
-                    }
-                    cluster_reference = @{
-                        kind = "cluster"
-                        name = $cluster
-                        uuid = $cluster_uuid
-                    }
-            
-                }
-                metadata = @{
-                    kind = "vm"
-                    spec_version = 3
-                    categories = @{}
-                }
-            }
-        } 
-        else 
-        {
-            $content = @{
-                spec = @{
-                    name = $vm
-                    description = "Created using REST API on $(Get-Date)"
-                    resources = @{
-                        num_threads_per_core = 1
-                        num_vcpus_per_socket = 1
-                        num_sockets = $cpu
-                        memory_size_mib = $($ram * 1024)
-                        vnuma_config = @{
-                            num_vnuma_nodes = 0
-                        }
-                        vga_console_enabled = $true
-                        serial_port_list = @()
-                        gpu_list = @()
-                        nic_list = @(ForEach ($subnet in $myvarNetResults) {
-                            @{
-                                nic_type = "NORMAL_NIC"
-                                subnet_reference = @{
-                                    kind = "subnet"
-                                    name = $subnet.name
-                                    uuid = $subnet.uuid
-                                }
-                                is_connected = $true
-                            }
-                        }
-                        )
-                        boot_config = @{
-                            boot_device = @{
-                                disk_address = @{
-                                    device_index = 0
-                                    adapter_type = "SCSI"
-                                }
-                            }
-                        }
-                        disk_list = @(
-                            @{
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = 1
-                                        adapter_type = "IDE"
-                                    }
-                                    device_type = "CDROM"
-                                }
-                            }
-                            @{
-                                data_source_reference = @{
-                                    kind = "image"
-                                    uuid = $image_uuid
-                                }
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = 0
-                                        adapter_type = "SCSI"
-                                    }
-                                    device_type = "DISK"
-                                }
-                            }
-                            ForEach ($drive in $disk) 
-                            {
-                                @{
-                                    device_properties = @{
-                                        disk_address = @{
-                                            device_index = (++$i)
-                                            adapter_type = "SCSI"
-                                        }
-                                        device_type = "DISK"
-                                    }
-                                    disk_size_mib = $($drive * 1024)
-                                }
-                            }
-                        )
-                    }
-                    cluster_reference = @{
-                        kind = "cluster"
-                        name = $cluster
-                        uuid = $cluster_uuid
-                    }
-            
-                }
-                metadata = @{
-                    kind = "vm"
-                    spec_version = 3
-                    categories = @{}
-                }
-            }
-        }
-        $payload = (ConvertTo-Json $content -Depth 9)
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Paylod: $($payload)" -ForegroundColor White}
-    #endregion
-
-    #region make api call
-        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-
-        try 
-        {
-            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-            $task_uuid = $resp.status.execution_context.task_uuid
-            Write-Host "$(Get-Date) [INFO] Task $($task_uuid) is in $($resp.status.state) status..." -ForegroundColor Green
-
-            #check on task status
-            $api_server_endpoint = "/api/nutanix/v3/tasks/{0}" -f $task_uuid
+    
+    Do 
+    {#keep creating vms as long as the desired quantity has not been provisioned
+        #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/vms"
             $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "GET"
+            $method = "POST"
+
+            # this is used to capture the content of the payload
+            $i = 0 #used for device index
+            if ($user_specified_qty -gt 1)
+            {#there is more than 1 vm to create, so we'll add a number to the vm name
+                $vm_name = $vm + "_$($qty)"
+            }
+            else 
+            {#there is only 1 vm to create
+                $vm_name = $vm
+            }
+
+            if ($cust -and ($ostype -eq "linux")) 
+            {
+                $content = @{
+                    spec = @{
+                        name = $vm_name
+                        description = "Created using REST API on $(Get-Date)"
+                        resources = @{
+                            num_threads_per_core = 1
+                            num_vcpus_per_socket = 1
+                            num_sockets = $cpu
+                            memory_size_mib = $($ram * 1024)
+                            vnuma_config = @{
+                                num_vnuma_nodes = 0
+                            }
+                            vga_console_enabled = $true
+                            serial_port_list = @()
+                            gpu_list = @()
+                            nic_list = @(ForEach ($subnet in $myvarNetResults) {
+                                @{
+                                    nic_type = "NORMAL_NIC"
+                                    subnet_reference = @{
+                                        kind = "subnet"
+                                        name = $subnet.name
+                                        uuid = $subnet.uuid
+                                    }
+                                    is_connected = $true
+                                }
+                            }
+                            )
+                            boot_config = @{
+                                boot_device = @{
+                                    disk_address = @{
+                                        device_index = 0
+                                        adapter_type = "SCSI"
+                                    }
+                                }
+                            }
+                            disk_list = @(
+                                @{
+                                    device_properties = @{
+                                        disk_address = @{
+                                            device_index = 1
+                                            adapter_type = "IDE"
+                                        }
+                                        device_type = "CDROM"
+                                    }
+                                }
+                                if ($image)
+                                {#an image was specified, so it will be our first disk}
+                                    @{
+                                        data_source_reference = @{
+                                            kind = "image"
+                                            uuid = $image_uuid
+                                        }
+                                        device_properties = @{
+                                            disk_address = @{
+                                                device_index = 0
+                                                adapter_type = "SCSI"
+                                            }
+                                            device_type = "DISK"
+                                        }
+                                    }
+                                    ForEach ($drive in $disk) 
+                                    {
+                                        @{
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = (++$i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $($drive * 1024)
+                                        }
+                                    }
+                                }
+                                else 
+                                {#no image was specified so we'll start with a blank disk
+                                    ForEach ($drive in $disk) 
+                                    {
+                                        @{
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = ($i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $($drive * 1024)
+                                        }
+                                        ++$i
+                                    }
+                                }
+                            )
+                            guest_customization = @{
+                                cloud_init = @{
+                                user_data = $base64_string
+                                }
+                                is_overridable = $false
+                            }
+                        }
+                        cluster_reference = @{
+                            kind = "cluster"
+                            name = $cluster
+                            uuid = $cluster_uuid
+                        }
+                
+                    }
+                    metadata = @{
+                        kind = "vm"
+                        spec_version = 3
+                        categories = @{}
+                    }
+                }
+            } 
+            elseif ($cust -and ($ostype -eq "windows")) 
+            {
+                $content = @{
+                    spec = @{
+                        name = $vm_name
+                        description = "Created using REST API on $(Get-Date)"
+                        resources = @{
+                            num_threads_per_core = 1
+                            num_vcpus_per_socket = 1
+                            num_sockets = $cpu
+                            memory_size_mib = $($ram * 1024)
+                            vnuma_config = @{
+                                num_vnuma_nodes = 0
+                            }
+                            vga_console_enabled = $true
+                            serial_port_list = @()
+                            gpu_list = @()
+                            nic_list = @(ForEach ($subnet in $myvarNetResults) {
+                                @{
+                                    nic_type = "NORMAL_NIC"
+                                    subnet_reference = @{
+                                        kind = "subnet"
+                                        name = $subnet.name
+                                        uuid = $subnet.uuid
+                                    }
+                                    is_connected = $true
+                                }
+                            }
+                            )
+                            boot_config = @{
+                                boot_device = @{
+                                    disk_address = @{
+                                        device_index = 0
+                                        adapter_type = "SCSI"
+                                    }
+                                }
+                            }
+                            disk_list = @(
+                                @{
+                                    device_properties = @{
+                                        disk_address = @{
+                                            device_index = 1
+                                            adapter_type = "IDE"
+                                        }
+                                        device_type = "CDROM"
+                                    }
+                                }
+                                if ($image)
+                                {#an image was specified, so it will be our first disk}
+                                    @{
+                                        data_source_reference = @{
+                                            kind = "image"
+                                            uuid = $image_uuid
+                                        }
+                                        device_properties = @{
+                                            disk_address = @{
+                                                device_index = 0
+                                                adapter_type = "SCSI"
+                                            }
+                                            device_type = "DISK"
+                                        }
+                                    }
+                                    ForEach ($drive in $disk) 
+                                    {
+                                        @{
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = (++$i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $($drive * 1024)
+                                        }
+                                    }
+                                }
+                                else 
+                                {#no image was specified so we'll start with a blank disk
+                                    ForEach ($drive in $disk) 
+                                    {
+                                        @{
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = ($i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $($drive * 1024)
+                                        }
+                                        ++$i
+                                    }
+                                }
+                            )
+                            guest_customization = @{
+                                sysprep = @{
+                                unattend_xml = $base64_string
+                                }
+                                is_overridable = $false
+                            }
+                        }
+                        cluster_reference = @{
+                            kind = "cluster"
+                            name = $cluster
+                            uuid = $cluster_uuid
+                        }
+                
+                    }
+                    metadata = @{
+                        kind = "vm"
+                        spec_version = 3
+                        categories = @{}
+                    }
+                }
+            }
+            else 
+            {
+                $content = @{
+                    spec = @{
+                        name = $vm_name
+                        description = "Created using REST API on $(Get-Date)"
+                        resources = @{
+                            num_threads_per_core = 1
+                            num_vcpus_per_socket = 1
+                            num_sockets = $cpu
+                            memory_size_mib = $($ram * 1024)
+                            vnuma_config = @{
+                                num_vnuma_nodes = 0
+                            }
+                            vga_console_enabled = $true
+                            serial_port_list = @()
+                            gpu_list = @()
+                            nic_list = @(ForEach ($subnet in $myvarNetResults) {
+                                @{
+                                    nic_type = "NORMAL_NIC"
+                                    subnet_reference = @{
+                                        kind = "subnet"
+                                        name = $subnet.name
+                                        uuid = $subnet.uuid
+                                    }
+                                    is_connected = $true
+                                }
+                            }
+                            )
+                            boot_config = @{
+                                boot_device = @{
+                                    disk_address = @{
+                                        device_index = 0
+                                        adapter_type = "SCSI"
+                                    }
+                                }
+                            }
+                            disk_list = @(
+                                @{
+                                    device_properties = @{
+                                        disk_address = @{
+                                            device_index = 1
+                                            adapter_type = "IDE"
+                                        }
+                                        device_type = "CDROM"
+                                    }
+                                }
+                                if ($image)
+                                {#an image was specified, so it will be our first disk}
+                                    @{
+                                        data_source_reference = @{
+                                            kind = "image"
+                                            uuid = $image_uuid
+                                        }
+                                        device_properties = @{
+                                            disk_address = @{
+                                                device_index = 0
+                                                adapter_type = "SCSI"
+                                            }
+                                            device_type = "DISK"
+                                        }
+                                    }
+                                    ForEach ($drive in $disk) 
+                                    {
+                                        @{
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = (++$i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $($drive * 1024)
+                                        }
+                                    }
+                                }
+                                else 
+                                {#no image was specified so we'll start with a blank disk
+                                    ForEach ($drive in $disk) 
+                                    {
+                                        @{
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = ($i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $($drive * 1024)
+                                        }
+                                        ++$i
+                                    }
+                                }
+                            )
+                        }
+                        cluster_reference = @{
+                            kind = "cluster"
+                            name = $cluster
+                            uuid = $cluster_uuid
+                        }
+                
+                    }
+                    metadata = @{
+                        kind = "vm"
+                        spec_version = 1
+                        categories = @{}
+                    }
+                }
+            }
+            $payload = (ConvertTo-Json $content -Depth 9)
+            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Paylod: $($payload)" -ForegroundColor White}
+        #endregion
+
+        #region make api call
+            Write-Host "$(Get-Date) [STEP] Creating VM $($vm_name) on cluster $($cluster)" -ForegroundColor Magenta
+            Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+
             try 
             {
-                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-            }
-            catch 
-            {
-                $saved_error = $_.Exception.Message
-                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                Throw "$(get-date) [ERROR] $saved_error"
-            }
-            While ($resp.status -ne "SUCCEEDED")
-            {
-                if ($resp.status -eq "FAILED") 
-                {#task failed
-                    throw "$(get-date) [ERROR] VM creation task failed. Exiting!"
-                }
-                else 
-                {#task hasn't completed yet
-                    Write-Host "$(get-date) [PENDING] VM creation task status is $($resp.status) with $($resp.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds 5
-                }
+                $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+                $task_uuid = $resp.status.execution_context.task_uuid
+                Write-Host "$(Get-Date) [INFO] Task $($task_uuid) is in $($resp.status.state) status..." -ForegroundColor Green
+
+                #check on task status
+                $api_server_endpoint = "/api/nutanix/v3/tasks/{0}" -f $task_uuid
+                $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+                $method = "GET"
                 try 
                 {
                     $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
@@ -823,23 +890,48 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
                     Throw "$(get-date) [ERROR] $saved_error"
                 }
+                While ($resp.status -ne "SUCCEEDED")
+                {
+                    if ($resp.status -eq "FAILED") 
+                    {#task failed
+                        throw "$(get-date) [ERROR] VM creation task failed. Exiting!"
+                    }
+                    else 
+                    {#task hasn't completed yet
+                        Write-Host "$(get-date) [PENDING] VM creation task status is $($resp.status) with $($resp.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 5
+                    }
+                    try 
+                    {
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                    }
+                    catch 
+                    {
+                        $saved_error = $_.Exception.Message
+                        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                        Throw "$(get-date) [ERROR] $saved_error"
+                    }
+                }
+                Write-Host "$(get-date) [SUCCESS] VM creation task has $($resp.status)!" -ForegroundColor Cyan
+
             }
-            Write-Host "$(get-date) [SUCCESS] VM creation task has $($resp.status)!" -ForegroundColor Cyan
+            catch 
+            {
+                $saved_error = $_.Exception.Message
+                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                Throw "$(get-date) [ERROR] $saved_error"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
 
-        }
-        catch 
-        {
-            $saved_error = $_.Exception.Message
-            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-            Throw "$(get-date) [ERROR] $saved_error"
-        }
-        finally 
-        {
-            #add any last words here; this gets processed no matter what
-        }
+        #endregion
 
-    #endregion
+        $qty = $qty - 1
+    } While ($qty -ge 1)
 
 #endregion
 
