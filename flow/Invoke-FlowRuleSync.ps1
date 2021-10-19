@@ -769,7 +769,6 @@ public static void Ignore()
         }
     }
 
-
     function Sync-Categories
     {#syncs Prism categories used in a given network policy
         param
