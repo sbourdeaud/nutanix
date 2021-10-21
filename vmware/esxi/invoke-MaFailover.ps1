@@ -46,6 +46,8 @@
   If you do not specify a credential file, the script will prompt you for this information.
 .PARAMETER resetOverrides
   (Optional)Specifies that if a VM has a DRS override, you want to remove it automatically so that DRS can move the VM.
+.PARAMETER remoteSiteIp
+  (Optional)Specifies the remote site (other Nutanix cluster) IP address. This is useful if you have segmented the DR network and the IP configured in the remote site definition in Prism is not reachable from your network segment.
 .EXAMPLE
 .\invoke-MAFailover.ps1 -cluster c1.local -pd all -action maintenance
 Trigger a manual failover of all metro protection domains and put esxi hosts in maintenance mode:
@@ -53,7 +55,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 12th 2021
+  Revision: October 21st 2021
 #>
 
 #region parameters
@@ -79,7 +81,8 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
         [parameter(mandatory = $false)] [switch]$DisableOnly,
         [parameter(mandatory = $false)] [switch]$DoNotUseDrs,
         [parameter(mandatory = $false)] [int]$reEnableDelay,
-        [parameter(mandatory = $false)] [int]$maxConcurrentRepl
+        [parameter(mandatory = $false)] [int]$maxConcurrentRepl,
+        [parameter(mandatory = $false)] [string]$remoteSiteIp
     )
 #endregion
 
@@ -865,6 +868,8 @@ Date       By   Updates (newest updates at the top)
                 tion domains.
 10/16/2021 sb   Fixing a logic issue in the DoNotUseDrs Do while loop (thanks to
                 Benjamin Fabian from Unisys for catching this!)
+10/21/2021 sb   Adding -remoteSiteIp parameter for environments where DR network
+                has been segmented.
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -1428,7 +1433,14 @@ $drs_rule2_name = "VMs_Should_In_GS"
             }
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved remote sites from Nutanix cluster $($cluster)" -ForegroundColor Cyan
             #* grab ip for our remote site
-            $myvar_remote_site_ip = (($myvar_remote_sites.entities | Where-Object {$_.name -eq $remote_site_name}).remote_ip_ports).psobject.properties.name
+            if (!$remoteSiteIp)
+            {#remote site IP address was not specified, so we'll fetch it from the remote site definition
+                $myvar_remote_site_ip = (($myvar_remote_sites.entities | Where-Object {$_.name -eq $remote_site_name}).remote_ip_ports).psobject.properties.name
+            }
+            else 
+            {#remote site IP was specified manually
+                $myvar_remote_site_ip = $remoteSiteIp
+            }
             Write-Host "$(get-date) [DATA] Remote site $($remote_site_name) ip address is $($myvar_remote_site_ip)" -ForegroundColor White
 
             if (!$unplanned)
