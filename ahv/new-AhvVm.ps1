@@ -812,7 +812,7 @@ Date       By   Updates (newest updates at the top)
     $user_specified_qty = $qty
 #endregion
 
-#*STEP1/4: RETRIEVE CLUSTERS
+#*STEP1/5: RETRIEVE CLUSTERS
 #region retrieve clusters 
 
     <# #region prepare api call
@@ -906,7 +906,7 @@ Date       By   Updates (newest updates at the top)
 
 #endregion
 
-#*STEP2/4: RETRIEVE NETWORKS/SUBNETS
+#*STEP2/5: RETRIEVE NETWORKS/SUBNETS
 #region retrieve networks/subnets
 
     <# #region prepare api call
@@ -1014,7 +1014,7 @@ Date       By   Updates (newest updates at the top)
 
 #endregion
 
-#*STEP3/4: RETRIEVE IMAGES
+#*STEP3/5: RETRIEVE IMAGES
 #region retrieve images 
     if ($image -or $csv)
     {#an image was specified
@@ -1118,7 +1118,50 @@ Date       By   Updates (newest updates at the top)
 
 #endregion
 
-#*STEP4/4: CREATE VM
+#*STEP4/5: RETRIEVE STORAGE CONTAINERS
+#region retrieve storage containers 
+    if ($csv)
+    {#specifying containers is only possible by passing the container names in a csv, so if we don't have a csv file, no need to retrieve the storage containers list
+        #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/groups"
+            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+            $method = "POST"
+
+            # this is used to capture the content of the payload
+            $content = @{
+                entity_type = "storage_container"
+                group_member_attributes = @(
+                    @{attribute = "container_name"}
+                    @{attribute = "cluster_name"}
+                    @{attribute = "cluster"}
+                )
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
+
+        #region make api call
+            Write-Host "$(Get-Date) [INFO] Retrieving list of storage containers from Prism Central $($prismcentral)..." -ForegroundColor Green
+            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            
+            [System.Collections.ArrayList]$myvar_container_list = New-Object System.Collections.ArrayList($null)
+            
+            Foreach ($container in $resp.group_results.entity_results)
+            {#process each retrieved container and build an array of objects that is easily addressable for future use
+                $myvar_container_info = [ordered]@{
+                    "container_name" = ($container.data | Where-Object {$_.name -eq "container_name"}).values.values;
+                    "container_uuid" = $container.entity_id;
+                    "cluster_name" = ($container.data | Where-Object {$_.name -eq "cluster_name"}).values.values;
+                    "cluster_uuid" = ($container.data | Where-Object {$_.name -eq "cluster"}).values.values;
+                }
+                $myvar_container_list.Add((New-Object PSObject -Property $myvar_container_info)) | Out-Null
+            }
+            
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved list of $($myvar_container_list.count) storage containers from Prism Central $($prismcentral)" -ForegroundColor Cyan
+        #endregion
+    }
+#endregion
+
+#*STEP5/5: CREATE VM
 #region create vm 
 
     Foreach ($myvar_vm_spec in $myvar_vm_list)
@@ -1206,8 +1249,141 @@ Date       By   Updates (newest updates at the top)
                 $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
                 $method = "POST"
 
-                # this is used to capture the content of the payload
+                #* this is used to capture the content of the payload
+                
                 $i = 0 #used for device index
+                [System.Collections.ArrayList]$disk_device_list = New-Object System.Collections.ArrayList($null)
+                #create here the content for disk device list ($disk_device_list)
+                if ($myvar_vm_spec.image)
+                {#an image was specified, so it will be our first disk}
+                    $disk_device = @{
+                        data_source_reference = @{
+                            kind = "image"
+                            uuid = $image_uuid
+                        }
+                        device_properties = @{
+                            disk_address = @{
+                                device_index = 0
+                                adapter_type = "SCSI"
+                            }
+                            device_type = "DISK"
+                        }
+                    }
+                    $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                    
+                    ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
+                    {
+                        if ($myvar_vm_spec.storage_containers)
+                        {#we have specified storage containers
+                            if (($myvar_vm_spec.storage_containers -Split ",").count -ne ($myvar_vm_spec.disk -Split ",").count)
+                            {#the numbers of disks and specified storage containers don't match
+                                Throw "$(get-date) [ERROR] The number of disks ($(($myvar_vm_spec.disk -Split ",").count)) and specified storage containers ($(($myvar_vm_spec.storage_containers -Split ",").count)) do not match for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a storage container for each disk, or none at all."
+                            }
+                            else 
+                            {#specify the storage container name and uuid in the storage config for each disk
+                                #find the storage container uuid
+                                $storage_container_uuid = ($myvar_container_list | Where-Object {$_.container_name -eq (($myvar_vm_spec.storage_containers -Split ",")[$i])}).container_uuid
+                                if ($storage_container_uuid)
+                                {#we found the storage container uuid
+                                    $disk_device = @{
+                                        storage_config = @{
+                                            storage_container_reference = @{
+                                              uuid = $storage_container_uuid
+                                              kind = "storage_container"
+                                            }
+                                        }
+                                        device_properties = @{
+                                            disk_address = @{
+                                                device_index = (++$i)
+                                                adapter_type = "SCSI"
+                                            }
+                                            device_type = "DISK"
+                                        }
+                                        disk_size_mib = $([int]$drive * 1024)
+                                    }
+                                    $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                                }
+                                else 
+                                {#we couldn't find the storage container uuid
+                                    Throw "$(get-date) [ERROR] Could not find the container $(($myvar_vm_spec.storage_containers -Split ",")[$i]) for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a valid storage container, or none at all."
+                                }
+                            }
+                        }
+                        else 
+                        {#we don't have a storage container specified (disks will be provisioned in default container on the cluster)
+                            $disk_device = @{
+                                device_properties = @{
+                                    disk_address = @{
+                                        device_index = (++$i)
+                                        adapter_type = "SCSI"
+                                    }
+                                    device_type = "DISK"
+                                }
+                                disk_size_mib = $([int]$drive * 1024)
+                            }
+                            $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                        }
+                    }
+                }
+                else 
+                {#no image was specified so we'll start with a blank disk
+                    ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
+                    {
+                        if ($myvar_vm_spec.storage_containers)
+                        {#we have specified storage containers
+                            if (($myvar_vm_spec.storage_containers -Split ",").count -ne ($myvar_vm_spec.disk -Split ",").count)
+                            {#the numbers of disks and specified storage containers don't match
+                                Throw "$(get-date) [ERROR] The number of disks ($(($myvar_vm_spec.disk -Split ",").count)) and specified storage containers ($(($myvar_vm_spec.storage_containers -Split ",").count)) do not match for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a storage container for each disk, or none at all."
+                            }
+                            else 
+                            {#specify the storage container name and uuid in the storage config for each disk
+                                #find the storage container uuid
+                                $storage_container_uuid = ($myvar_container_list | Where-Object {$_.container_name -eq (($myvar_vm_spec.storage_containers -Split ",")[$i])}).container_uuid
+                                if ($storage_container_uuid)
+                                {#we found the storage container uuid
+                                    $disk_device = @{
+                                        storage_config = @{
+                                            storage_container_reference = @{
+                                              uuid = $storage_container_uuid
+                                              kind = "storage_container"
+                                            }
+                                        }
+                                        device_properties = @{
+                                            disk_address = @{
+                                                device_index = ($i)
+                                                adapter_type = "SCSI"
+                                            }
+                                            device_type = "DISK"
+                                        }
+                                        disk_size_mib = $([int]$drive * 1024)
+                                    }
+                                    $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                                }
+                                else 
+                                {#we couldn't find the storage container uuid
+                                    Throw "$(get-date) [ERROR] Could not find the container $(($myvar_vm_spec.storage_containers -Split ",")[$i]) for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a valid storage container, or none at all."
+                                }
+                            }
+                        }
+                        else 
+                        {#we don't have a storage container specified (disks will be provisioned in default container on the cluster)
+                            $disk_device = @{
+                                device_properties = @{
+                                    disk_address = @{
+                                        device_index = ($i)
+                                        adapter_type = "SCSI"
+                                    }
+                                    device_type = "DISK"
+                                }
+                                disk_size_mib = $([int]$drive * 1024)
+                            }
+                            $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                        }
+                        
+                        ++$i
+                    }
+                }
+
                 if ($user_specified_qty -gt 1)
                 {#there is more than 1 vm to create, so we'll add a number to the vm name
                     $vm_name = $myvar_vm_spec.vm + "_$($qty)"
@@ -1264,52 +1440,7 @@ Date       By   Updates (newest updates at the top)
                                             device_type = "CDROM"
                                         }
                                     }
-                                    if ($myvar_vm_spec.image)
-                                    {#an image was specified, so it will be our first disk}
-                                        @{
-                                            data_source_reference = @{
-                                                kind = "image"
-                                                uuid = $image_uuid
-                                            }
-                                            device_properties = @{
-                                                disk_address = @{
-                                                    device_index = 0
-                                                    adapter_type = "SCSI"
-                                                }
-                                                device_type = "DISK"
-                                            }
-                                        }
-                                        ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
-                                        {
-                                            @{
-                                                device_properties = @{
-                                                    disk_address = @{
-                                                        device_index = (++$i)
-                                                        adapter_type = "SCSI"
-                                                    }
-                                                    device_type = "DISK"
-                                                }
-                                                disk_size_mib = $([int]$drive * 1024)
-                                            }
-                                        }
-                                    }
-                                    else 
-                                    {#no image was specified so we'll start with a blank disk
-                                        ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
-                                        {
-                                            @{
-                                                device_properties = @{
-                                                    disk_address = @{
-                                                        device_index = ($i)
-                                                        adapter_type = "SCSI"
-                                                    }
-                                                    device_type = "DISK"
-                                                }
-                                                disk_size_mib = $([int]$drive * 1024)
-                                            }
-                                            ++$i
-                                        }
-                                    }
+                                    $disk_device_list
                                 )
                                 guest_customization = @{
                                     cloud_init = @{
@@ -1379,52 +1510,7 @@ Date       By   Updates (newest updates at the top)
                                             device_type = "CDROM"
                                         }
                                     }
-                                    if ($myvar_vm_spec.image)
-                                    {#an image was specified, so it will be our first disk}
-                                        @{
-                                            data_source_reference = @{
-                                                kind = "image"
-                                                uuid = $image_uuid
-                                            }
-                                            device_properties = @{
-                                                disk_address = @{
-                                                    device_index = 0
-                                                    adapter_type = "SCSI"
-                                                }
-                                                device_type = "DISK"
-                                            }
-                                        }
-                                        ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
-                                        {
-                                            @{
-                                                device_properties = @{
-                                                    disk_address = @{
-                                                        device_index = (++$i)
-                                                        adapter_type = "SCSI"
-                                                    }
-                                                    device_type = "DISK"
-                                                }
-                                                disk_size_mib = $([int]$drive * 1024)
-                                            }
-                                        }
-                                    }
-                                    else 
-                                    {#no image was specified so we'll start with a blank disk
-                                        ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
-                                        {
-                                            @{
-                                                device_properties = @{
-                                                    disk_address = @{
-                                                        device_index = ($i)
-                                                        adapter_type = "SCSI"
-                                                    }
-                                                    device_type = "DISK"
-                                                }
-                                                disk_size_mib = $([int]$drive * 1024)
-                                            }
-                                            ++$i
-                                        }
-                                    }
+                                    $disk_device_list
                                 )
                                 guest_customization = @{
                                     sysprep = @{
@@ -1494,52 +1580,7 @@ Date       By   Updates (newest updates at the top)
                                             device_type = "CDROM"
                                         }
                                     }
-                                    if ($myvar_vm_spec.image)
-                                    {#an image was specified, so it will be our first disk}
-                                        @{
-                                            data_source_reference = @{
-                                                kind = "image"
-                                                uuid = $image_uuid
-                                            }
-                                            device_properties = @{
-                                                disk_address = @{
-                                                    device_index = 0
-                                                    adapter_type = "SCSI"
-                                                }
-                                                device_type = "DISK"
-                                            }
-                                        }
-                                        ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
-                                        {
-                                            @{
-                                                device_properties = @{
-                                                    disk_address = @{
-                                                        device_index = (++$i)
-                                                        adapter_type = "SCSI"
-                                                    }
-                                                    device_type = "DISK"
-                                                }
-                                                disk_size_mib = $([int]$drive * 1024)
-                                            }
-                                        }
-                                    }
-                                    else 
-                                    {#no image was specified so we'll start with a blank disk
-                                        ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
-                                        {
-                                            @{
-                                                device_properties = @{
-                                                    disk_address = @{
-                                                        device_index = ($i)
-                                                        adapter_type = "SCSI"
-                                                    }
-                                                    device_type = "DISK"
-                                                }
-                                                disk_size_mib = $([int]$drive * 1024)
-                                            }
-                                            ++$i
-                                        }
-                                    }
+                                    $disk_device_list
                                 )
                             }
                             cluster_reference = @{
