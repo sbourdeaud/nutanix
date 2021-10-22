@@ -30,7 +30,7 @@ Adds a single 100 GiB disk to VM myvm.
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 22nd 2021
 #>
 
 #region parameters
@@ -679,6 +679,50 @@ function Get-PrismCentralObjectList
         return $myvarResults
     }
 }
+
+#this function is used to get a Prism task status
+function Get-NTNXTask
+{
+<#
+.SYNOPSIS
+Gets status for a given Prism task uuid (replaces NTNX cmdlet)
+.DESCRIPTION
+Gets status for a given Prism task uuid
+#>
+    [CmdletBinding()]
+    [Alias()]
+    [OutputType([int])]
+    Param
+    (
+        # Param1 help description
+        [Parameter(Mandatory=$true,
+                ValueFromPipelineByPropertyName=$true,
+                Position=0)]
+        $TaskId,
+        
+        [parameter(mandatory = $true)]
+        [System.Management.Automation.PSCredential]
+        $credential,
+
+        [parameter(mandatory = $true)]
+        [String]
+        $cluster
+    )
+
+    Begin
+    {
+    }
+    Process
+    {
+        $myvarUrl = "https://"+$cluster+":9440/PrismGateway/services/rest/v2.0/tasks/$($TaskId.task_uuid)"
+        $result = Invoke-PrismAPICall -credential $credential -method "GET" -url $myvarUrl
+    }
+    End
+    {
+        return $result
+    }
+}#end function Get-NTNXTask
+
 #endregion
 
 #region prepwork
@@ -690,6 +734,11 @@ Date       By   Updates (newest updates at the top)
 09/11/2018 sb   Initial release.
 04/06/2020 sb   Do over with sbourdeaud module
 02/06/2021 sb   Replaced username with get-credential
+22/10/2021 sb   Removed dependency on external modules; Added Get-NtnxTask to 
+                funtion library; Replaced Invoke-PrismRESTCall references with 
+                Invoke-PrismAPICall; made hypervisor comparison case 
+                insensitive (thx to Philippe Lima for catching all of those 
+                errors)
 ################################################################################
 '@
     $myvarScriptName = ".\new-AhvVmDisk.ps1"
@@ -741,12 +790,12 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $cluster ..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
         $method = "GET"
-        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+        $cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $cluster" -ForegroundColor Cyan
 
         Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)." -ForegroundColor Green
 
-        if ($cluster_details.hypervisor_types -ne "kKvm")
+        if ($cluster_details.hypervisor_types -ine "kKvm")
         {#this isn't an AHV cluster
             Throw "$(get-date) [ERROR] $cluster is not an AHV cluster!"
         }
@@ -756,7 +805,7 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [INFO] Retrieving VMs from cluster $cluster..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true"
         $method = "GET"
-        $vmList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+        $vmList = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs from $cluster!" -ForegroundColor Cyan
         
         if (!($vmDetails = $vmList.entities | Where-Object {$_.name -eq $vm}))
@@ -786,7 +835,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Retrieving details of disk $diskUuid..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/virtual_disks/$diskUuid"
                 $method = "GET"
-                $diskDetails = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $diskDetails = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of disk $diskUuid!" -ForegroundColor Cyan
 
                 $diskContainerUUid = $diskDetails.storage_container_uuid
@@ -800,7 +849,7 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Retrieving storage containers from Nutanix cluster $cluster ..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/storage_containers/"
             $method = "GET"
-            $storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $storage_containers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers from Nutanix cluster $cluster" -ForegroundColor Cyan
 
             if (!($diskContainerUUid = ($storage_containers.entities | Where-Object {$_.name -eq $container}).storage_container_uuid))
@@ -832,7 +881,7 @@ Date       By   Updates (newest updates at the top)
             }
             $body = (ConvertTo-Json $content -Depth 4)
             if ($debugme) {Write-Host $body -ForegroundColor White}
-            $taskUuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
+            $taskUuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $body
             Write-Host "$(get-date) [SUCCESS] Successfully requested 1 disk of size $size bytes to be added to $vm in container $diskContainerUUid!" -ForegroundColor Cyan
             $qty = $qty - 1
             $taskUuids += $taskUuid
