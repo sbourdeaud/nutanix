@@ -55,7 +55,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 21st 2021
+  Revision: October 25th 2021
 #>
 
 #region parameters
@@ -870,6 +870,8 @@ Date       By   Updates (newest updates at the top)
                 Benjamin Fabian from Unisys for catching this!)
 10/21/2021 sb   Adding -remoteSiteIp parameter for environments where DR network
                 has been segmented.
+10/25/2021 sb   Fixed an issue where maxConcurrentRepl was set to 1 and not 
+                being correctly enforced when running on PowerShell 5.1
 ################################################################################
 '@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
@@ -2013,7 +2015,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
         
     #region planned failover of the protection domain(s)
         if (!$skipfailover -and !$reEnableOnly -and !$unplanned -and !$DisableOnly)
-        {
+        {#we need to failover pds
             #export pd_list to csv here
             $myvar_csv_export = $myvar_ntnx_cluster_name + "_pd_list.csv"
             Write-Host "$(get-date) [INFO] Exporting list of protection domains to process to $($myvar_csv_export) in the current directory..." -ForegroundColor Green
@@ -2030,11 +2032,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/promote?force=true" -f $myvar_remote_site_ip,$myvar_pd.name
                 $method = "POST"
                 try 
-                {
+                {#promote remote pd
                     $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                 }
                 catch
-                {
+                {#could not promote remote pd
                     throw "$(get-date) [ERROR] Could not promote protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                 }
                 Write-Host "$(get-date) [SUCCESS] Successfully promoted protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name)." -ForegroundColor Cyan
@@ -2047,18 +2049,18 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_remote_site_ip
                     $method = "GET"
                     try 
-                    {
+                    {#retrieve remote protection domains
                         $myvar_remote_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                     }
                     catch
-                    {
+                    {#could not retrieve remote protection domains
                         throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
 
                     $myvar_remote_pd_role = ($myvar_remote_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.role
                     if ($myvar_remote_pd_role -ne "Active") 
-                    {
+                    {#remote pd is not active yet
                         Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) does not have active role yet but role $($myvar_remote_pd_role). Waiting 15 seconds..." -ForegroundColor Yellow
                         Start-Sleep 15
                     }
@@ -2073,11 +2075,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/{1}/metro_avail_disable" -f $cluster,$myvar_pd.name
                     $method = "POST"
                     try 
-                    {
+                    {#disable protection domain
                         $myvar_pd_disable = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                     }
                     catch
-                    {
+                    {#could not disable protection domain
                         throw "$(get-date) [ERROR] Could not disable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully disabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name)." -ForegroundColor Cyan
@@ -2108,7 +2110,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     Write-Host "$(get-date) [DATA] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is disabled now." -ForegroundColor White
                 }
                 
-                #control loop here to make sure there aren't too many syncing metro pds already
+                #* make sure there aren't too many syncing metro pds already
                 Do 
                 {#make sure there aren't too many replications running in parallel already otherwise wait
                     #retrieve protection domains
@@ -2116,19 +2118,32 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
                     $method = "GET"
                     try 
-                    {
+                    {#list protection domains
                         $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                     }
                     catch
-                    {
+                    {#could not list protection domains
                         throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
 
-                    $myvar_syncing_pds = ($myvar_pds.entities | Where-Object {$_.metro_avail.status -eq "SYNCHRONIZING"}).count
+                    $myvar_syncing_pd_list = ($myvar_pds.entities | Where-Object {$_.metro_avail.status -ieq "Synchronizing"})
+                    if ($myvar_syncing_pd_list -is [array])
+                    {#we have more than 1 synchronizing pd
+                        $myvar_syncing_pds = $myvar_syncing_pd_list.count
+                    }
+                    elseif ($null -eq $myvar_syncing_pd_list)
+                    {#we hane no syncrhonizing pd
+                        $myvar_syncing_pds = 0
+                    }
+                    else
+                    {#we only have 1 synchronizing pd
+                        $myvar_syncing_pds = 1
+                    }
+                    
                     Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
                     if ($myvar_syncing_pds -ge $maxConcurrentRepl)
-                    {
+                    {#too many syncing pds already
                         Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
                         Start-Sleep 60
                     }
@@ -2141,11 +2156,11 @@ $drs_rule2_name = "VMs_Should_In_GS"
                 $content = @{}
                 $body = (ConvertTo-Json $content)
                 try 
-                {
+                {#re-enable pd on remote
                     $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
                 }
                 catch
-                {
+                {#could not re-enable pd on remote
                     throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                 }
                 Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name). Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
@@ -2161,18 +2176,18 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_remote_site_ip
                     $method = "GET"
                     try 
-                    {
+                    {#list remote protection domains
                         $myvar_remote_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                     }
                     catch
-                    {
+                    {#could not list remote protection domains
                         throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Cyan
 
                     $myvar_remote_pd_status = ($myvar_remote_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
                     if ($myvar_remote_pd_status -ne "Enabled") 
-                    {
+                    {#remote pd is not enabled yet
                         Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_remote_cluster_name) is not enabled yet. Current status is $($myvar_remote_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow
                         Start-Sleep 15
                     }
@@ -2184,7 +2199,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
 
     #region reEnableOnly
         if ($reEnableOnly)
-        {
+        {#we are only re-enabling protection domains
 
             if ($DoNotUseDrs)
             {#we don't want to use DRS, so we'll need to set DRS to manual before we start re-enabling protection domains
@@ -2268,7 +2283,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                         foreach ($myvar_vmhost in $myvar_ntnx_vmhosts) 
                         {#make sure all hosts are part of the same cluster
                             try 
-                            {
+                            {#list cluster for vmhosts
                                 $myvar_vmhost_vsphere_cluster = $myvar_vmhost | Get-Cluster -ErrorAction Stop
                                 $myvar_vmhost_vsphere_cluster_name = $myvar_vmhost_vsphere_cluster.Name
                                 if ($myvar_vmhost_vsphere_cluster_name -ne $myvar_vsphere_cluster_name) 
@@ -2277,7 +2292,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
                                 }
                             }
                             catch 
-                            {
+                            {#could not list cluster for vmhosts
                                 throw "$(get-date) [ERROR] Could not retrieve vSphere cluster for host $($myvar_ntnx_vmhosts[0].Name) : $($_.Exception.Message)"
                             }
                         }
@@ -2310,21 +2325,61 @@ $drs_rule2_name = "VMs_Should_In_GS"
             foreach ($myvar_pd in $pd_list) 
             {#main processing loop
                 if (($myvar_pd.role -eq "Active") -and ($myvar_pd.status -eq "Disabled")) 
-                {
+                {#our pd is active and disabled, so ready to be re-enabled
                     Write-Host ""
                     Write-Host "$(get-date) [STEP] Enabling replication for protection domain $($myvar_pd.name) from $($myvar_ntnx_cluster_name) to $($remote_site_name) ..." -ForegroundColor Magenta
+                    
+                    #* make sure there aren't too many syncing metro pds already
+                    Do 
+                    {#make sure there aren't too many replications running in parallel already otherwise wait
+                        #retrieve protection domains
+                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
+                        $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
+                        $method = "GET"
+                        try 
+                        {#list protection domains
+                            $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        }
+                        catch
+                        {#could not list protection domains
+                            throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
+                        }
+                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
+
+                        $myvar_syncing_pd_list = ($myvar_pds.entities | Where-Object {$_.metro_avail.status -ieq "Synchronizing"})
+                        if ($myvar_syncing_pd_list -is [array])
+                        {#we have more than 1 synchronizing pd
+                            $myvar_syncing_pds = $myvar_syncing_pd_list.count
+                        }
+                        elseif ($null -eq $myvar_syncing_pd_list)
+                        {#we hane no syncrhonizing pd
+                            $myvar_syncing_pds = 0
+                        }
+                        else
+                        {#we only have 1 synchronizing pd
+                            $myvar_syncing_pds = 1
+                        }
+                        
+                        Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
+                        if ($myvar_syncing_pds -ge $maxConcurrentRepl)
+                        {#too many syncing pds already
+                            Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
+                            Start-Sleep 60
+                        }
+                    } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
+
                     #* enable specified protection domains on cluster
-                    Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd.name) on $($myvar_ntnx_remote_cluster_name) ..." -ForegroundColor Green
+                    Write-Host "$(get-date) [INFO] Re-enabling protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/api/nutanix/v2.0/protection_domains/{1}/metro_avail_enable?re_enable=true" -f $cluster,$myvar_pd.name
                     $method = "POST"
                     $content = @{}
                     $body = (ConvertTo-Json $content)
                     try 
-                    {
+                    {#re-enable pd
                         $myvar_pd_activate = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
                     }
                     catch
-                    {
+                    {#could not re-enable pd
                         throw "$(get-date) [ERROR] Could not re-enable protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
                     $myvar_pd_info = [ordered]@{
@@ -2338,39 +2393,15 @@ $drs_rule2_name = "VMs_Should_In_GS"
                     $myvar_processed_pd_list.Add((New-Object PSObject -Property $myvar_pd_info)) | Out-Null
                     Write-Host "$(get-date) [SUCCESS] Successfully re-enabled protection domain $($myvar_pd.name) on $($myvar_ntnx_cluster_name).  Waiting for $($reEnableDelay) seconds before processing the next one..." -ForegroundColor Cyan
                     Start-Sleep $reEnableDelay
-
-                    Do 
-                    {#make sure there aren't too many replications running in parallel already otherwise wait
-                        #retrieve protection domains
-                        Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
-                        $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
-                        $method = "GET"
-                        try 
-                        {
-                            $myvar_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                        }
-                        catch
-                        {
-                            throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
-                        }
-                        Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
-
-                        $myvar_syncing_pds = ($myvar_pds.entities | Where-Object {$_.metro_avail.status -eq "SYNCHRONIZING"}).count
-                        Write-Host "$(get-date) [INFO] There are currently $($myvar_syncing_pds) metro protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name) and the maximum number of concurrent synchronizations is $($maxConcurrentRepl)..." -ForegroundColor Green
-                        if ($myvar_syncing_pds -ge $maxConcurrentRepl)
-                        {
-                            Write-Host "$(get-date) [WARNING] There are too many protection domains with status 'SYNCHRONIZING' on Nutanix cluster $($myvar_ntnx_cluster_name). Waiting for 60 seconds until next query..." -ForegroundColor Green
-                            Start-Sleep 60
-                        }
-                    } While ($myvar_syncing_pds -ge $maxConcurrentRepl)
                 }
                 else 
                 {#protection domains is not Disabled, so it may have been already re-enabled or it is decoupled
                     if ($myvar_pd.role -ne "Active")
-                    {
+                    {#pd is not active
                         Write-Host "$(get-date) [INFO] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not active. Skipping." -ForegroundColor Yellow
                     }
-                    else {
+                    else 
+                    {#pd is active but not disabled
                         Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not in disabled status so we will NOT try to re-enable it. Current status is $($myvar_pd.status)." -ForegroundColor Yellow
                     }
                 }
@@ -2379,26 +2410,26 @@ $drs_rule2_name = "VMs_Should_In_GS"
             foreach ($myvar_pd in $myvar_processed_pd_list)
             {#checking for enablement status outside of main processing loop to speed up processing
                 Do 
-                {
+                {#check pd status is enabled in sync
                     Write-Host "$(get-date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) ..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
                     $method = "GET"
                     try 
-                    {
+                    {#list pds
                         $myvar_cluster_pds = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
                     }
                     catch
-                    {
+                    {#could not list pds
                         throw "$(get-date) [ERROR] Could not retrieve protection domains from Nutanix cluster $($myvar_ntnx_cluster_name) : $($_.Exception.Message)"
                     }
                     Write-Host "$(get-date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Cyan
 
                     $myvar_cluster_pd_status = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).metro_avail.status
                     if ($myvar_cluster_pd_status -ne "Enabled") 
-                    {
+                    {#pd is not enabled
                         $myvar_cluster_pd_ongoing_replication = ($myvar_cluster_pds.entities | Where-Object {$_.name -eq $myvar_pd.name}).ongoing_replication_count
                         if ($myvar_cluster_pd_ongoing_replication -eq 0)
-                        {
+                        {#there are no replications on-going and pd is still disabled
                             throw "$(get-date) [ERROR] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is still not enabled and there are currently $($myvar_cluster_pd_ongoing_replication) ongoing replications, so we have to assume replication failed! Exiting!"
                         }
                         Write-Host "$(get-date) [WARNING] Protection domain $($myvar_pd.name) on cluster $($myvar_ntnx_cluster_name) is not enabled yet. Current status is $($myvar_cluster_pd_status). Waiting 15 seconds..." -ForegroundColor Yellow

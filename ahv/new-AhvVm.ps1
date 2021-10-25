@@ -51,6 +51,7 @@ Connect to a Nutanix Prism Central VM of your choice and create all the VMs defi
 #>
 
 #todo: add ability to specify image to mount on cdrom
+#todo: add check on specified image type (if of type iso, error out)
 
 #region parameters
     Param
