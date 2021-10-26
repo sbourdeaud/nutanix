@@ -36,8 +36,8 @@
 .PARAMETER ostype
   Specify either linux or windows (required with -cust)
 .PARAMETER csv
-  Specifies a csv file containing a list of vms to create. It must contain the following columns (fields marked with * must have a value defined): cluster*,vm*,cpu*,ram*,image,disk,net*,cust,ostype
-  Note that you must specify a value for disk (which can be itself a comma separated list) if you do not specify an image, and that you must specify an ostype if you specify cust.
+  Specifies a csv file containing a list of vms to create. It must contain the following columns (fields marked with * must have a value defined): cluster*,vm*,cpu*,ram*,image,disk,net*,cust,ostype,storage_containers,mount_iso
+  Note that you must specify a value for disk (which can be itself a comma separated list) if you do not specify an image, and that you must specify an ostype if you specify cust.  You can specify where each disk will be created with storage_containers, and if you wish to mount an iso image in the cdrom drive, you can specifiy the iso image name with mount_iso.
 .EXAMPLE
 .\new-AhvVm.ps1 -prismcentral mypc.local -cluster ntnxc1.local -vm myvmhostname -cpu 2 -ram 8 -image myahvimagelibraryitem -disk 50 -net vlan-99 -cust unattend.xml -ostype windows
 Connect to a Nutanix Prism Central VM of your choice and create the specified VM.
@@ -47,7 +47,7 @@ Connect to a Nutanix Prism Central VM of your choice and create all the VMs defi
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 19th 2021
+  Revision: October 26th 2021
 #>
 
 #todo: add ability to specify image to mount on cdrom
@@ -719,6 +719,7 @@ Date       By   Updates (newest updates at the top)
 10/19/2021 sb   Added the qty parameter and made image optional.
                 Removed dependency on external module sbourdeaud.
                 Added csv parameter.
+10/26/2021 sb   Added csv with storage_containers and mount_iso.
 ################################################################################
 '@
     $myvarScriptName = ".\new-AhvVm.ps1"
@@ -1212,7 +1213,7 @@ Date       By   Updates (newest updates at the top)
                                 "uuid" = $entity.metadata.uuid
                             }
                             $myvarNetResults.Add((New-Object PSObject -Property $myvarNetInfo)) | Out-Null
-                            Write-Host "$(Get-Date) [SUCCESS] Network $($network) on cluster $($myvar_vm_spec.cluster) has uuid $($entity.metadata.uuid)" -ForegroundColor Cyan
+                            Write-Host "$(Get-Date) [DATA] Network $($network) on cluster $($myvar_vm_spec.cluster) has uuid $($entity.metadata.uuid)" -ForegroundColor White
                         }
                     }
                 }
@@ -1230,17 +1231,32 @@ Date       By   Updates (newest updates at the top)
         
         #* assign image uuid
         if ($myvar_vm_spec.image)
-        {
+        {#a disk image was specified
             $image_uuid = ($myvar_image_list | Where-Object {$_.spec.name -eq $myvar_vm_spec.image}).metadata.uuid
             if (!$image_uuid) 
-            {
+            {#we couldn't find the specified disk image
                 Throw "$(Get-Date) [ERROR] There is no image named $($myvar_vm_spec.image) on Prism Central $($prismcentral)"
             }
-            Write-Host "$(Get-Date) [SUCCESS] Image $($myvar_vm_spec.image) has uuid $($image_uuid)" -ForegroundColor Cyan
+            Write-Host "$(Get-Date) [DATA] Image $($myvar_vm_spec.image) has uuid $($image_uuid)" -ForegroundColor White
         }
         elseif (!$myvar_vm_spec.disk)
         {#no specified image or disk configuration
             throw "$(Get-Date) [ERROR] There is no specified image or disk configuration for vm $($myvar_vm_spec.vm)"
+        }
+
+        #* assign iso image uuid
+        if ($myvar_vm_spec.mount_iso)
+        {#we want to mount an iso image
+            $iso_image_uuid = ($myvar_image_list | Where-Object {$_.spec.name -eq $myvar_vm_spec.mount_iso}).metadata.uuid
+            if (!$iso_image_uuid) 
+            {#we couldn't find the specified iso image
+                Throw "$(Get-Date) [ERROR] There is no iso image named $($myvar_vm_spec.mount_iso) on Prism Central $($prismcentral)"
+            }
+            Write-Host "$(Get-Date) [DATA] ISO image $($myvar_vm_spec.mount_iso) has uuid $($iso_image_uuid)" -ForegroundColor White
+        }
+        else 
+        {#no iso image was specified
+            $iso_image_uuid = $null
         }
 
         Do 
@@ -1252,6 +1268,37 @@ Date       By   Updates (newest updates at the top)
 
                 #* this is used to capture the content of the payload
                 
+                #? determining the correct CDROM configuration
+                if ($iso_image_uuid)
+                {#we need to include an iso image to mount on the cdrom
+                    $myvar_cdrom_device = @{
+                        data_source_reference = @{
+                            kind = "image"
+                            uuid = $iso_image_uuid
+                        }
+                        device_properties = @{
+                            disk_address = @{
+                                device_index = 1
+                                adapter_type = "IDE"
+                            }
+                            device_type = "CDROM"
+                        }
+                    }
+                }
+                else 
+                {#cdrom device does not include mounted iso image
+                    $myvar_cdrom_device = @{
+                        device_properties = @{
+                            disk_address = @{
+                                device_index = 1
+                                adapter_type = "IDE"
+                            }
+                            device_type = "CDROM"
+                        }
+                    }
+                }
+
+                #? determining the correct disk device list
                 $i = 0 #used for device index
                 [System.Collections.ArrayList]$disk_device_list = New-Object System.Collections.ArrayList($null)
                 #create here the content for disk device list ($disk_device_list)
@@ -1385,6 +1432,7 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
 
+                #? appending numerical index to vm name if there is more than 1
                 if ($user_specified_qty -gt 1)
                 {#there is more than 1 vm to create, so we'll add a number to the vm name
                     $vm_name = $myvar_vm_spec.vm + "_$($qty)"
@@ -1394,6 +1442,7 @@ Date       By   Updates (newest updates at the top)
                     $vm_name = $myvar_vm_spec.vm
                 }
 
+                #? create the payload which varies between specified guest OS with customization (linux, windows or none)
                 if ($myvar_vm_spec.cust -and ($myvar_vm_spec.ostype -eq "linux")) 
                 {
                     $content = @{
@@ -1432,15 +1481,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 disk_list = @(
-                                    @{
-                                        device_properties = @{
-                                            disk_address = @{
-                                                device_index = 1
-                                                adapter_type = "IDE"
-                                            }
-                                            device_type = "CDROM"
-                                        }
-                                    }
+                                    $myvar_cdrom_device
                                     $disk_device_list
                                 )
                                 guest_customization = @{
@@ -1502,15 +1543,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 disk_list = @(
-                                    @{
-                                        device_properties = @{
-                                            disk_address = @{
-                                                device_index = 1
-                                                adapter_type = "IDE"
-                                            }
-                                            device_type = "CDROM"
-                                        }
-                                    }
+                                    $myvar_cdrom_device
                                     $disk_device_list
                                 )
                                 guest_customization = @{
@@ -1572,15 +1605,7 @@ Date       By   Updates (newest updates at the top)
                                     }
                                 }
                                 disk_list = @(
-                                    @{
-                                        device_properties = @{
-                                            disk_address = @{
-                                                device_index = 1
-                                                adapter_type = "IDE"
-                                            }
-                                            device_type = "CDROM"
-                                        }
-                                    }
+                                    $myvar_cdrom_device
                                     $disk_device_list
                                 )
                             }
