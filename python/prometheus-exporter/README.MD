@@ -16,4 +16,4 @@ From the **build** directory, run:
 
  You can use `docker logs nutanix-exporter-1` to troubleshoot issues in the container.
 
- For now, only *clusters* stats and *usage_stats* are being published.
+ For now, only cluster *stats* and *usage_stats* are being published.
