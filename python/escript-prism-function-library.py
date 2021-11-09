@@ -369,8 +369,8 @@ def prism_get_cluster(api_server,username,secret,cluster_name,cluster_uuid=None,
         cluster_name: Name of the cluster.
         
     Returns:
-        A string containing the UUID of the VM (vm_uuid) and the json content
-        of the VM details (vm_details)
+        A string containing the UUID of the cluster (cluster_uuid) and the json content
+        of the cluster details (cluster_details)
     """
     cluster_details = {}
 

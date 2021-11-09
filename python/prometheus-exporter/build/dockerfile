@@ -1,0 +1,17 @@
+FROM python:3.10.0-alpine3.14
+
+WORKDIR /~
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD [ "python", "./nutanix-prometheus-exporter.py" ]
+
+ENV PRISM='127.0.0.1'
+ENV PRISM_USERNAME='admin'
+ENV PRISM_SECRET='secret'
+ENV APP_PORT='9440'
+ENV EXPORTER_PORT='8000'
+ENV PRISM_SECURE='False'
