@@ -18,6 +18,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         try:
 
             if method == 'GET':
+                #print("secure is {}".format(secure))
                 response = requests.get(
                     url,
                     headers=headers,
@@ -159,7 +160,7 @@ def prism_get_cluster(api_server,username,secret,secure=False):
     #endregion
     
     print("Making a {} API call to {} with secure set to {}".format(method, url, secure))
-    resp = process_request(url,method,username,secret,headers,secure)
+    resp = process_request(url,method,username,secret,headers,secure=secure)
 
     # deal with the result/response
     if resp.ok:
@@ -188,24 +189,25 @@ class NutanixMetrics:
     application metrics into Prometheus metrics.
     """
     
-    def __init__(self, app_port=9440, polling_interval_seconds=5):
+    def __init__(self, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False):
         self.app_port = app_port
         self.polling_interval_seconds = polling_interval_seconds
-
-        # Prometheus metrics to collect
-        self.hypervisor_avg_io_latency_usecs = Gauge("hypervisor_avg_io_latency_usecs", "hypervisor_avg_io_latency_usecs")
-        self.num_read_iops = Gauge("num_read_iops", "num_read_iops")
-        self.hypervisor_write_io_bandwidth_kBps = Gauge("hypervisor_write_io_bandwidth_kBps", "hypervisor_write_io_bandwidth_kBps")
-        self.controller_num_read_iops = Gauge("controller_num_read_iops", "controller_num_read_iops")
-        
-        prism = os.getenv('PRISM')
-        user = os.getenv('PRISM_USERNAME')
-        pwd = os.getenv('PRISM_SECRET')
-        prism_secure = os.getenv("PRISM_SECURE", "False")
+        self.prism = prism
+        self.user = user
+        self.pwd = pwd
+        self.prism_secure = prism_secure
         
         cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=prism_secure)
+        
+        # Prometheus metrics to collect
         for key,value in cluster_details['stats'].items():
-            setattr(self, key, Gauge(key, key))
+            key_string = key.replace(".","_")
+            key_string = key_string.replace("-","_")
+            setattr(self, key_string, Gauge(key_string, key_string))
+        for key,value in cluster_details['usage_stats'].items():
+            key_string = key.replace(".","_")
+            key_string = key_string.replace("-","_")
+            setattr(self, key_string, Gauge(key_string, key_string))
 
     def run_metrics_loop(self):
         """Metrics fetching loop"""
@@ -218,19 +220,19 @@ class NutanixMetrics:
         """
         Get metrics from application and refresh Prometheus metrics with
         new values.
-        """        
-        prism = os.getenv('PRISM')
-        user = os.getenv('PRISM_USERNAME')
-        pwd = os.getenv('PRISM_SECRET')
-        prism_secure = os.getenv("PRISM_SECURE", "False")
+        """
         
-        cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=prism_secure)
+        cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
         
         for key, value in cluster_details['stats'].items():
-            #self.key.set(value)
-            #setattr(self, key, value)
-            self.__dict__[key].set(value)
-        #self.controller_num_read_iops.set(cluster_details['stats']['controller_num_read_iops'])
+            key_string = key.replace(".","_")
+            key_string = key_string.replace("-","_")
+            self.__dict__[key_string].set(value)
+        for key, value in cluster_details['usage_stats'].items():
+            key_string = key.replace(".","_")
+            key_string = key_string.replace("-","_")
+            self.__dict__[key_string].set(value)
+        
 
 def main():
     """Main entry point"""
@@ -241,7 +243,11 @@ def main():
 
     nutanix_metrics = NutanixMetrics(
         app_port=app_port,
-        polling_interval_seconds=polling_interval_seconds
+        polling_interval_seconds=polling_interval_seconds,
+        prism=os.getenv('PRISM'),
+        user = os.getenv('PRISM_USERNAME'),
+        pwd = os.getenv('PRISM_SECRET'),
+        prism_secure = os.getenv("PRISM_SECURE", "False")
     )
     
     start_http_server(exporter_port)
