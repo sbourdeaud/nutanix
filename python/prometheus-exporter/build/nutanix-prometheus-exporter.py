@@ -197,7 +197,7 @@ class NutanixMetrics:
         self.pwd = pwd
         self.prism_secure = prism_secure
         
-        cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=prism_secure)
+        cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
         
         # Prometheus metrics to collect
         for key,value in cluster_details['stats'].items():
@@ -247,7 +247,7 @@ def main():
         prism=os.getenv('PRISM'),
         user = os.getenv('PRISM_USERNAME'),
         pwd = os.getenv('PRISM_SECRET'),
-        prism_secure = os.getenv("PRISM_SECURE", "False")
+        prism_secure=bool(os.getenv("PRISM_SECURE", False))
     )
     
     start_http_server(exporter_port)
