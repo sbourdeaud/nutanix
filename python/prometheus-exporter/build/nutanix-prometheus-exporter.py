@@ -83,7 +83,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
                 exit(1)
             else:
                 print('Error: {c}, Message: {m}'.format(c = type(error_code).__name__, m = str(error_code)))
-                sleep(sleep_between_retries)
+                time.sleep(sleep_between_retries)
                 retries -= 1
                 print ("retries left: {}".format(retries))
                 continue
@@ -188,17 +188,24 @@ class NutanixMetrics:
     application metrics into Prometheus metrics.
     """
     
-    def __init__(self, app_port=80, polling_interval_seconds=5):
+    def __init__(self, app_port=9440, polling_interval_seconds=5):
         self.app_port = app_port
         self.polling_interval_seconds = polling_interval_seconds
 
         # Prometheus metrics to collect
-        """ self.current_requests = Gauge("app_requests_current", "Current requests")
-        self.pending_requests = Gauge("app_requests_pending", "Pending requests")
-        self.total_uptime = Gauge("app_uptime", "Uptime")
-        self.health = Enum("app_health", "Health", states=["healthy", "unhealthy"]) """
-        
+        self.hypervisor_avg_io_latency_usecs = Gauge("hypervisor_avg_io_latency_usecs", "hypervisor_avg_io_latency_usecs")
+        self.num_read_iops = Gauge("num_read_iops", "num_read_iops")
+        self.hypervisor_write_io_bandwidth_kBps = Gauge("hypervisor_write_io_bandwidth_kBps", "hypervisor_write_io_bandwidth_kBps")
         self.controller_num_read_iops = Gauge("controller_num_read_iops", "controller_num_read_iops")
+        
+        prism = os.getenv('PRISM')
+        user = os.getenv('PRISM_USERNAME')
+        pwd = os.getenv('PRISM_SECRET')
+        prism_secure = os.getenv("PRISM_SECURE", "False")
+        
+        cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=prism_secure)
+        for key,value in cluster_details['stats'].items():
+            setattr(self, key, Gauge(key, key))
 
     def run_metrics_loop(self):
         """Metrics fetching loop"""
@@ -215,13 +222,15 @@ class NutanixMetrics:
         prism = os.getenv('PRISM')
         user = os.getenv('PRISM_USERNAME')
         pwd = os.getenv('PRISM_SECRET')
-        prism_secure = int(os.getenv("PRISM_SECURE", "False"))
+        prism_secure = os.getenv("PRISM_SECURE", "False")
         
         cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=prism_secure)
         
-        """ for key, value in cluster_details['stats'].items():
-            self.key.set(value) """
-        self.controller_num_read_iops.set(cluster_details['stats']['controller_num_read_iops'])
+        for key, value in cluster_details['stats'].items():
+            #self.key.set(value)
+            #setattr(self, key, value)
+            self.__dict__[key].set(value)
+        #self.controller_num_read_iops.set(cluster_details['stats']['controller_num_read_iops'])
 
 def main():
     """Main entry point"""

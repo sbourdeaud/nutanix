@@ -3,3 +3,4 @@ set-EsxPortGroup.ps1
 .vscode
 *.html
 *.log
+.secrets
