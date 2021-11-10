@@ -201,11 +201,15 @@ class NutanixMetrics:
         
         # Prometheus metrics to collect
         for key,value in cluster_details['stats'].items():
-            key_string = key.replace(".","_")
+            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+            key_string = f"nutanix_clusters_stats_{key}"
+            key_string = key_string.replace(".","_")
             key_string = key_string.replace("-","_")
             setattr(self, key_string, Gauge(key_string, key_string))
         for key,value in cluster_details['usage_stats'].items():
-            key_string = key.replace(".","_")
+            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+            key_string = f"nutanix_clusters_usage_stats_{key}"
+            key_string = key_string.replace(".","_")
             key_string = key_string.replace("-","_")
             setattr(self, key_string, Gauge(key_string, key_string))
 
@@ -225,11 +229,15 @@ class NutanixMetrics:
         cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
         
         for key, value in cluster_details['stats'].items():
-            key_string = key.replace(".","_")
+            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+            key_string = f"nutanix_clusters_stats_{key}"
+            key_string = key_string.replace(".","_")
             key_string = key_string.replace("-","_")
             self.__dict__[key_string].set(value)
         for key, value in cluster_details['usage_stats'].items():
-            key_string = key.replace(".","_")
+            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+            key_string = f"nutanix_clusters_usage_stats_{key}"
+            key_string = key_string.replace(".","_")
             key_string = key_string.replace("-","_")
             self.__dict__[key_string].set(value)
         
