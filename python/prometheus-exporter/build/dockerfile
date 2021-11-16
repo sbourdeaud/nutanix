@@ -9,10 +9,18 @@ COPY . .
 
 CMD [ "python", "./nutanix-prometheus-exporter.py" ]
 
+#used to specify Prism Element IP address or FQDN (assuming FADN can be resolved inside the container)
 ENV PRISM='127.0.0.1'
+#used to specify the username to access Prism (viewer is the least privilege required) 
 ENV PRISM_USERNAME='admin'
+#used to specify the password for username
 ENV PRISM_SECRET='secret'
+#used to specify the port used by Prism Element API
 ENV APP_PORT='9440'
+#used to specify the container port where the node exporter will publish metrics
 ENV EXPORTER_PORT='8000'
+#leave this value to null if you don't want to verify SSL certificates. Set it to anything but null to check SSL certificates.
 ENV PRISM_SECURE=''
+#use a comma separated string with virtual machine names for which you want to collect metrics. If this is null, then no VM metrics will be collected.
+#it is strongly recommended not to get crazy with vm list as this would considerably lengthen the metric collection time.
 ENV VM_LIST=''
