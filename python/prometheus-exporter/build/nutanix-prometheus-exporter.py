@@ -251,7 +251,7 @@ def prism_get_storage_containers(api_server,username,secret,secure=False):
     'Accept': 'application/json'
     }
     api_server_port = int(os.getenv("APP_PORT", "9440"))
-    api_server_endpoint = f"/PrismGateway/services/rest/v1/storage_containers"
+    api_server_endpoint = f"/PrismGateway/services/rest/v2.0/storage_containers/"
     url = "https://{}:{}{}".format(
         api_server,
         api_server_port,
@@ -306,34 +306,50 @@ class NutanixMetrics:
             
             for key,value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"nutanix_clusters_stats_{key}"
+                key_string = f"NutanixClusters_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
             for key,value in cluster_details['usage_stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"nutanix_clusters_usage_stats_{key}"
+                key_string = f"NutanixClusters_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
 
         if self.vm_list:
-            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")        
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")
             vm_list_array = self.vm_list.split(',')
             vm_details = prism_get_vm(vm_name=vm_list_array[0],api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
             for key,value in vm_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"nutanix_vms_stats_{key}"
+                key_string = f"NutanixVms_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
             for key,value in vm_details['usageStats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"nutanix_vms_usage_stats_{key}"
+                key_string = f"NutanixVms_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
 
+        if self.storage_containers_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for storage containers...{bcolors.RESET}")
+            storage_containers_details = prism_get_storage_containers(api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
+            for key,value in storage_containers_details[0]['stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"NutanixStorageContainers_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                setattr(self, key_string, Gauge(key_string, key_string, ['storage_container']))
+            for key,value in storage_containers_details[0]['usage_stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"NutanixStorageContainers_usage_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                setattr(self, key_string, Gauge(key_string, key_string, ['storage_container']))
+            
     def run_metrics_loop(self):
         """Metrics fetching loop"""
         print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting metrics loop {bcolors.RESET}")
@@ -354,13 +370,13 @@ class NutanixMetrics:
         
             for key, value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"nutanix_clusters_stats_{key}"
+                key_string = f"NutanixClusters_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
             for key, value in cluster_details['usage_stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"nutanix_clusters_usage_stats_{key}"
+                key_string = f"NutanixClusters_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
@@ -372,16 +388,33 @@ class NutanixMetrics:
                 vm_details = prism_get_vm(vm_name=vm,api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
                 for key, value in vm_details['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"nutanix_vms_stats_{key}"
+                    key_string = f"NutanixVms_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(vm=vm_details['vmName']).set(value)
                 for key, value in vm_details['usageStats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"nutanix_vms_usage_stats_{key}"
+                    key_string = f"NutanixVms_usage_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(vm=vm_details['vmName']).set(value)
+                    
+        if self.storage_containers_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting storage containers metrics{bcolors.RESET}")
+            storage_containers_details = prism_get_storage_containers(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+            for container in storage_containers_details:
+                for key, value in container['stats'].items():
+                    #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                    key_string = f"NutanixStorageContainers_stats_{key}"
+                    key_string = key_string.replace(".","_")
+                    key_string = key_string.replace("-","_")
+                    self.__dict__[key_string].labels(storage_container=container['name']).set(value)
+                for key, value in container['usage_stats'].items():
+                    #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                    key_string = f"NutanixStorageContainers_usage_stats_{key}"
+                    key_string = key_string.replace(".","_")
+                    key_string = key_string.replace("-","_")
+                    self.__dict__[key_string].labels(storage_container=container['name']).set(value)
 
 def main():
     """Main entry point"""
