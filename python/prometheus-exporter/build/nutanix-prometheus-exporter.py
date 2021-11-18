@@ -1,5 +1,12 @@
 import os,requests,json,time
 from prometheus_client import start_http_server, Gauge, Enum
+from datetime import datetime
+
+class bcolors:
+    OK = '\033[92m' #GREEN
+    WARNING = '\033[93m' #YELLOW
+    FAIL = '\033[91m' #RED
+    RESET = '\033[0m' #RESET COLOR   
 
 def process_request(url, method, user, password, headers, payload=None, secure=False):
     """
@@ -64,68 +71,60 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
                 )
 
         except requests.exceptions.HTTPError as error_code:
-            print ("Http Error!")
-            print("status code: {}".format(response.status_code))
-            print("reason: {}".format(response.reason))
-            print("text: {}".format(response.text))
-            print("elapsed: {}".format(response.elapsed))
-            print("headers: {}".format(response.headers))
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Http Error! Status code: {response.status_code}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {response.reason}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {response.text}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {response.elapsed}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {response.headers}{bcolors.RESET}")
             if payload is not None:
-                print("payload: {}".format(payload))
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
             print(json.dumps(
                 json.loads(response.content),
                 indent=4
             ))
             exit(response.status_code)
         except requests.exceptions.ConnectionError as error_code:
-            print ("Connection Error!")
             if retries == 1:
-                print('Error: {c}, Message: {m}'.format(c = type(error_code).__name__, m = str(error_code)))
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {type(error_code).__name__} {str(error_code)} {bcolors.RESET}")
                 exit(1)
             else:
-                print('Error: {c}, Message: {m}'.format(c = type(error_code).__name__, m = str(error_code)))
+                print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {type(error_code).__name__} {str(error_code)} {bcolors.RESET}")
                 time.sleep(sleep_between_retries)
                 retries -= 1
-                print ("retries left: {}".format(retries))
+                print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Retries left: {retries}{bcolors.RESET}")
                 continue
-            print('Error: {c}, Message: {m}'.format(c = type(error_code).__name__, m = str(error_code)))
-            exit(1)
         except requests.exceptions.Timeout as error_code:
-            print ("Timeout Error!")
             if retries == 1:
-                print('Error: {c}, Message: {m}'.format(c = type(error_code).__name__, m = str(error_code)))
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {type(error_code).__name__} {str(error_code)} {bcolors.RESET}")
                 exit(1)
-            print('Error! Code: {c}, Message: {m}'.format(c = type(error_code).__name__, m = str(error_code)))
-            sleep(sleep_between_retries)
-            retries -= 1
-            print ("retries left: {}".format(retries))
-            continue
+            else:
+                print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {type(error_code).__name__} {str(error_code)} {bcolors.RESET}")
+                time.sleep(sleep_between_retries)
+                retries -= 1
+                print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Retries left: {retries}{bcolors.RESET}")
+                continue
         except requests.exceptions.RequestException as error_code:
-            print ("Error!")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {response.status_code} {bcolors.RESET}")
             exit(response.status_code)
         break
 
     if response.ok:
         return response
     if response.status_code == 401:
-        print("status code: {0}".format(response.status_code))
-        print("reason: {0}".format(response.reason))
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {response.status_code} {response.reason} {bcolors.RESET}")
         exit(response.status_code)
     elif response.status_code == 500:
-        print("status code: {0}".format(response.status_code))
-        print("reason: {0}".format(response.reason))
-        print("text: {0}".format(response.text))
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {response.status_code} {response.reason} {response.text} {bcolors.RESET}")
         exit(response.status_code)
     else:
-        print("Request failed!")
-        print("status code: {0}".format(response.status_code))
-        print("reason: {0}".format(response.reason))
-        print("text: {0}".format(response.text))
-        print("raise_for_status: {0}".format(response.raise_for_status()))
-        print("elapsed: {0}".format(response.elapsed))
-        print("headers: {0}".format(response.headers))
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] Request failed! Status code: {response.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] reason: {response.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] text: {response.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] raise_for_status: {response.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] elapsed: {response.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] headers: {response.headers}{bcolors.RESET}")
         if payload is not None:
-            print("payload: {0}".format(payload))
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
         print(json.dumps(
             json.loads(response.content),
             indent=4
@@ -158,8 +157,8 @@ def prism_get_cluster(api_server,username,secret,secure=False):
     )
     method = "GET"
     #endregion
-    
-    print("Making a {} API call to {} with secure set to {}".format(method, url, secure))
+
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure)
 
     # deal with the result/response
@@ -169,16 +168,16 @@ def prism_get_cluster(api_server,username,secret,secure=False):
         cluster_details = json_resp['entities'][0]
         return cluster_uuid, cluster_details
     else:
-        print("Request failed!")
-        print("status code: {}".format(resp.status_code))
-        print("reason: {}".format(resp.reason))
-        print("text: {}".format(resp.text))
-        print("raise_for_status: {}".format(resp.raise_for_status()))
-        print("elapsed: {}".format(resp.elapsed))
-        print("headers: {}".format(resp.headers))
-        print("payload: {}".format(payload))
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
         print(json.dumps(
-            json.loads(resp.content),
+            json.loads(response.content),
             indent=4
         ))
         raise
@@ -211,7 +210,7 @@ def prism_get_vm(vm_name,api_server,username,secret,secure=False):
     method = "GET"
     #endregion
     
-    print("Making a {} API call to {} with secure set to {}".format(method, url, secure))
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure)
 
     # deal with the result/response
@@ -220,16 +219,66 @@ def prism_get_vm(vm_name,api_server,username,secret,secure=False):
         vm_details = json_resp['entities']
         return vm_details[0]
     else:
-        print("Request failed!")
-        print("status code: {}".format(resp.status_code))
-        print("reason: {}".format(resp.reason))
-        print("text: {}".format(resp.text))
-        print("raise_for_status: {}".format(resp.raise_for_status()))
-        print("elapsed: {}".format(resp.elapsed))
-        print("headers: {}".format(resp.headers))
-        print("payload: {}".format(payload))
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
         print(json.dumps(
-            json.loads(resp.content),
+            json.loads(response.content),
+            indent=4
+        ))
+        raise
+
+def prism_get_storage_containers(api_server,username,secret,secure=False):
+    """Retrieves data from the Prism Element v2 REST API endpoint /storage_containers.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        
+    Returns:
+        Storage containers details as storage_containers_details
+    """
+    
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = int(os.getenv("APP_PORT", "9440"))
+    api_server_endpoint = f"/PrismGateway/services/rest/v1/storage_containers"
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    #endregion
+    
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
+    resp = process_request(url,method,username,secret,headers,secure=secure)
+
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        storage_containers_details = json_resp['entities']
+        return storage_containers_details
+    else:
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
+        print(json.dumps(
+            json.loads(response.content),
             indent=4
         ))
         raise
@@ -239,8 +288,7 @@ class NutanixMetrics:
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
     """
-    
-    def __init__(self, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list=''):
+    def __init__(self, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True):
         self.app_port = app_port
         self.polling_interval_seconds = polling_interval_seconds
         self.prism = prism
@@ -248,10 +296,29 @@ class NutanixMetrics:
         self.pwd = pwd
         self.prism_secure = prism_secure
         self.vm_list = vm_list
+        self.cluster_metrics = cluster_metrics
+        self.storage_containers_metrics = storage_containers_metrics
         
-        cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
-        
+        if self.cluster_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for clusters...{bcolors.RESET}")
+            
+            cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
+            
+            for key,value in cluster_details['stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"nutanix_clusters_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
+            for key,value in cluster_details['usage_stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"nutanix_clusters_usage_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
+
         if self.vm_list:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")        
             vm_list_array = self.vm_list.split(',')
             vm_details = prism_get_vm(vm_name=vm_list_array[0],api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
             for key,value in vm_details['stats'].items():
@@ -266,26 +333,13 @@ class NutanixMetrics:
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
-        
-        # Prometheus metrics to collect
-        for key,value in cluster_details['stats'].items():
-            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-            key_string = f"nutanix_clusters_stats_{key}"
-            key_string = key_string.replace(".","_")
-            key_string = key_string.replace("-","_")
-            setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
-        for key,value in cluster_details['usage_stats'].items():
-            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-            key_string = f"nutanix_clusters_usage_stats_{key}"
-            key_string = key_string.replace(".","_")
-            key_string = key_string.replace("-","_")
-            setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
 
     def run_metrics_loop(self):
         """Metrics fetching loop"""
-
+        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting metrics loop {bcolors.RESET}")
         while True:
             self.fetch()
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Waiting for {self.polling_interval_seconds} seconds...{bcolors.RESET}")
             time.sleep(self.polling_interval_seconds)
 
     def fetch(self):
@@ -294,24 +348,27 @@ class NutanixMetrics:
         new values.
         """
         
-        cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+        if self.cluster_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting clusters metrics{bcolors.RESET}")
+            cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
         
-        for key, value in cluster_details['stats'].items():
-            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-            key_string = f"nutanix_clusters_stats_{key}"
-            key_string = key_string.replace(".","_")
-            key_string = key_string.replace("-","_")
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
-        for key, value in cluster_details['usage_stats'].items():
-            #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-            key_string = f"nutanix_clusters_usage_stats_{key}"
-            key_string = key_string.replace(".","_")
-            key_string = key_string.replace("-","_")
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
+            for key, value in cluster_details['stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"nutanix_clusters_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
+            for key, value in cluster_details['usage_stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"nutanix_clusters_usage_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
         
         if self.vm_list:
             vm_list_array = self.vm_list.split(',')
             for vm in vm_list_array:
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting vm metrics for {vm}{bcolors.RESET}")
                 vm_details = prism_get_vm(vm_name=vm,api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
                 for key, value in vm_details['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
@@ -325,15 +382,16 @@ class NutanixMetrics:
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(vm=vm_details['vmName']).set(value)
-        
 
 def main():
     """Main entry point"""
 
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Getting environment variables...{bcolors.RESET}")
     polling_interval_seconds = int(os.getenv("POLLING_INTERVAL_SECONDS", "30"))
     app_port = int(os.getenv("APP_PORT", "9440"))
     exporter_port = int(os.getenv("EXPORTER_PORT", "8000"))
 
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{bcolors.RESET}")
     nutanix_metrics = NutanixMetrics(
         app_port=app_port,
         polling_interval_seconds=polling_interval_seconds,
@@ -341,9 +399,12 @@ def main():
         user = os.getenv('PRISM_USERNAME'),
         pwd = os.getenv('PRISM_SECRET'),
         prism_secure=bool(os.getenv("PRISM_SECURE", False)),
-        vm_list=os.getenv('VM_LIST')
+        vm_list=os.getenv('VM_LIST'),
+        cluster_metrics=bool(os.getenv('CLUSTER_METRICS', True)),
+        storage_containers_metrics=bool(os.getenv('STORAGE_CONTAINERS_METRICS', True))
     )
     
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{bcolors.RESET}")
     start_http_server(exporter_port)
     nutanix_metrics.run_metrics_loop()
 
