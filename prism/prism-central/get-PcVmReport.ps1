@@ -415,6 +415,7 @@ Date       By   Updates (newest updates at the top)
                 Removed dependency on sbourdeaud external module.
                 Thx Drew Henning for catching the error in the online help
                 example section :)
+                Adding cdrom_present and details about iso image mounted.
 ################################################################################
 '@
     $myvarScriptName = ".\get-PcVmReport.ps1"
@@ -611,7 +612,8 @@ Date       By   Updates (newest updates at the top)
                     "ip_addresses" = $entity.vm_nics.ip_address -join ',';
                     "mac_addresses" = $entity.vm_nics.mac_address -join ',';
                     "vdisks" = $entity.vm_disk_info.disk_address.disk_label -join ',';
-                    "cdrom_mount" = ($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true}).is_empty -join ',';
+                    "cdrom_present" = if (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true})) {"true"} else {"false"};
+                    "cdrom_iso" = (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true}) | select-object -property source_disk_address).source_disk_address.ndfs_filepath -join ',';
                     "vdisk_total_bytes" = ($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false} | Measure-Object size -Sum).Sum;
                 }
                 #store the results for this entity in our overall result variable
