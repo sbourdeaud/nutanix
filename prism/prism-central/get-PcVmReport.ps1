@@ -16,8 +16,8 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
-.\template.ps1 -cluster prismcentral.local
-Collect VM inventory from prismcentral.local
+.\get-PcVmReport.ps1 -prismcentral myprismcentral.local
+Collect VM inventory from prismcentral.local (and get prompted for credentials)
 .LINK
   http://www.nutanix.com/services
 .NOTES
@@ -413,6 +413,8 @@ Date       By   Updates (newest updates at the top)
 02/06/2021 sb   Replaced username with get-credential
 12/02/2021 sb   Added cdrom mount status to vm report.
                 Removed dependency on sbourdeaud external module.
+                Thx Drew Henning for catching the error in the online help
+                example section :)
 ################################################################################
 '@
     $myvarScriptName = ".\get-PcVmReport.ps1"
