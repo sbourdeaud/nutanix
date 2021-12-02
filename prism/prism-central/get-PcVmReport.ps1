@@ -416,6 +416,7 @@ Date       By   Updates (newest updates at the top)
                 Thx Drew Henning for catching the error in the online help
                 example section :)
                 Adding cdrom_present and details about iso image mounted.
+                Adding network name information vnics are connected to.
 ################################################################################
 '@
     $myvarScriptName = ".\get-PcVmReport.ps1"
@@ -478,6 +479,7 @@ Date       By   Updates (newest updates at the top)
     $api_server_port = 9440
     $length = 200
     [System.Collections.ArrayList]$myvarClustersResults = New-Object System.Collections.ArrayList($null)
+    [System.Collections.ArrayList]$myvarNetworksResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
 #endregion
 
@@ -587,6 +589,79 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
+    #* step 1: retrieve list of clusters managed by Prism Central
+    #region get networks
+        Write-Host "$(get-date) [INFO] Retrieving list of networks..." -ForegroundColor Green
+        #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/subnets/list"
+            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+            $method = "POST"
+
+            # this is used to capture the content of the payload
+            $content = @{
+                kind="subnet";
+                offset=0;
+                length=$length
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
+        #region make api call
+            Do {
+                try {
+                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                    
+                    $listLength = 0
+                    if ($resp.metadata.offset) {
+                        $firstItem = $resp.metadata.offset
+                    } else {
+                        $firstItem = 0
+                    }
+                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+                        $listLength = $resp.metadata.length
+                    } else {
+                        $listLength = $resp.metadata.total_matches
+                    }
+                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+
+                    #grab the information we need in each entity
+                    ForEach ($entity in $resp.entities) {
+                        $myvarNetworkInfo = [ordered]@{
+                            "name" = $entity.status.name;
+                            "uuid" = $entity.metadata.uuid
+                        }
+                        #store the results for this entity in our overall result variable
+                        $myvarNetworksResults.Add((New-Object PSObject -Property $myvarNetworkInfo)) | Out-Null
+                    }
+
+                    #prepare the json payload for the next batch of entities/response
+                    $content = @{
+                        kind="cluster";
+                        offset=($resp.metadata.length + $resp.metadata.offset);
+                        length=$length
+                    }
+                    $payload = (ConvertTo-Json $content -Depth 4)
+                }
+                catch {
+                    $saved_error = $_.Exception.Message
+                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                    Throw "$(get-date) [ERROR] $saved_error"
+                }
+                finally {
+                    #add any last words here; this gets processed no matter what
+                }
+            }
+            While ($resp.metadata.length -eq $length)
+
+            if ($debugme) {
+                Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+                $myvarNetworksResults
+            }
+        #endregion
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks list from $prismcentral!" -ForegroundColor Cyan
+    #endregion
+
     #* step 2: for each cluster, get the list of vms
     #region get vms
         $api_server_endpoint = "/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
@@ -597,6 +672,11 @@ Date       By   Updates (newest updates at the top)
             $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of vms for cluster $($cluster.name)!" -ForegroundColor Cyan
             ForEach ($entity in $resp.entities) {
+                $vm_networks = @()
+                ForEach ($network_uuid in $entity.vm_nics.network_uuid)
+                {
+                    $vm_networks += ($myvarNetworksResults | Where-Object {$_.uuid -eq $network_uuid}).Name
+                }
                 $myvarVmInfo = [ordered]@{
                     "cluster" = $cluster.name;
                     "hypervisor" = $cluster.hypervisor;
@@ -611,6 +691,7 @@ Date       By   Updates (newest updates at the top)
                     "uefi_boot" = $entity.boot.uefi_boot;
                     "ip_addresses" = $entity.vm_nics.ip_address -join ',';
                     "mac_addresses" = $entity.vm_nics.mac_address -join ',';
+                    "networks" = $vm_networks -join ',';
                     "vdisks" = $entity.vm_disk_info.disk_address.disk_label -join ',';
                     "cdrom_present" = if (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true})) {"true"} else {"false"};
                     "cdrom_iso" = (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true}) | select-object -property source_disk_address).source_disk_address.ndfs_filepath -join ',';
