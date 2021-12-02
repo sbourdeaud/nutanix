@@ -1,5 +1,5 @@
 import os,requests,json,time
-from prometheus_client import start_http_server, Gauge, Enum
+from prometheus_client import start_http_server, Gauge, Enum, Info
 from datetime import datetime
 
 class bcolors:
@@ -316,6 +316,9 @@ class NutanixMetrics:
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
+            
+            #self.lts = Enum("is_lts", "AOS Long Term Support", ['cluster'], states=['True', 'False'])
+            setattr(self, 'NutanixClusters_info', Info('is_lts', 'Long Term Support AOS true/false', ['cluster']))
 
         if self.vm_list:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")
@@ -380,6 +383,9 @@ class NutanixMetrics:
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
+            
+            #self.lts.labels(cluster=cluster_details['name']).state(str(cluster_details['is_lts']))
+            self.NutanixClusters_info.labels(cluster=cluster_details['name']).info({'is_lts': str(cluster_details['is_lts'])})
         
         if self.vm_list:
             vm_list_array = self.vm_list.split(',')

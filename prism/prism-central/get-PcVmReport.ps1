@@ -22,7 +22,7 @@ Collect VM inventory from prismcentral.local
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: December 2nd 2021
 #>
 
 #region parameters
@@ -39,6 +39,368 @@ Collect VM inventory from prismcentral.local
 #endregion
 
 #region functions
+#this function is used to make a REST api call to Prism
+function Invoke-PrismAPICall
+{
+<#
+.SYNOPSIS
+  Makes api call to prism based on passed parameters. Returns the json response.
+.DESCRIPTION
+  Makes api call to prism based on passed parameters. Returns the json response.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER method
+  REST method (POST, GET, DELETE, or PUT)
+.PARAMETER credential
+  PSCredential object to use for authentication.
+PARAMETER url
+  URL to the api endpoint.
+PARAMETER payload
+  JSON payload to send.
+.EXAMPLE
+.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+Makes a POST api call to the specified endpoint with the specified payload.
+#>
+param
+(
+    [parameter(mandatory = $true)]
+    [ValidateSet("POST","GET","DELETE","PUT")]
+    [string] 
+    $method,
+    
+    [parameter(mandatory = $true)]
+    [string] 
+    $url,
+
+    [parameter(mandatory = $false)]
+    [string] 
+    $payload,
+    
+    [parameter(mandatory = $true)]
+    [System.Management.Automation.PSCredential]
+    $credential
+)
+
+begin
+{
+    
+}
+process
+{
+    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+    try {
+        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            }
+        } else {
+            $username = $credential.UserName
+            $password = $credential.Password
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+            }
+        }
+        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
+    catch {
+        $saved_error = $_.Exception.Message
+        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
+    }
+    finally {
+        #add any last words here; this gets processed no matter what
+    }
+}
+end
+{
+    return $resp
+}    
+}
+
+#this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
+function Set-PoshTls
+{
+<#
+.SYNOPSIS
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.DESCRIPTION
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Set-PoshTls
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.LINK
+https://github.com/sbourdeaud
+#>
+[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param 
+    (
+        
+    )
+
+    begin 
+    {
+    }
+
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = `
+        ([Net.ServicePointManager]::SecurityProtocol -bor `
+        [Net.SecurityProtocolType]::Tls12)
+    }
+
+    end
+    {
+
+    }
+}
+
+#this function is used to configure posh to ignore invalid ssl certificates
+function Set-PoSHSSLCerts
+{
+<#
+.SYNOPSIS
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+.DESCRIPTION
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+#>
+    begin
+    {
+
+    }#endbegin
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if(ServicePointManager.ServerCertificateValidationCallback ==null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback += 
+                delegate
+                (
+                    Object obj, 
+                    X509Certificate certificate, 
+                    X509Chain chain, 
+                    SslPolicyErrors errors
+                )
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }#endif
+        [ServerCertificateValidationCallback]::Ignore()
+    }#endprocess
+    end
+    {
+
+    }#endend
+}#end function Set-PoSHSSLCerts
+
+#this function is used to create saved credentials for the current user
+function Set-CustomCredentials 
+{
+#input: path, credname
+	#output: saved credentials file
+<#
+.SYNOPSIS
+  Creates a saved credential file using DAPI for the current user on the local machine.
+.DESCRIPTION
+  This function is used to create a saved credential file using DAPI for the current user on the local machine.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
+Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
+#>
+	param
+	(
+		[parameter(mandatory = $false)]
+        [string] 
+        $path,
+		
+        [parameter(mandatory = $true)]
+        [string] 
+        $credname
+	)
+
+    begin
+    {
+        if (!$path)
+        {
+            if ($IsLinux -or $IsMacOS) 
+            {
+                $path = $home
+            }
+            else 
+            {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
+        } 
+    }
+    process
+    {
+        #prompt for credentials
+        $credentialsFilePath = "$path\$credname.txt"
+		$credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+		
+		#put details in hashed format
+		$user = $credentials.UserName
+		$securePassword = $credentials.Password
+        
+        #convert secureString to text
+        try 
+        {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        #create directory to store creds if it does not already exist
+        if(!(Test-Path $path))
+		{
+            try 
+            {
+                $result = New-Item -type Directory $path -ErrorAction Stop
+            } 
+            catch 
+            {
+                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+            }
+		}
+
+        #save creds to file
+        try 
+        {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        } 
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try 
+        {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        } 
+        catch 
+        {
+            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
+    }
+    end
+    {}
+}
+
+#this function is used to retrieve saved credentials for the current user
+function Get-CustomCredentials 
+{
+#input: path, credname
+	#output: credential object
+<#
+.SYNOPSIS
+  Retrieves saved credential file using DAPI for the current user on the local machine.
+.DESCRIPTION
+  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER path
+  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
+.PARAMETER credname
+  Specifies the credential file name.
+.EXAMPLE
+.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
+Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
+#>
+	param
+	(
+        [parameter(mandatory = $false)]
+		[string] 
+        $path,
+		
+        [parameter(mandatory = $true)]
+        [string] 
+        $credname
+	)
+
+    begin
+    {
+        if (!$path)
+        {
+            if ($IsLinux -or $IsMacOS) 
+            {
+                $path = $home
+            }
+            else 
+            {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        } 
+    }
+    process
+    {
+        $credentialsFilePath = "$path\$credname.txt"
+        if(!(Test-Path $credentialsFilePath))
+	    {
+            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+		$user = $credFile[0]
+		$securePassword = $credFile[1] | ConvertTo-SecureString
+
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
+    }
+    end
+    {
+        return $customCredentials
+    }
+}
 
 #endregion
 
@@ -49,6 +411,8 @@ Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 05/26/2020 sb   Initial release.
 02/06/2021 sb   Replaced username with get-credential
+12/02/2021 sb   Added cdrom mount status to vm report.
+                Removed dependency on sbourdeaud external module.
 ################################################################################
 '@
     $myvarScriptName = ".\get-PcVmReport.ps1"
@@ -62,7 +426,7 @@ Date       By   Updates (newest updates at the top)
     #check if we have all the required PoSH modules
     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
 
-    #region module sbourdeaud is used for facilitating Prism REST calls
+    <# #region module sbourdeaud is used for facilitating Prism REST calls
         $required_version = "3.0.8"
         if (!(Get-Module -Name sbourdeaud)) {
             Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
@@ -101,7 +465,7 @@ Date       By   Updates (newest updates at the top)
             }
             catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
         }
-    #endregion
+    #endregion #>
     Set-PoSHSSLCerts
     Set-PoshTls
 #endregion
@@ -245,6 +609,7 @@ Date       By   Updates (newest updates at the top)
                     "ip_addresses" = $entity.vm_nics.ip_address -join ',';
                     "mac_addresses" = $entity.vm_nics.mac_address -join ',';
                     "vdisks" = $entity.vm_disk_info.disk_address.disk_label -join ',';
+                    "cdrom_mount" = ($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true}).is_empty -join ',';
                     "vdisk_total_bytes" = ($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false} | Measure-Object size -Sum).Sum;
                 }
                 #store the results for this entity in our overall result variable

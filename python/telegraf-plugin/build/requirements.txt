@@ -1,0 +1,2 @@
+telegraf_pyplug
+requests
