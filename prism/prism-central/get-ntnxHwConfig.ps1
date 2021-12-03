@@ -427,7 +427,6 @@ Date       By   Updates (newest updates at the top)
 
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
-
     Set-PoSHSSLCerts
     Set-PoshTls
 #endregion
