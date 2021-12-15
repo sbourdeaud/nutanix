@@ -162,7 +162,11 @@ If you are not getting any content inside the `/tmp/zabbix_traps.tmp` file, try 
 
 ## <a id="ZabbixMonitoringConfiguration"></a>Zabbix server monitoring configuration
 
-1. Configuring the Zabbix server with the host object
-2. Creating the Nutanix SNMP template using PowerShell scripts for the items and triggers in Zabbix
+1. **Configuring the Zabbix server with the host object**: this is done from the Zabbix server UI. You should create one host entry for each Nutanix cluster you intend to monitor. For each host, you will need to add an SNMP interface with type DNS and put in the cluster FQDN to which the CVM IP addresses resolve in DNS.
+2. **Creating the Nutanix SNMP template using PowerShell scripts for the items and triggers in Zabbix**: still in the Zabbix UI, create a new template named "Nutanix Template" (or any name that makes sense to you).  We will now need to create items and triggers for all the SNMP traps you want to alert on.  
+To figure out all possible alerts, you can use [this](https://github.com/sbourdeaud/nutanix/blob/master/prism/prism-element/get-ntnxAlertPolicy.ps1) PowerShell script which will produce a csv file with all possible alerts.  Edit that file and keep in it only the alerts you are interested in (exp: all critical and warnings).  Then use [this](https://github.com/sbourdeaud/nutanix/blob/master/zabbix/set-ZabbixNutanixTemplate.ps1) script to create the items and triggers in the Nutanix template on the Zabbix server based on the csv input.
+
+Now apply the Nutanix template to your cluster hosts.  
+That's it! You should now receive traps and alerts from Prism into Zabbix.
 
 [*<<back to ToC*](#ToC)
