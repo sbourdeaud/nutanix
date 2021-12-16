@@ -80,7 +80,7 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
     ```
     This code will attempt to resolve the IP address to a hostname.
 
-    Alternatively, you can create a `/etc/zabbix/nutanix_clusters.conf` file and enter CVM IP addresses with their matching cluster FQDN, then replace the code above which uses nslookup with the following code:
+    Alternatively, you can create a `/etc/zabbix/nutanix_clusters.conf` file and enter CVM IP addresses with their matching cluster FQDN (exp: `10.10.10.10 mynutanixcluster.domain.local`), then replace the code above which uses nslookup with the following code:
 
     ```perl
     if ($hostname ne 'unknown')
@@ -91,7 +91,7 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
     You will want to change the group permission on that `/etc/zabbix/nutanix_clusters.conf` file using the following command:  
     `chgrp zabbix /etc/zabbix/nutanix_clusters.conf`
 
-    A sample Perl script with this modified code is available in this repo [here]()
+    A sample Perl script with this modified code is available in this repo [here](https://github.com/sbourdeaud/nutanix/blob/master/zabbix/zabbix_trap_receiver.pl)
 
 5. **Configuring the snmptrapd service**: now that everything is in place for snmptrapd to work, we need to change a couple of things:
    1. First, we need to change the default behavior of the service by editing the `/etc/sysconfig/snmptrapd` file and adding the following line at the end:  
