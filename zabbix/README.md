@@ -166,7 +166,7 @@ If you are not getting any content inside the `/tmp/zabbix_traps.tmp` file, try 
 2. **Creating the Nutanix SNMP template using PowerShell scripts for the items and triggers in Zabbix**: still in the Zabbix UI, create a new template named "Nutanix Template" (or any name that makes sense to you).  We will now need to create items and triggers for all the SNMP traps you want to alert on.  
 To figure out all possible alerts, you can use [this](https://github.com/sbourdeaud/nutanix/blob/master/prism/prism-element/get-ntnxAlertPolicy.ps1) PowerShell script which will produce a csv file with all possible alerts.  Edit that file and keep in it only the alerts you are interested in (exp: all critical and warnings).  Then use [this](https://github.com/sbourdeaud/nutanix/blob/master/zabbix/set-ZabbixNutanixTemplate.ps1) script to create the items and triggers in the Nutanix template on the Zabbix server based on the csv input.  
 Note that you may get some errors when there are funky characters in some of the messages or description fields, so you may have to edit the csv file to remove those characters, then simply run the script again. Any existing item or trigger will be skipped.  
-An example file containing all storage related alerts which are either a Warning or Critical is included in this repository ([zabbix_template_nutanix_smb.xml]())
+An example file containing all storage related alerts which are either a Warning or Critical is included in this repository ([zabbix_template_nutanix_smb.xml](https://github.com/sbourdeaud/nutanix/blob/master/zabbix/zabbix_template_nutanix_smb.xml))
 
 Now apply the Nutanix template to your cluster hosts.  
 That's it! You should now receive traps and alerts from Prism into Zabbix.
