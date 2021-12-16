@@ -136,7 +136,7 @@ PDU INFO:
   contextEngineID                0x80001f8880458bc8123da3b46100000000
   notificationtype               TRAP
   version                        3
-  receivedfrom                   UDP: [10.68.97.37]:48600->[10.68.99.70]:162
+  receivedfrom                   UDP: [some_cvm_ip_address_here]:48600->[zabbix_server_or_proxy_ip_address_here]:162
   errorstatus                    0
   messageid                      646221619
   securitylevel                  3
@@ -152,7 +152,7 @@ VARBINDS:
   SNMPv2-MIB::snmpTrapOID.0      type=6  value=OID: NUTANIX-MIB::ntxTrapResolved
   NUTANIX-MIB::ntxTrapName       type=4  value=STRING: "ntxTrapTestAlertTitle"
   NUTANIX-MIB::ntxAlertResolvedTime type=70 value=Counter64: 1639053634
-  NUTANIX-MIB::ntxAlertDisplayMsg type=4  value=STRING: "AlertUuid:2406cfa7-4b7a-4233-93fd-5e1d25fe3960: Test Alert is generated on Controller VM 10.68.97.32."
+  NUTANIX-MIB::ntxAlertDisplayMsg type=4  value=STRING: "AlertUuid:2406cfa7-4b7a-4233-93fd-5e1d25fe3960: Test Alert is generated on Controller VM some_cvm_ip_address_here."
   NUTANIX-MIB::ntxAlertTitle     type=4  value=STRING: "Test Alert Title"
   NUTANIX-MIB::ntxAlertSeverity  type=2  value=INTEGER: 1
   NUTANIX-MIB::ntxAlertClusterName type=4  value=""
