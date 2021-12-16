@@ -7,6 +7,13 @@ It specifically covers:
 3. [How to test SNMP traps from Prism to Zabbix](#SNMPTest)  
 4. [How to configure a host object in Zabbix to match the Nutanix cluster and automate the creation of Zabbix items and triggers in a template for the SNMP traps you want](#ZabbixMonitoringConfiguration)  
 
+Overall the architecture of the solution will look something like this:  
+![Nutanix to Zabbix SNMP traps Integration](https://lucid.app/publicSegments/view/b5284ae1-bfa5-4de3-ad77-291f1f8f66fd/image.png "Nutanix to Zabbix SNMP traps Integration")  
+
+- The Nutanix cluster has an SNMP trapper configured as well as an SNMPv3 user
+- The Zabbix server or proxy has the Nutanix MIB installed as well as the snmptrapd service configured with the Zabbix perl script handler and the Zabbix trapper
+- A host object and template have been configured on the Zabbix server
+
 ## <a id="PrismConfiguration"></a>How to configure Nutanix Prism to send SNMPv3 traps to Zabbix
 
 1. **Adding the SNMPv3 user in Nutanix Prism**:
