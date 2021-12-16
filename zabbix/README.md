@@ -5,7 +5,8 @@ It specifically covers:
 1. [How to configure SNMPv3 in Prism](#PrismConfiguration)  
 2. [How to configure the Zabbix proxy or server for receiving SNMPv3 traps](#ZabbixServerConfiguration)  
 3. [How to test SNMP traps from Prism to Zabbix](#SNMPTest)  
-4. [How to configure a host object in Zabbix to match the Nutanix cluster and automate the creation of Zabbix items and triggers in a template for the SNMP traps you want](#ZabbixMonitoringConfiguration)  
+4. [How to configure a host object in Zabbix to match the Nutanix cluster and automate the creation of Zabbix items and triggers in a template for the SNMP traps you want](#ZabbixMonitoringConfiguration)
+5. [I have done all this already, I just want to add a new Nutanix cluster to my Zabbix monitoring: what do I need to do?](#NewNutanixCluster)  
 
 If you are more interested in doing **SNMP polling** (for collecting status and metrics), you can use the existing Nutanix community template available [here](https://github.com/aldevar/Zabbix_Nutanix_Template).  
 Alternatively, you can create your own based on the Nutanix MIB using the converter script described [here](https://sbcode.net/zabbix/mib-to-zabbix-template/).
@@ -80,6 +81,7 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
     ```
     This code will attempt to resolve the IP address to a hostname.
 
+    <a id="NutanixClustersConfigurationFile"></a>
     Alternatively, you can create a `/etc/zabbix/nutanix_clusters.conf` file and enter CVM IP addresses with their matching cluster FQDN (exp: `10.10.10.10 mynutanixcluster.domain.local`), then replace the code above which uses nslookup with the following code:
 
     ```perl
@@ -97,7 +99,7 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
    1. First, we need to change the default behavior of the service by editing the `/etc/sysconfig/snmptrapd` file and adding the following line at the end:  
    ``OPTIONS="-OS -m-/usr/share/snmp/mibs/NUTANIX-MIB.txt -Lsd -Lf /var/log/snmptrapd.log"``  
    This will create a log file for the service (which will help with troubleshooting) and will make sure that the OIDs are properly resolved using the Nutanix MIB file when variables are parsed in the trap.
-   2. Then we need to configure the SNMPv3 user as well as the Perl interpreter for the snmptrapd service/daemon by editing the `/etc/snmp/snmptrapd.conf` file.  
+   2. <a id="SNMPv3User"></a>Then we need to configure the SNMPv3 user as well as the Perl interpreter for the snmptrapd service/daemon by editing the `/etc/snmp/snmptrapd.conf` file.  
    Add the following lines to the end of that file:  
    ```
    createUser -e "replace_this_with_your_engine_id_string" zabbix SHA key2thedoor AES replace_this_with_your_password
@@ -196,5 +198,18 @@ An example file containing all storage related alerts which are either a Warning
 
 Now apply the Nutanix template to your cluster hosts.  
 That's it! You should now receive traps and alerts from Prism into Zabbix.
+
+[*<<back to ToC*](#ToC)
+
+## <a id="NewNutanixCluster"></a>How to add a new Nutanix cluster once SNMP traps are working?
+
+In order to add simply a new Nutanix cluster to your already working Zabbix SNMP trap based monitoring you will need to:
+
+1. Configure Prism to send SNMP traps to Zabbix: this is described [here](#PrismConfiguration)
+2. Add the SNMPv3 user with the correct engine id for that new cluster in `/etc/snmp/snmptrapd.conf`. This is described in [this section](#SNMPv3User).
+3. Restart the snmptrapd service with the command `sudo systemctl restart snmptrapd`
+4. Edit the `/etc/zabbix/nutanix_clusters.conf` file with CVM IP addresses and the cluster FQDN (if you chose to use this configuration file) which is described [here](#NutanixClustersConfigurationFile) (note that you don't have to edit the code of the Perl script, just add content to `/etc/zabbix/nutanix_clusters.conf`)
+5. Create the host entry for the Nutanix cluster in Zabbix and associate the Nutanix SNMP template which is described [here](#ZabbixMonitoringConfiguration)
+6. That's it!
 
 [*<<back to ToC*](#ToC)
