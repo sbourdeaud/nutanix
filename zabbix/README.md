@@ -34,7 +34,7 @@ Overall the architecture of the solution will look something like this:
       1. `Receiver Name` : this can be anything you want that is meaningful to you to designate your Zabbix server or proxy.
       2. `SNMP Version` : v3
       3. `Trap Username` : select the user you created in the previous list from the drop down menu
-      4. `Address` : enter the IP address or FQDN of your Zabbix server or proxy. Note that if you use an FQDN, you'll need to make sure that it can be resolved from all CVMs (in other words, that the DNS server they point to can resolve that FQDN)
+      4. `Address` : enter the IP address or FQDN of your Zabbix server or proxy. Note that if you use an FQDN, you'll need to make sure that it can be resolved from all CVMs (in other words, that the DNS server they point to can resolve that FQDN; alternatively, you can also create a file `/etc/zabbix/nutanix_clusters.conf` with group zabbix and have CVM IP addresses with their matching cluster FQDN documented in there)
       5. Leave everything else blank or default and click "*Save*"
       6. Copy the Engine ID string that was assigned to the SNMP Trap Receiver entry you just created as you will need it later
 
@@ -79,6 +79,19 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
     }
     ```
     This code will attempt to resolve the IP address to a hostname.
+
+    Alternatively, you can create a `/etc/zabbix/nutanix_clusters.conf` file and enter CVM IP addresses with their matching cluster FQDN, then replace the code above which uses nslookup with the following code:
+
+    ```perl
+    if ($hostname ne 'unknown')
+		{
+			$hostname = `cat /etc/zabbix/nutanix_clusters.conf | grep $hostname | awk '{print $2}'` || $hostname;
+		}
+    ```
+    You will want to change the group permission on that `/etc/zabbix/nutanix_clusters.conf` file using the following command:  
+    `chgrp zabbix /etc/zabbix/nutanix_clusters.conf`
+
+    A sample Perl script with this modified code is available in this repo [here]()
 
 5. **Configuring the snmptrapd service**: now that everything is in place for snmptrapd to work, we need to change a couple of things:
    1. First, we need to change the default behavior of the service by editing the `/etc/sysconfig/snmptrapd` file and adding the following line at the end:  
