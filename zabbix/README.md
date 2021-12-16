@@ -7,7 +7,13 @@ It specifically covers:
 3. [How to test SNMP traps from Prism to Zabbix](#SNMPTest)  
 4. [How to configure a host object in Zabbix to match the Nutanix cluster and automate the creation of Zabbix items and triggers in a template for the SNMP traps you want](#ZabbixMonitoringConfiguration)  
 
-Overall the architecture of the solution will look something like this:  
+If you are more interested in doing **SNMP polling** (for collecting status and metrics), you can use the existing Nutanix community template available [here](https://github.com/aldevar/Zabbix_Nutanix_Template).  
+Alternatively, you can create your own based on the Nutanix MIB using the converter script described [here](https://sbcode.net/zabbix/mib-to-zabbix-template/).
+
+The idea of the solution described here is to *duplicate alerts seen in Prism into Zabbix* for reactive alert monitoring purposes.  
+
+Overall the architecture of the solution will look something like this: 
+
 ![Nutanix to Zabbix SNMP traps Integration](https://lucid.app/publicSegments/view/b5284ae1-bfa5-4de3-ad77-291f1f8f66fd/image.png "Nutanix to Zabbix SNMP traps Integration")  
 
 - The Nutanix cluster has an SNMP trapper configured as well as an SNMPv3 user
