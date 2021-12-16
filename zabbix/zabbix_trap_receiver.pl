@@ -79,7 +79,7 @@ sub zabbix_receiver
 		if ($hostname ne 'unknown')
 		{
 			#$hostname = `nslookup $hostname | awk '{print substr(\$4, 1, length(\$4)-1)}'` || $hostname;
-			$hostname = `cat /etc/zabbix/nutanix_clusters.conf | grep $hostname | awk '{print $2}'` || $hostname;
+			$hostname = `cat /etc/zabbix/nutanix_clusters.conf | grep $hostname | awk '{print \$2}'` || $hostname;
 		}
 	}
 

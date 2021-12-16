@@ -85,7 +85,7 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
     ```perl
     if ($hostname ne 'unknown')
 		{
-			$hostname = `cat /etc/zabbix/nutanix_clusters.conf | grep $hostname | awk '{print $2}'` || $hostname;
+			$hostname = `cat /etc/zabbix/nutanix_clusters.conf | grep $hostname | awk '{print \$2}'` || $hostname;
 		}
     ```
     You will want to change the group permission on that `/etc/zabbix/nutanix_clusters.conf` file using the following command:  
