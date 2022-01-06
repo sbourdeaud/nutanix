@@ -8,7 +8,6 @@
 # outputvars:   add_task_uuid
 
 import requests
-import json
 
 
 #region inputvars
@@ -19,7 +18,7 @@ pc_password = "@@{prism_central.secret}@@"
 #* input variables
 add_worker_node_count = int("@@{add_worker_node_count}@@")
 cluster_name = "@@{cluster_name}@@"
-node_pool = "@@{node_pool}@@"
+worker_node_pool = "@@{cluster_name}@@" + "-worker-node-pool"
 #endregion inputvars
 
 
@@ -161,7 +160,7 @@ payload = {
 method = 'POST'
 url = "https://localhost:9440/karbon/v1-alpha.1/k8s/clusters/{}/node-pools/{}/add-nodes".format(
     cluster_name,
-    node_pool,
+    worker_node_pool,
 )
 #endregion prepapre api call
 

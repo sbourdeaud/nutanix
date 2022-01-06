@@ -1,11 +1,10 @@
 # escript-template v20190611 / stephane.bourdeaud@nutanix.com
-# TODO Fill in this section with your information
 # * author:     stephane.bourdeaud@nutanix.com
-# * version:    v1/20220105
-# task_name:    KarbonRemoveWorkerNode
-# description:  Removes worker node(s) from an existing Karbon managed k8s cluster. Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
+# * version:    v1/20220106
+# task_name:    KarbonDeleteCluster
+# description:  Deletes a Karbon K8s cluster. Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
 # inputvars:    See inputvars region below
-# outputvars:   remove_task_uuid
+# outputvars:   delete_task_uuid
 
 import requests
 
@@ -16,9 +15,7 @@ pc_user = "@@{prism_central.username}@@"
 pc_password = "@@{prism_central.secret}@@"
 
 #* input variables
-remove_worker_node_count = int("@@{remove_worker_node_count}@@")
 cluster_name = "@@{cluster_name}@@"
-worker_node_pool = "@@{cluster_name}@@" + "-worker-node-pool"
 #endregion inputvars
 
 
@@ -152,23 +149,19 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
 #endregion functions
 
 
-#region prepare api call
+#region prepare the api call
+url = "https://localhost:9440/karbon/v1/k8s/clusters/{}".format(cluster_name)
 headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
-payload = {
-  "count": remove_worker_node_count
-}
-method = 'POST'
-url = "https://localhost:9440/karbon/v1-alpha.1/k8s/clusters/{}/node-pools/{}/remove-nodes".format(
-    cluster_name,
-    worker_node_pool,
-)
-#endregion prepapre api call
+method = 'DELETE'
+#initial payload
+payload = {}
+#endregion prepare the api call
 
 
-#region make api call
+#region make the api call
 resp = process_request(url, method, pc_user, pc_password, headers, payload)
-print ("Creation of task to remove Worker Node was successful", json.dumps(json.loads(resp.content), indent=4))
-remove_task_uuid = resp.json()['task_uuid']
-print ("task_uuid={}".format(remove_task_uuid))
+print ("Creation of task to delete cluster was successful", json.dumps(json.loads(resp.content), indent=4))
+delete_task_uuid = resp.json()['task_uuid']
+print ("task_uuid={}".format(delete_task_uuid))
 exit(0)
-#endregion make api call
+#endregion make the api call
