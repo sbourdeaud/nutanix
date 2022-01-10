@@ -1,6 +1,6 @@
 # region headers
 # * author:       stephane.bourdeaud@nutanix.com
-# * version:      2021/05/10
+# * version:      2022/01/07
 # task_name:      n/a
 # description:    This is a collection of functions meant to be used in escript
 #                 for interfacing with Prism Central.  Note that some functions
@@ -622,5 +622,70 @@ def prism_mount_ngt(api_server,username,secret,vm_name,vm_uuid=None,cluster_uuid
             indent=4
         ))
         return False
+
+
+def prism_get_task(api_server,username,secret,task_uuid,secure=False):
+    """Given a Prism Central task uuid, loop until the task is completed
+    and return the status (success or error).
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        task_uuid: Prism Central task uuid (generally returned by another action 
+                   performed on PC).
+        
+    Returns:
+        The task completion status.
+    """
+    task_status_details = {}
+    task_status = "RUNNING"
+
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/api/nutanix/v3/tasks/{0}".format(task_uuid)
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    print("Making a {} API call to {}".format(method, url))
+    
+    while (task_status is "RUNNING"):
+        resp = process_request(url,method,username,secret,headers,secure)
+        #print(json.loads(resp.content))
+        if resp.ok:
+            task_status_details = json.loads(resp.content)
+            task_status = resp.json()['status']
+            if task_status == "SUCCEEDED":
+                print ("Task has completed successfully")
+                return task_status_details
+            elif task_status == "FAILED":
+                print ("Task has failed: {}".format(resp.json()['error_detail']))
+                return task_status_details
+            else:
+                print ("Task status is {} and percentage completion is {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete']))
+                sleep(30)
+        else:
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            exit(resp.status_code)
+
+    return task_status_details
+
 
 # endregion

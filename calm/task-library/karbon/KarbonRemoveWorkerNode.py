@@ -1,7 +1,7 @@
 # escript-template v20190611 / stephane.bourdeaud@nutanix.com
 # TODO Fill in this section with your information
 # * author:     stephane.bourdeaud@nutanix.com
-# * version:    v1/20220105
+# * version:    v1/20220107
 # task_name:    KarbonRemoveWorkerNode
 # description:  Removes worker node(s) from an existing Karbon managed k8s cluster. Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
 # inputvars:    See inputvars region below
@@ -16,6 +16,7 @@ pc_user = "@@{prism_central.username}@@"
 pc_password = "@@{prism_central.secret}@@"
 
 #* input variables
+prism_central_ip = "@@{prism_central_ip}@@"
 remove_worker_node_count = int("@@{remove_worker_node_count}@@")
 cluster_name = "@@{cluster_name}@@"
 worker_node_pool = "@@{cluster_name}@@" + "-worker-node-pool"
@@ -149,6 +150,70 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         ))
         exit(r.status_code)
 
+
+def prism_get_task(api_server,username,secret,task_uuid,secure=False):
+    """Given a Prism Central task uuid, loop until the task is completed
+    and return the status (success or error).
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        task_uuid: Prism Central task uuid (generally returned by another action 
+                   performed on PC).
+        
+    Returns:
+        The task completion status.
+    """
+    task_status_details = {}
+    task_status = "RUNNING"
+
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/api/nutanix/v3/tasks/{0}".format(task_uuid)
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    print("Making a {} API call to {}".format(method, url))
+    
+    while True:
+        resp = process_request(url,method,username,secret,headers,secure)
+        #print(json.loads(resp.content))
+        if resp.ok:
+            task_status_details = json.loads(resp.content)
+            task_status = resp.json()['status']
+            if task_status == "SUCCEEDED":
+                print ("Task has completed successfully")
+                return task_status_details
+            elif task_status == "FAILED":
+                print ("Task has failed: {}".format(resp.json()['error_detail']))
+                return task_status_details
+            else:
+                print ("Task status is {} and percentage completion is {}. Current step is {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete'],task_status,resp.json()['progress_message']))
+                sleep(30)
+        else:
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            exit(resp.status_code)
+
+    return task_status_details
+
 #endregion functions
 
 
@@ -158,7 +223,8 @@ payload = {
   "count": remove_worker_node_count
 }
 method = 'POST'
-url = "https://localhost:9440/karbon/v1-alpha.1/k8s/clusters/{}/node-pools/{}/remove-nodes".format(
+url = "https://{}:9440/karbon/v1-alpha.1/k8s/clusters/{}/node-pools/{}/remove-nodes".format(
+    prism_central_ip,
     cluster_name,
     worker_node_pool,
 )
@@ -167,8 +233,12 @@ url = "https://localhost:9440/karbon/v1-alpha.1/k8s/clusters/{}/node-pools/{}/re
 
 #region make api call
 resp = process_request(url, method, pc_user, pc_password, headers, payload)
-print ("Creation of task to remove Worker Node was successful", json.dumps(json.loads(resp.content), indent=4))
+print ("Creation of task to remove Worker Node was successful")
+print(json.loads(resp.content))
 remove_task_uuid = resp.json()['task_uuid']
 print ("task_uuid={}".format(remove_task_uuid))
+
+prism_get_task(prism_central_ip,pc_user,pc_password,remove_task_uuid)
+
 exit(0)
 #endregion make api call

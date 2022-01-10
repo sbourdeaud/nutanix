@@ -1,10 +1,11 @@
 # escript-template v20190611 / stephane.bourdeaud@nutanix.com
 # * author:     stephane.bourdeaud@nutanix.com
-# * version:    v1/20220107
-# task_name:    KarbonDeleteCluster
-# description:  Deletes a Karbon K8s cluster. Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
+# * version:    v1/20220106
+# task_name:    KarbonGetClusterDetails
+# description:  Retrieves configuration information for a Karbon managed K8s cluster. 
+#               Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
 # inputvars:    See inputvars region below
-# outputvars:   delete_task_uuid
+# outputvars:   kubeapi_server_ipv4_address,k8s_version,karbon_cluster_uuid,node_cidr_mask_size,pod_ipv4_cidr,service_ipv4_cidr
 
 import requests
 
@@ -18,7 +19,6 @@ pc_password = "@@{prism_central.secret}@@"
 prism_central_ip = "@@{prism_central_ip}@@"
 cluster_name = "@@{cluster_name}@@"
 #endregion inputvars
-
 
 #region functions
 
@@ -147,90 +147,35 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         ))
         exit(r.status_code)
 
-
-def prism_get_task(api_server,username,secret,task_uuid,secure=False):
-    """Given a Prism Central task uuid, loop until the task is completed
-    and return the status (success or error).
-
-    Args:
-        api_server: The IP or FQDN of Prism.
-        username: The Prism user name.
-        secret: The Prism user name password.
-        task_uuid: Prism Central task uuid (generally returned by another action 
-                   performed on PC).
-        
-    Returns:
-        The task completion status.
-    """
-    task_status_details = {}
-    task_status = "RUNNING"
-
-    headers = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-    }
-    api_server_port = "9440"
-    api_server_endpoint = "/api/nutanix/v3/tasks/{0}".format(task_uuid)
-    url = "https://{}:{}{}".format(
-        api_server,
-        api_server_port,
-        api_server_endpoint
-    )
-    method = "GET"
-    print("Making a {} API call to {}".format(method, url))
-    
-    while True:
-        resp = process_request(url,method,username,secret,headers,secure)
-        #print(json.loads(resp.content))
-        if resp.ok:
-            task_status_details = json.loads(resp.content)
-            task_status = resp.json()['status']
-            if task_status == "SUCCEEDED":
-                print ("Task has completed successfully")
-                return task_status_details
-            elif task_status == "FAILED":
-                print ("Task has failed: {}".format(resp.json()['error_detail']))
-                return task_status_details
-            else:
-                print ("Task status is {} and percentage completion is {}. Current step is {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete'],resp.json()['progress_message']))
-                sleep(30)
-        else:
-            print("Request failed!")
-            print("status code: {}".format(resp.status_code))
-            print("reason: {}".format(resp.reason))
-            print("text: {}".format(resp.text))
-            print("raise_for_status: {}".format(resp.raise_for_status()))
-            print("elapsed: {}".format(resp.elapsed))
-            print("headers: {}".format(resp.headers))
-            print("payload: {}".format(payload))
-            print(json.dumps(
-                json.loads(resp.content),
-                indent=4
-            ))
-            exit(resp.status_code)
-
-    return task_status_details
-
 #endregion functions
-
 
 #region prepare the api call
 url = "https://{}:9440/karbon/v1/k8s/clusters/{}".format(prism_central_ip,cluster_name)
 headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
-method = 'DELETE'
-#initial payload
-payload = {}
+method = 'GET'
 #endregion prepare the api call
 
 
 #region make the api call
-resp = process_request(url, method, pc_user, pc_password, headers, payload)
-print ("Creation of task to delete cluster was successful")
+print("Making a GET request to {}".format(url))
+resp = process_request(url, method, pc_user, pc_password, headers)
+    
+print ("Successfully retrieved health status for the cluster")
 print(json.loads(resp.content))
-delete_task_uuid = resp.json()['task_uuid']
-print ("task_uuid={}".format(delete_task_uuid))
 
-prism_get_task(prism_central_ip,pc_user,pc_password,delete_task_uuid)
+#* output vars defined here
+kubeapi_server_ipv4_address = resp.json()['kubeapi_server_ipv4_address']
+print ("kubeapi_server_ipv4_address={}".format(kubeapi_server_ipv4_address))
+k8s_version = resp.json()['version']
+print ("k8s_version={}".format(k8s_version))
+karbon_cluster_uuid = resp.json()['uuid']
+print ("karbon_cluster_uuid={}".format(karbon_cluster_uuid))
+node_cidr_mask_size = resp.json()['cni_config']['node_cidr_mask_size']
+print ("node_cidr_mask_size={}".format(node_cidr_mask_size))
+pod_ipv4_cidr = resp.json()['cni_config']['pod_ipv4_cidr']
+print ("pod_ipv4_cidr={}".format(pod_ipv4_cidr))
+service_ipv4_cidr = resp.json()['cni_config']['service_ipv4_cidr']
+print ("service_ipv4_cidr={}".format(service_ipv4_cidr))
 
 exit(0)
 #endregion make the api call

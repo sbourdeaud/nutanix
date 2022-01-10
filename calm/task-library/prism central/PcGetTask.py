@@ -1,24 +1,22 @@
 # escript-template v20190611 / stephane.bourdeaud@nutanix.com
 # * author:     stephane.bourdeaud@nutanix.com
 # * version:    v1/20220107
-# task_name:    KarbonDeleteCluster
-# description:  Deletes a Karbon K8s cluster. Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
+# task_name:    PcGetTask
+# description:  Checks Prism Central task status. Using PCv3 API: https://www.nutanix.dev/api_references/prism-central-v3/#/ZG9jOjQ1Mg-nutanix-intentful-api
 # inputvars:    See inputvars region below
-# outputvars:   delete_task_uuid
+# outputvars:   none
 
 import requests
 
 
 #region inputvars
-#* credentials
 pc_user = "@@{prism_central.username}@@"
 pc_password = "@@{prism_central.secret}@@"
 
 #* input variables
 prism_central_ip = "@@{prism_central_ip}@@"
-cluster_name = "@@{cluster_name}@@"
+task_uuid = "@@{task_uuid}@@"
 #endregion inputvars
-
 
 #region functions
 
@@ -192,7 +190,7 @@ def prism_get_task(api_server,username,secret,task_uuid,secure=False):
                 print ("Task has failed: {}".format(resp.json()['error_detail']))
                 return task_status_details
             else:
-                print ("Task status is {} and percentage completion is {}. Current step is {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete'],resp.json()['progress_message']))
+                print ("Task status is {} and percentage completion is {}. Current step: {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete'],resp.json()['progress_message']))
                 sleep(30)
         else:
             print("Request failed!")
@@ -213,24 +211,5 @@ def prism_get_task(api_server,username,secret,task_uuid,secure=False):
 
 #endregion functions
 
+prism_get_task(prism_central_ip,pc_user,pc_password,task_uuid)
 
-#region prepare the api call
-url = "https://{}:9440/karbon/v1/k8s/clusters/{}".format(prism_central_ip,cluster_name)
-headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
-method = 'DELETE'
-#initial payload
-payload = {}
-#endregion prepare the api call
-
-
-#region make the api call
-resp = process_request(url, method, pc_user, pc_password, headers, payload)
-print ("Creation of task to delete cluster was successful")
-print(json.loads(resp.content))
-delete_task_uuid = resp.json()['task_uuid']
-print ("task_uuid={}".format(delete_task_uuid))
-
-prism_get_task(prism_central_ip,pc_user,pc_password,delete_task_uuid)
-
-exit(0)
-#endregion make the api call
