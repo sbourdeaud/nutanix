@@ -17,7 +17,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         payload = json.dumps(payload)
     
     #configuring web request behavior
-    timeout=10
+    timeout=30
     retries = 5
     sleep_between_retries = 5
     
