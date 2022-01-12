@@ -54,7 +54,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         payload = json.dumps(payload)
     
     #configuring web request behavior
-    timeout=10
+    timeout = 30
     retries = 5
     sleep_between_retries = 5
     
@@ -217,7 +217,7 @@ def prism_get_task(api_server,username,secret,task_uuid,secure=False):
                 return task_status_details
             elif task_status == "FAILED":
                 print ("Task has failed: {}".format(resp.json()['error_detail']))
-                return task_status_details
+                exit(1)
             else:
                 print ("Task status is {} and percentage completion is {}. Current step is {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete'],resp.json()['progress_message']))
                 sleep(30)
