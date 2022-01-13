@@ -5,7 +5,7 @@
 # description:  Retrieves list of available upgrade versions for the given cluster name. 
 #               Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
 # inputvars:    See inputvars region below
-# outputvars:   versions (as list)
+# outputvars:   k8s_versions and os_versions (as list)
 
 import requests
 
@@ -163,14 +163,22 @@ resp = process_request(url, method, pc_user, pc_password, headers)
 #k8s_versions = [version_number['version'] for version_number in version for version in k8s_versions_list]
 
 k8s_versions = []
+os_versions = []
+
 for clusters in json.loads(resp.content):
     #print("clusters: {}".format(clusters))
     if clusters['name'] == cluster_name:
-        for versions in clusters['ntnx_k8s_releases']:
-            #print("versions: {}".format(versions))
-            k8s_versions.append(versions['version'])
+        if clusters['ntnx_k8s_releases']:
+            for k8s_version in clusters['ntnx_k8s_releases']:
+                #print("versions: {}".format(versions))
+                k8s_versions.append(k8s_version['version'])
+        if clusters['node_os_images']:
+            for os_version in clusters['node_os_images']:
+                os_versions.append(os_version['version'])
+
 
 print("k8s_versions={}".format(json.dumps(k8s_versions)))
+print("os_versions={}".format(json.dumps(os_versions)))
 
 exit(0)
 #endregion make the api call
