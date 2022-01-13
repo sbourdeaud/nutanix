@@ -1,12 +1,11 @@
 # escript-template v20190611 / stephane.bourdeaud@nutanix.com
-# TODO Fill in this section with your information
 # * author:     stephane.bourdeaud@nutanix.com
-# * version:    v1/20220113
-# task_name:    KarbonUpgradeK8s
-# description:  Upgrades the target Karbon K8s cluster to the desired version
+# * version:    v1/20220107
+# task_name:    KarbonGetK8sUpdates
+# description:  Retrieves list of available upgrade versions for the given cluster name. 
 #               Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
 # inputvars:    See inputvars region below
-# outputvars:   upgrade_task_uuid
+# outputvars:   versions (as list)
 
 import requests
 
@@ -18,12 +17,8 @@ pc_password = "@@{prism_central.secret}@@"
 
 #* input variables
 prism_central_ip = "@@{prism_central_ip}@@"
-karbon_cluster_uuid = "@@{karbon_cluster_uuid}@@"
 cluster_name = "@@{cluster_name}@@"
-k8s_version = "@@{k8s_version}@@"
-target_k8s_version = "@@{target_k8s_version}@@"
 #endregion inputvars
-
 
 #region functions
 
@@ -32,7 +27,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         payload = json.dumps(payload)
     
     #configuring web request behavior
-    timeout = 30
+    timeout=10
     retries = 5
     sleep_between_retries = 5
     
@@ -152,99 +147,30 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         ))
         exit(r.status_code)
 
-
-def prism_get_task(api_server,username,secret,task_uuid,secure=False):
-    """Given a Prism Central task uuid, loop until the task is completed
-    and return the status (success or error).
-
-    Args:
-        api_server: The IP or FQDN of Prism.
-        username: The Prism user name.
-        secret: The Prism user name password.
-        task_uuid: Prism Central task uuid (generally returned by another action 
-                   performed on PC).
-        
-    Returns:
-        The task completion status.
-    """
-    task_status_details = {}
-    task_status = "RUNNING"
-
-    headers = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json'
-    }
-    api_server_port = "9440"
-    api_server_endpoint = "/api/nutanix/v3/tasks/{0}".format(task_uuid)
-    url = "https://{}:{}{}".format(
-        api_server,
-        api_server_port,
-        api_server_endpoint
-    )
-    method = "GET"
-    print("Making a {} API call to {}".format(method, url))
-    
-    while True:
-        resp = process_request(url,method,username,secret,headers,secure)
-        #print(json.loads(resp.content))
-        if resp.ok:
-            task_status_details = json.loads(resp.content)
-            task_status = resp.json()['status']
-            if task_status == "SUCCEEDED":
-                print ("Task has completed successfully")
-                return task_status_details
-            elif task_status == "FAILED":
-                print ("Task has failed: {}".format(resp.json()['error_detail']))
-                exit(1)
-            else:
-                print ("Task status is {} and percentage completion is {}. Current step is {}. Waiting for 30 seconds.".format(task_status,resp.json()['percentage_complete'],resp.json()['progress_message']))
-                sleep(30)
-        else:
-            print("Request failed!")
-            print("status code: {}".format(resp.status_code))
-            print("reason: {}".format(resp.reason))
-            print("text: {}".format(resp.text))
-            print("raise_for_status: {}".format(resp.raise_for_status()))
-            print("elapsed: {}".format(resp.elapsed))
-            print("headers: {}".format(resp.headers))
-            print("payload: {}".format(payload))
-            print(json.dumps(
-                json.loads(resp.content),
-                indent=4
-            ))
-            exit(resp.status_code)
-
-    return task_status_details
-
 #endregion functions
 
-
-#region prepare api call
+#region prepare the api call
+url = "https://{}:9440/karbon/v1-beta.1/k8s/clusters/available-updates".format(prism_central_ip,cluster_name)
 headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
-payload = {
-    "upgrade_config": {
-        "pkg_version": target_k8s_version
-    },
-    "cluster_uuid": karbon_cluster_uuid,
-    "drain-policy": "kAlways",
-    "drain-timeout": "180s"
-}
-method = 'POST'
-url = "https://{}:9440/karbon/acs/k8s/cluster/{}/k8s_upgrade".format(
-    prism_central_ip,
-    karbon_cluster_uuid
-)
-#endregion prepare api call
+method = 'GET'
+#endregion prepare the api call
 
 
-#region make api call
-resp = process_request(url, method, pc_user, pc_password, headers, payload)
-print ("Upgrading Kubernetes cluster {} from version {} to version {}".format(cluster_name,k8s_version,target_k8s_version))
-print(json.loads(resp.content))
-upgrade_task_uuid = resp.json()['task_uuid']
-print ("task_uuid={}".format(upgrade_task_uuid))
+#region make the api call
+resp = process_request(url, method, pc_user, pc_password, headers)
+#* output vars defined here
+#k8s_versions_list = [clusters['ntnx_k8s_releases'] for clusters in resp if clusters['name'] == cluster_name]
+#k8s_versions = [version_number['version'] for version_number in version for version in k8s_versions_list]
 
-prism_get_task(prism_central_ip,pc_user,pc_password,upgrade_task_uuid)
+k8s_versions = []
+for clusters in json.loads(resp.content):
+    #print("clusters: {}".format(clusters))
+    if clusters['name'] == cluster_name:
+        for versions in clusters['ntnx_k8s_releases']:
+            #print("versions: {}".format(versions))
+            k8s_versions.append(versions['version'])
+
+print("k8s_versions={}".format(json.dumps(k8s_versions)))
 
 exit(0)
-#endregion make api call
+#endregion make the api call

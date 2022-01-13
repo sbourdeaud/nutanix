@@ -2,8 +2,8 @@
 # TODO Fill in this section with your information
 # * author:     stephane.bourdeaud@nutanix.com
 # * version:    v1/20220113
-# task_name:    KarbonUpgradeK8s
-# description:  Upgrades the target Karbon K8s cluster to the desired version
+# task_name:    KarbonUpgradeHosts
+# description:  Upgrades the target Karbon K8s cluster nodes to the desired host image version
 #               Using Karbon API: https://www.nutanix.dev/api_references/karbon/#/ZG9jOjQ1Mg-karbon-api-reference
 # inputvars:    See inputvars region below
 # outputvars:   upgrade_task_uuid
@@ -20,8 +20,8 @@ pc_password = "@@{prism_central.secret}@@"
 prism_central_ip = "@@{prism_central_ip}@@"
 karbon_cluster_uuid = "@@{karbon_cluster_uuid}@@"
 cluster_name = "@@{cluster_name}@@"
-k8s_version = "@@{k8s_version}@@"
-target_k8s_version = "@@{target_k8s_version}@@"
+image_uuid = "@@{image_uuid}@@"
+target_image_version = "@@{target_image_version}@@"
 #endregion inputvars
 
 
@@ -222,15 +222,13 @@ def prism_get_task(api_server,username,secret,task_uuid,secure=False):
 #region prepare api call
 headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
 payload = {
-    "upgrade_config": {
-        "pkg_version": target_k8s_version
-    },
+    "image_uuid": image_uuid,
     "cluster_uuid": karbon_cluster_uuid,
     "drain-policy": "kAlways",
     "drain-timeout": "180s"
 }
 method = 'POST'
-url = "https://{}:9440/karbon/acs/k8s/cluster/{}/k8s_upgrade".format(
+url = "https://{}:9440/karbon/acs/k8s/cluster/{}/upgrade".format(
     prism_central_ip,
     karbon_cluster_uuid
 )
@@ -239,7 +237,7 @@ url = "https://{}:9440/karbon/acs/k8s/cluster/{}/k8s_upgrade".format(
 
 #region make api call
 resp = process_request(url, method, pc_user, pc_password, headers, payload)
-print ("Upgrading Kubernetes cluster {} from version {} to version {}".format(cluster_name,k8s_version,target_k8s_version))
+print ("Upgrading Kubernetes cluster {} to host image version {}".format(cluster_name,target_image_version))
 print(json.loads(resp.content))
 upgrade_task_uuid = resp.json()['task_uuid']
 print ("task_uuid={}".format(upgrade_task_uuid))
