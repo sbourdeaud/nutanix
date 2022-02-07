@@ -28,14 +28,14 @@
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .EXAMPLE
-.\get-ntnxAlerts.ps1 -prism 10.10.10.1 -prismCreds myuser -get -severity Critical
+.\use-ntnxAlerts.ps1 -prism 10.10.10.1 -prismCreds myuser -get -severity Critical
 Get all critical alerts which are neither acknowledged nor resolved from Prism Central 10.10.10.1.
 .LINK
   http://www.nutanix.com/services
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: February 7th 2022
 #>
 
 #region Parameters
@@ -145,9 +145,14 @@ Function GetAlerts
                         "alert_message"= $alert_message;
                         #"default_message"= $alert.status.resources.default_message;
                         #"parameters"= $alert.status.resources.parameters;
+                        "possible_cause"= $alert.status.resources.possible_cause_list.cause_list -join ',';
+                        "resolution" = $alert.status.resources.possible_cause_list.resolution_list -join ',';
                         "source_entity_type"= $alert.status.resources.source_entity.entity.type;
                         "source_entity_name"= $alert.status.resources.source_entity.entity.name;
-                        "uuid"= $alert.metadata.uuid
+                        "uuid"= $alert.metadata.uuid;
+                        "cluster_uuid"= $alert.status.resources.parameters.cluster_uuid.string_value;
+                        "cluster_name"= ($myvarClustersResults | Where {$_.uuid -eq $alert.status.resources.parameters.cluster_uuid.string_value}).name;
+                        "nutanix_kb"= "";
                     }
                     #adding the captured details to the final result
                     $myvarResults.Add((New-Object PSObject -Property $myvarAlert)) | Out-Null
@@ -192,6 +197,7 @@ Date       By   Updates (newest updates at the top)
 01/15/2020 sb   Initial release.
 04/15/2020 sb   Do over with sbourdeaud module
 02/06/2021 sb   Replaced username with get-credential
+02/07/2022 sb   Adding cluster name, possible cause and resolution to alert data
 ################################################################################
 '@
 $myvarScriptName = ".\add-AhvNetwork.ps1"
@@ -276,7 +282,9 @@ Set-PoshTls
 
   $api_server = $prism
   $api_server_port = "9440"
+  $length = 200
   [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
+  [System.Collections.ArrayList]$myvarClustersResults = New-Object System.Collections.ArrayList($null)
 #endregion
 
 #region processing
@@ -285,6 +293,88 @@ Set-PoshTls
     #region -get
       if ($get) 
       {
+        #region get clusters
+          Write-Host "$(get-date) [INFO] Retrieving list of clusters managed by Prism Central..." -ForegroundColor Green
+          #region prepare api call
+              $api_server_endpoint = "/api/nutanix/v3/clusters/list"
+              $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, $api_server_endpoint
+              $method = "POST"
+
+              # this is used to capture the content of the payload
+              $content = @{
+                  kind="cluster";
+                  offset=0;
+                  length=$length
+              }
+              $payload = (ConvertTo-Json $content -Depth 4)
+          #endregion
+          #region make api call
+              Do {
+                  try {
+                      $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                      
+                      $listLength = 0
+                      if ($resp.metadata.offset) {
+                          $firstItem = $resp.metadata.offset
+                      } else {
+                          $firstItem = 0
+                      }
+                      if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
+                          $listLength = $resp.metadata.length
+                      } else {
+                          $listLength = $resp.metadata.total_matches
+                      }
+                      Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
+                      if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+
+                      #grab the information we need in each entity
+                      ForEach ($entity in $resp.entities) {
+                          if ($entity.status.resources.nodes.hypervisor_server_list) {
+                              $myvarClusterInfo = [ordered]@{
+                                  "name" = $entity.status.name;
+                                  "uuid" = $entity.metadata.uuid;
+                                  "nos_version" = $entity.status.resources.config.software_map.NOS.version;
+                                  "redundancy_factor" = $entity.status.resources.config.redundancy_factor;
+                                  "domain_awareness_level" = $entity.status.resources.config.domain_awareness_level;
+                                  "is_long_term_support" = $entity.status.resources.config.build.is_long_term_support;
+                                  "timezone" = $entity.status.resources.config.timezone;
+                                  "external_ip" = $entity.status.resources.network.external_ip;
+                                  "hypervisor" = $entity.status.resources.nodes.hypervisor_server_list.type | Select-Object -Unique
+                              }
+                              #store the results for this entity in our overall result variable
+                              $myvarClustersResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
+                          }
+                      }
+
+                      #prepare the json payload for the next batch of entities/response
+                      $content = @{
+                          kind="cluster";
+                          offset=($resp.metadata.length + $resp.metadata.offset);
+                          length=$length
+                      }
+                      $payload = (ConvertTo-Json $content -Depth 4)
+                  }
+                  catch {
+                      $saved_error = $_.Exception.Message
+                      # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                      Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                      Throw "$(get-date) [ERROR] $saved_error"
+                  }
+                  finally {
+                      #add any last words here; this gets processed no matter what
+                  }
+              }
+              While ($resp.metadata.length -eq $length)
+
+              if ($debugme) {
+                  Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+                  $myvarClustersResults
+              }
+          #endregion
+          Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prism!" -ForegroundColor Cyan
+        #endregion
+
+        #region get alerts
           try 
           {
               $myvarResults = GetAlerts
@@ -306,6 +396,7 @@ Set-PoshTls
           finally 
           {
           }
+        #endregion get alerts
       }
     #endregion
 

@@ -658,7 +658,7 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
-    #* step 1: retrieve list of clusters managed by Prism Central
+    #* step 2: retrieve list of networks managed by Prism Central
     #region get networks
         Write-Host "$(get-date) [INFO] Retrieving list of networks..." -ForegroundColor Green
         #region prepare api call
@@ -731,7 +731,7 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
-    #* step 2: for each cluster, get the list of vms
+    #* step 3: for each cluster, get the list of vms
     #region get vms
         $api_server_endpoint = "/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
         $method = "GET"
@@ -772,7 +772,7 @@ Date       By   Updates (newest updates at the top)
         }
     #endregion
 
-    #* step 3: export results
+    #* step 4: export results
     Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")VmList.csv" -ForegroundColor Green
     $myvarVmResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"VmList.csv")
 
