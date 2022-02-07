@@ -134,6 +134,16 @@ Function GetAlerts
                         $alert.status.resources.default_message | Select-String -Pattern "{(.*?)}" -AllMatches | % {$_.Matches} | % {$alert_message = $alert_message -replace $_.Groups[0].Value,$alert.status.resources.parameters.$($_.Groups[1].Value).$((Get-Member -InputObject $alert.status.resources.parameters.$($_.Groups[1].Value) -MemberType NoteProperty).Name)}
                     }
                     
+                    $kb_id = ($myvarAlertPolicy | where {$_.alert_id -eq $alert.status.resources.type}).kb_id
+                    if ($kb_id)
+                    {
+                      $kb_url = "https://portal.nutanix.com/kb/{0}" -f $kb_id
+                    }
+                    else 
+                    {
+                      $kb_url = ""  
+                    }
+
                     #populating the details we want to capture for each alert
                     $myvarAlert = [ordered]@{
                         "type" = $alert.status.resources.type;
@@ -152,7 +162,7 @@ Function GetAlerts
                         "uuid"= $alert.metadata.uuid;
                         "cluster_uuid"= $alert.status.resources.parameters.cluster_uuid.string_value;
                         "cluster_name"= ($myvarClustersResults | Where {$_.uuid -eq $alert.status.resources.parameters.cluster_uuid.string_value}).name;
-                        "nutanix_kb"= "";
+                        "nutanix_kb"= $kb_url;
                     }
                     #adding the captured details to the final result
                     $myvarResults.Add((New-Object PSObject -Property $myvarAlert)) | Out-Null
@@ -198,9 +208,10 @@ Date       By   Updates (newest updates at the top)
 04/15/2020 sb   Do over with sbourdeaud module
 02/06/2021 sb   Replaced username with get-credential
 02/07/2022 sb   Adding cluster name, possible cause and resolution to alert data
+                Adding Nutanix KB link (when there is one available)
 ################################################################################
 '@
-$myvarScriptName = ".\add-AhvNetwork.ps1"
+$myvarScriptName = ".\use-ntnxAlerts.ps1"
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
 
@@ -285,6 +296,7 @@ Set-PoshTls
   $length = 200
   [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
   [System.Collections.ArrayList]$myvarClustersResults = New-Object System.Collections.ArrayList($null)
+  [System.Collections.ArrayList]$myvarAlertPolicy = New-Object System.Collections.ArrayList($null)
 #endregion
 
 #region processing
@@ -372,7 +384,33 @@ Set-PoshTls
               }
           #endregion
           Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prism!" -ForegroundColor Cyan
-        #endregion
+        #endregion get clusters
+
+        #region get alert policy
+          $api_server_endpoint = "/api/nutanix/v3/groups"
+          $alert_policy_url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+              $api_server_endpoint
+          $content = @{
+            "entity_type"="alert_check_schema";
+            "group_member_attributes"=@(
+              @{"attribute"="alert_uid"};
+              @{"attribute"="kb_num_list"});
+            "query_name"="prism:AlertPolicyGroupsModel";}
+          $alert_policy_payload=(ConvertTo-Json $content -Depth 4)
+          $alert_policy = Invoke-PrismAPICall -method 'POST' -url $alert_policy_url -payload $alert_policy_payload -credential $prismCredentials
+
+          Foreach ($entry in $alert_policy.group_results.entity_results)
+          {
+            if (($entry.data | where {$_.name -eq "alert_uid"}).values.values -and ($entry.data | where {$_.name -eq "kb_num_list"}).values.values)
+            {
+              $alert_policy_info = [ordered]@{
+                "alert_id" = ($entry.data | where {$_.name -eq "alert_uid"}).values.values;
+                "kb_id" = ($entry.data | where {$_.name -eq "kb_num_list"}).values.values;
+              }
+              $myvarAlertPolicy.Add((New-Object PSObject -Property $alert_policy_info)) | Out-Null
+            }
+          }
+        #endregion get alert policy
 
         #region get alerts
           try 
