@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  This script generates a csv containing stats for the specified cluster performance metric for the given time period.
+  This script generates a csv containing stats for the specified cluster vms performance metrics for the given time period.
 .DESCRIPTION
-  The script uses v2 REST API in Prism to GET stats using the /clusters/stats endpoint.
+  The script uses v1 REST API in Prism to GET stats using the /vms/stats endpoint.
 
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
@@ -43,7 +43,7 @@
 
 .EXAMPLE
 .\get-ntnxVmStats.ps1 -cluster ntnxc1.local -vm myvm1 -username admin -password admin -overview -week
-Generate one csv file per overview metric for the last 7 days.
+Generate one csv file per overview metric for the last 7 days for the vm names myvm1.
 
 .LINK
   http://www.nutanix.com/services
