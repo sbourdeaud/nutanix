@@ -33,7 +33,6 @@ Export all rules starting with openshitft from pc1 to the json file pc1.local_[d
   Revision: April 7th 2022
 #>
 
-#todo cleanup output
 #todo change code for import
 #todo add optimization for multi-threading API calls with posh-core
 
@@ -561,7 +560,14 @@ public static void Ignore()
             }
             catch {
                 $saved_error = $_.Exception
-                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
+                if ($saved_error.Source -eq "System.net.Http")
+                {
+                    $saved_error_message = $saved_error.Message
+                }
+                else 
+                {
+                    $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
+                }
                 $resp_return_code = $_.Exception.Response.StatusCode.value__
                 # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
                 if ($resp_return_code -eq 409) 
