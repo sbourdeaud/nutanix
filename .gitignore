@@ -4,5 +4,4 @@ set-EsxPortGroup.ps1
 *.html
 *.log
 .secrets
-flow/10.68.97.150_2022_04_08_11_17_flow_ruleset.json
-flow/wip/10.68.97.150_2022_04_08_11_17_flow_ruleset.json
+*_flow_ruleset.json
