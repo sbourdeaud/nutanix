@@ -28,7 +28,7 @@
 .PARAMETER reEnableOnly
   Try to enable specified active but disabled metro protection domains. Do nothing else.
 .PARAMETER DisableOnly
-  Try to disabled specified active but decoupled metro protection domains. Do nothing else. This is useful when failing back after an unplanned failover.
+  Try to disabled specified active but decoupled metro protection domains. Do nothing else. This is useful when failing back after an unplanned failover and you are not using a witness VM.
 .PARAMETER DoNotUseDrs
   Do not rely on DRS for evacuating VM but set DRS to manual and do the vmotions "manually". This is useful if your cluster capacity is insufficient for DRS to work properly.
 .PARAMETER reEnableDelay
