@@ -20,7 +20,7 @@
 .PARAMETER import
   Import rules and associated objects from json and create them in Prism Central.
 .PARAMETER rules
-  Flow rule names to export (not required for import).
+  Flow rule names to export or import (wildcards accepted).
 .PARAMETER json
   Name of json file to use for import. If none is specified with export, defaults to [pc]_[date]_flow_ruleset.json
 .EXAMPLE
@@ -30,10 +30,11 @@ Export all rules starting with openshitft from pc1 to the json file pc1.local_[d
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 7th 2022
+  Revision: April 13th 2022
 #>
 
 #todo change code for import
+#todo make it so that rule names don't have to be specified by the user on import but are read from the json file
 #todo add optimization for multi-threading API calls with posh-core
 
 
@@ -869,6 +870,7 @@ public static void Ignore()
             
             if ($import)
             {
+                
                 #region are all used category:value pairs on target?
                     #* check each used category:value pair exists on target
                     [System.Collections.ArrayList]$missing_categories_list = New-Object System.Collections.ArrayList($null)
@@ -1036,21 +1038,7 @@ public static void Ignore()
                 }
             #endregion
             
-            #region lookup address group names
-                [System.Collections.ArrayList]$used_address_groups_objects = New-Object System.Collections.ArrayList($null)
-                foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
-                {#process each used address group
-                    #find out what the address group name is (only uuid is kept in rule definition)
-                    $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
-                    $url = "https://{0}:9440{1}" -f $pc,$api_server_endpoint
-                    $method = "GET"
-
-                    $address_group_object = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                    $used_address_groups_objects.Add($address_group_object) | Out-Null
-                }
-            #endregion lookup address group names
-
+            
             if ($import)
             {
                 #region are all used address groups on the target?
@@ -1059,21 +1047,15 @@ public static void Ignore()
                     foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
                     {#process each used address group
 
-                        #! resume effort here
-                        #find out what the address group name is (only uuid is kept in rule definition)
-                        $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
-                        $url = "https://{0}:9440{1}" -f $pc,$api_server_endpoint
-                        $method = "GET"
+                        $source_address_group = $myvar_json_input.addresses | Where-Object {$_.uuid -eq $address_group.uuid}
 
-                        $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                        if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
+                        if ($source_address_group.address_group.name -notin $address_groups.address_group.name)
                         {#based on its name, that address group does not exist on the target
                             $missing_address_groups_list.Add($source_address_group) | Out-Null
                         }
                         else 
                         {#the address group already exists on target, let's update the uuid reference in that rule
-                            $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                            $target_address_group_uuid = ($address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
                             if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
                             {#that address group is used in inbound allow list
                                 ForEach ($address_group_item in $address_group_inbound)
@@ -1093,8 +1075,7 @@ public static void Ignore()
 
                     if ($missing_address_groups_list)
                     {#there are missing address groups
-                        Write-Host "$(get-date) [DATA] The following address groups need to be added on $($targetPc):" -ForegroundColor White
-                        $missing_address_groups_list.address_group.name
+                        Write-Host "$(get-date) [DATA] The following address groups need to be added on $($pc): $($missing_address_groups_list.address_group.name -join ",")" -ForegroundColor White                      
                     }
                 #endregion
 
@@ -1104,7 +1085,7 @@ public static void Ignore()
                     {#process all missing address groups
                         #add address group
                         $api_server_endpoint = "/api/nutanix/v3/address_groups" -f $category,$value
-                        $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
+                        $url = "https://{0}:9440{1}" -f $pc,$api_server_endpoint
                         $method = "POST"
                         $payload = (ConvertTo-Json $address_group.address_group -Depth 10)
                         Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
@@ -1138,6 +1119,21 @@ public static void Ignore()
             }
             elseif ($export)
             {
+                #region lookup address group names
+                    [System.Collections.ArrayList]$used_address_groups_objects = New-Object System.Collections.ArrayList($null)
+                    foreach ($address_group in ($used_address_group_list | Select-Object -Property uuid -Unique))
+                    {#process each used address group
+                        #find out what the address group name is (only uuid is kept in rule definition)
+                        $api_server_endpoint = "/api/nutanix/v3/address_groups/{0}" -f $address_group.uuid
+                        $url = "https://{0}:9440{1}" -f $pc,$api_server_endpoint
+                        $method = "GET"
+
+                        $address_group_object = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                        $used_address_groups_objects.Add($address_group_object) | Out-Null
+                    }
+                #endregion lookup address group names
+
                 return $used_address_groups_objects
             }
         }
@@ -1174,21 +1170,6 @@ public static void Ignore()
                     }
                 }
             #endregion which service groups are used?
-            
-            #region get service group objects
-                [System.Collections.ArrayList]$used_service_groups_objects = New-Object System.Collections.ArrayList($null)
-                foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
-                {#process each used service group
-                    #find out what the service group name is (only uuid is kept in rule definition)
-                    $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
-                    $url = "https://{0}:9440{1}" -f $pc,$api_server_endpoint
-                    $method = "GET"
-
-                    $service_group_object = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-
-                    $used_service_groups_objects.Add($service_group_object) | Out-Null
-                }
-            #endregion get service group objects
 
             if ($import)
             {
@@ -1198,21 +1179,16 @@ public static void Ignore()
                     foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
                     {#process each used service group
 
-                        #find out what the service group name is (only uuid is kept in rule definition)
-                        $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
-                        $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
-                        $method = "GET"
-
-                        $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                        $source_service_group = $myvar_json_input.service_groups | Where-Object {$_.uuid -eq $service_group.uuid}
 
                         #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
-                        if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
+                        if ($source_service_group.service_group.name -notin $service_groups.service_group.name)
                         {#based on its name, that service group does not exist on the target
                             $missing_service_groups_list.Add($source_service_group) | Out-Null
                         }
                         else 
                         {#the service group already exists on target, let's update the uuid reference in that rule
-                            $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                            $target_service_group_uuid = ($service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
                             if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
                             {#that service group is used in inbound allow list
                                 ForEach ($service_group_item in $service_group_inbound)
@@ -1276,6 +1252,20 @@ public static void Ignore()
             }
             elseif ($export)
             {
+                #region get service group objects
+                    [System.Collections.ArrayList]$used_service_groups_objects = New-Object System.Collections.ArrayList($null)
+                    foreach ($service_group in ($used_service_group_list | Select-Object -Property uuid -Unique))
+                    {#process each used service group
+                        #find out what the service group name is (only uuid is kept in rule definition)
+                        $api_server_endpoint = "/api/nutanix/v3/service_groups/{0}" -f $service_group.uuid
+                        $url = "https://{0}:9440{1}" -f $pc,$api_server_endpoint
+                        $method = "GET"
+
+                        $service_group_object = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+                        $used_service_groups_objects.Add($service_group_object) | Out-Null
+                    }
+                #endregion get service group objects
                 return $used_service_groups_objects
             }
         }
@@ -1291,6 +1281,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 04/07/2022 sb   Initial release.
+04/13/2022 sb   Initial complete and tested release.
 ################################################################################
 '@
     $myvarScriptName = ".\Sync-FlowRules.ps1"
@@ -1346,6 +1337,7 @@ Date       By   Updates (newest updates at the top)
         $export = $true
     }
     if ($export -and !$json) {$json = "$($pc)_$(Get-Date -UFormat "%Y_%m_%d_%H_%M_")flow_ruleset.json"}
+    if ($export -and !$rules) {$rules = read-host "Enter the name of the rules you want to export (exp: myrules*)"}
     if ($import -and !$json) 
     {#import was specified but not the path to json file so prompting user for it
         $json = read-host "Enter the path and name of the json file with the rules you want to import"
@@ -1376,10 +1368,11 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [INFO] Retrieving list of Flow rules from Prism Central instance $($pc)..." -ForegroundColor Green
         $rules_response = Get-PrismCentralObjectList -pc $pc -object "network_security_rules" -kind "network_security_rule"
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from Prism Central instance $($pc)" -ForegroundColor Cyan
+        #! add code here to read rule names from json
         $filtered_rules_response = $rules_response | Where-Object {$_.spec.name -match "^$rules"}
         Write-Host "$(get-date) [DATA] There are $($filtered_rules_response.count) Flow rules which match name $($rules) on Prism Central $($pc)..." -ForegroundColor White
 
-        if (!$filtered_rules_response)
+        if (!$import -and !$filtered_rules_response)
         {#we didn't find any matching rules
             Throw "$(get-date) [ERROR] There are no Flow rules on $($pc) which match name $($rules)!"
         }
@@ -1756,6 +1749,8 @@ Date       By   Updates (newest updates at the top)
         }
 
         #export to json file
+        Write-Host ""
+        Write-Host "$(get-date) [STEP] Exporting results to $($json)..." -ForegroundColor Magenta
         $myvar_overall_json | ConvertTo-Json -Depth 20 | Out-File $json
     }
     
