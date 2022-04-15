@@ -33,7 +33,7 @@ Export all rules starting with openshitft from pc1 to the json file pc1.local_[d
   Revision: April 13th 2022
 #>
 
-#todo change code for import
+#todo improve so that addresses can be customized from the addresses section in the json file
 #todo make it so that rule names don't have to be specified by the user on import but are read from the json file
 #todo add optimization for multi-threading API calls with posh-core
 
