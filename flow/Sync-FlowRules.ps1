@@ -24,7 +24,7 @@
 .PARAMETER json
   Name of json file to use for import. If none is specified with export, defaults to [pc]_[date]_flow_ruleset.json
 .EXAMPLE
-.\Sync-FlowRules.ps1 -pc pc1.local -prismCreds myadcreds -export -prefix flowPc1 -rules openshift*
+.\Sync-FlowRules.ps1 -pc pc1.local -prismCreds myadcreds -export -rules openshift*
 Export all rules starting with openshitft from pc1 to the json file pc1.local_[date]_flow_ruleset.json:
 .LINK
   http://www.nutanix.com/services
