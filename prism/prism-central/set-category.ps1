@@ -620,6 +620,8 @@ Date       By   Updates (newest updates at the top)
 02/06/2021 sb   Replaced username with get-credential
 17/06/2021 sb   Removed dependency on external module; fixed issue with 409 rc;
                 Now just printing a warning when category is already assigned.
+25/05/2022 sb   Fixed an issue with $myvar_already_tagged. Thanks to Jason Scott
+                for catching this one and letting me know.
 ################################################################################
 '@
   $myvarScriptName = ".\set-category.ps1"
@@ -638,8 +640,7 @@ Date       By   Updates (newest updates at the top)
   $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
   $myvarOutputLogFile += "OutputLog.log"
   [System.Collections.ArrayList]$myvarListToProcess = New-Object System.Collections.ArrayList($null)
-  $myvar_already_tagged = $false
-
+  
   $api_server_port = "9440"
   $api_server = $prism
     
@@ -694,6 +695,7 @@ Date       By   Updates (newest updates at the top)
 
 #region processing
   ForEach ($item in $myvarListToProcess) {
+    $myvar_already_tagged = $false
     $vm = $item.vm_name
     $category = $item.category_name
     $value = $item.category_value
