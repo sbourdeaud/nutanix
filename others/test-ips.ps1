@@ -24,7 +24,7 @@
 .PARAMETER onlyunavailable
   Only display a list of unavailable IPs.
 .EXAMPLE
-.\test-ips.ps1 -subnet 192.168.0.0/24 -tcp 22,3389,80,443 -timeout 5
+.\test-ips.ps1 -subnet 192.168.0.0/24 -ports 22,3389,80,443 -timeout 5
 Ping all IP addresses in subnet 192.168.0.0/24 and apply a timeout of 5 seconds for tcp port tests (22,3389,80,443)
 .LINK
   http://www.nutanix.com/services

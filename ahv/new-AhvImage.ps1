@@ -269,7 +269,8 @@ Create a new image called _template-windows2016 in the image library of AHV clus
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of disk $diskUuid!" -ForegroundColor Cyan
 
         $diskContainerUUid = $diskDetails.storage_container_uuid
-        $diskNfsFilePath = "nfs://127.0.0.1"+$diskDetails.nutanix_nfsfile_path
+        #$diskNfsFilePath = "nfs://127.0.0.1"+$diskDetails.nutanix_nfsfile_path
+        $diskNfsFilePath = "nfs://$($cluster)$($diskDetails.nutanix_nfsfile_path)"
     #endregion
 
     #region check the specified container exists
