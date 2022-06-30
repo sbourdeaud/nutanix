@@ -22,7 +22,7 @@ Collect VM inventory from prismcentral.local (and get prompted for credentials)
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 29th 2022
+  Revision: June 30th 2022
 #>
 
 #region parameters
@@ -472,6 +472,104 @@ end
 }
 }
 
+function Get-GroupsObjectList
+{#retrieves multiple pages of Prism REST objects using the (undocumented) v3 groups endpoint with the specified attributes
+    [CmdletBinding()]
+    param 
+    (
+        [Parameter(mandatory = $true)][string] $prism,
+        [Parameter(mandatory = $true)][string] $attributes
+    )
+
+    begin 
+    {
+        if (!$length) {$length = 100} #we may not inherit the $length variable; if that is the case, set it to 100 objects per page
+        $total = 0
+        $cumulated = 0
+        $page_offset = 0 #those are used to keep track of how many objects we have processed
+        [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #this is variable we will use to keep track of entities
+        $url = "https://{0}:9440/api/nutanix/v3/groups" -f $prism
+        $method = "POST"
+        $content = @{
+            entity_type="mh_vm";
+            query_name="";
+            grouping_attribute=" ";
+            group_count=3;
+            group_offset=0;
+            group_attributes=@();
+            group_member_count=$length;
+            group_member_offset=$page_offset;
+            group_member_sort_attribute="vm_name";
+            group_member_sort_order="ASCENDING";
+            group_member_attributes=@(
+                ForEach ($attribute in ($attributes -Split ","))
+                {
+                    @{attribute="$($attribute)"}
+                } 
+            )
+        }
+        $payload = (ConvertTo-Json $content -Depth 4) #this is the initial payload at offset 0
+    }
+    
+    process 
+    {
+        Do {
+            try {
+                $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                
+                if ($total -eq 0) 
+                {
+                    $total = $resp.group_results.total_entity_count
+                } #this is the first time we go thru this loop, so let's assign the total number of objects
+                $cumulated += $resp.group_results.entity_results.count
+                
+                Write-Host "$(Get-Date) [INFO] Processing results from $($page_offset) to $($cumulated) out of $($total)" -ForegroundColor Green
+    
+                #grab the information we need in each entity
+                ForEach ($entity in $resp.group_results.entity_results) {                
+                    $myvarResults.Add($entity) | Out-Null
+                }
+                
+                $page_offset += $length #let's increment our offset
+                #prepare the json payload for the next batch of entities/response
+                $content = @{
+                    entity_type="mh_vm";
+                    query_name="";
+                    grouping_attribute=" ";
+                    group_count=3;
+                    group_offset=0;
+                    group_attributes=@();
+                    group_member_count=$length;
+                    group_member_offset=$page_offset;
+                    group_member_sort_attribute="vm_name";
+                    group_member_sort_order="ASCENDING";
+                    group_member_attributes=@(
+                        ForEach ($attribute in ($attributes -Split ","))
+                        {
+                            @{attribute="$($attribute)"}
+                        } 
+                    )
+                }
+                $payload = (ConvertTo-Json $content -Depth 4)
+            }
+            catch {
+                $saved_error = $_.Exception.Message
+                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                Throw "$(get-date) [ERROR] $saved_error"
+            }
+            finally {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+        While ($cumulated -lt $total)
+    }
+    
+    end 
+    {
+        return $myvarResults
+    }
+}
 #endregion
 
 
@@ -481,6 +579,8 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 06/29/2022 sb   Initial release.
+06/30/2022 sb   Changed code to process correctly number of objects in groups 
+                response.  Moved that code to a function.
 ################################################################################
 '@
 $myvarScriptName = ".\get-PcVmCategories.ps1"
@@ -498,7 +598,6 @@ Set-PoshTls
 #region variables
 $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
 $api_server_port = 9440
-$length = 15000
 [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
 #endregion
 
@@ -530,43 +629,11 @@ $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
 #* step 1: Retrieve list of vms with the attributes we want
 #region get vms
-    $api_server_endpoint = "/api/nutanix/v3/groups"
-    $method = "POST"
     Write-Host "$(get-date) [INFO] Retrieving list of vms for $($prismcentral)..." -ForegroundColor Green
-    $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-    $content = @{
-        entity_type="mh_vm";
-        query_name="eb:data:id9f61ae1cbb49-1656501269127";
-        grouping_attribute=" ";
-        group_count=3;
-        group_offset=0;
-        group_attributes=@();
-        group_member_count=$length;
-        group_member_offset=0;
-        group_member_sort_attribute="vm_name";
-        group_member_sort_order="ASCENDING";
-        group_member_attributes=@(
-            @{attribute="vm_name"};
-            @{attribute="cluster_name"};
-            @{attribute="hypervisor_type"};
-            @{attribute="node_name"};
-            @{attribute="categories"};
-            @{attribute="ip_addresses"};
-            @{attribute="num_vcpus"};
-            @{attribute="num_threads_per_core"};
-            @{attribute="memory_size_bytes"};
-            @{attribute="capacity_bytes"};
-            @{attribute="gpus_in_use"};
-            @{attribute="power_state"};
-            @{attribute="protection_type"};
-            @{attribute="protection_policy_state"};
-            @{attribute="protection_domain_name"};  
-        )
-    }
-    $payload = (ConvertTo-Json $content -Depth 4)
-    $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-    Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of $($resp.filtered_entity_count) vms for $($prismcentral)!" -ForegroundColor Cyan
-    ForEach ($entity in $resp.group_results.entity_results) {
+    $vm_list = Get-GroupsObjectList -prism $prismcentral -attributes "vm_name,cluster_name,hypervisor_type,node_name,categories,ip_addresses,num_vcpus,num_threads_per_core,memory_size_bytes,capacity_bytes,gpus_in_use,power_state,protection_type,protection_policy_state,protection_domain_name"
+    
+    Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of $($vm_list.count) vms for $($prismcentral)!" -ForegroundColor Cyan
+    ForEach ($entity in $vm_list) {
         $myvarVmInfo = [ordered]@{
             "name" = ($entity.data | Where-Object {$_.name -eq "vm_name"}).values.values;
             "cluster" = ($entity.data | Where-Object {$_.name -eq "cluster_name"}).values.values;
