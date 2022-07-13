@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  You can use this script to retrieve active settings from one or more HPE ILO adapters.
+  You can use this script to retrieve active BIOS settings from one or more out of band management modules (currently supports HPE ILOs and SuperMicro IPMIs).
 .DESCRIPTION
-  Script will use the Redfish API of the HPE ILO adapters to retrieve active configured settings.
+  Script will use the Redfish API of the OOBM module to retrieve active configured BIOS settings.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -11,18 +11,20 @@
   Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
-.PARAMETER ilos
-  One or more ILO IP addresses or FQDNs (if multiple, separate them with commas and enclose the list in double quotes).  This can also be a path and file name to a csv file containing a list of ILOs. The csv can have any attributes you want, but one of them MUST be called "ilo_ipv4_address".  You can also have attributes called "username" and "password" if you want to specify credentials for each ILO in that csv file (although this is not advisable since those would be clear text in your csv).
-.PARAMETER iloCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details. This option assumes that you can use the same credential for all ILOs you need to probe.  If that is not the case, don't specify credentials and you will be prompted for them for each ILO.
+.PARAMETER mms
+  One or more OOBM module IP addresses or FQDNs (if multiple, separate them with commas and enclose the list in double quotes).  This can also be a path and file name to a csv file containing a list of management modules (mms). The csv can have any attributes you want, but one of them MUST be called "mm_ipv4_address".  You can also have attributes called "username" and "password" if you want to specify credentials for each mm in that csv file (although this is not advisable since those would be clear text in your csv).
+.PARAMETER mmCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details. This option assumes that you can use the same credential for all management modules you need to probe.  If that is not the case, don't specify credentials and you will be prompted for them for each management module.
+.PARAMETER mmType
+  Specifies the type of management module you are querying. Valid values are either ilo (for HPE hardware) or ipmi (for SuperMicro hardware).
 .EXAMPLE
-.\get-HpeILOSettings.ps1 -ilos my_list_of_ilos.csv
-Retrieve settings from the specified list of ilos.
+.\get-BiosSettings.ps1 -mms my_list_of_ilos.csv
+Retrieve settings from the specified list of management modules.
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Authors: Michael Nichols (michael.nichols@nutanix.com), Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: July 12th 2022
+  Revision: July 13th 2022
 #>
 
 
@@ -34,8 +36,9 @@ Param
     [parameter(mandatory = $false)] [switch]$history,
     [parameter(mandatory = $false)] [switch]$log,
     [parameter(mandatory = $false)] [switch]$debugme,
-    [parameter(mandatory = $true)] [string]$ilos,
-    [parameter(mandatory = $false)] $iloCreds
+    [parameter(mandatory = $true)] [string]$mms,
+    [parameter(mandatory = $false)] $mmCreds,
+    [parameter(mandatory = $false)][ValidateSet("ilo","ipmi")] [string]$mmType
 )
 #endregion
 
@@ -380,9 +383,10 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 07/12/2022 sb   Initial release (based on mn's work).
+07/13/2022 sb   Making it compatible with SMC as well as HPE.
 ################################################################################
 '@
-    $myvarScriptName = ".\get-HpeILOSettings.ps1"
+    $myvarScriptName = ".\get-BiosSettings.ps1"
 
     if ($help) {get-help $myvarScriptName; exit}
     if ($History) {$HistoryText; exit}
@@ -400,124 +404,155 @@ Date       By   Updates (newest updates at the top)
 
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-    [System.Collections.ArrayList]$myvar_ilo_configuration_results = New-Object System.Collections.ArrayList($null)
+    [System.Collections.ArrayList]$myvar_mm_configuration_results = New-Object System.Collections.ArrayList($null)
 #endregion
 
 
 #region parameters validation
-    if ($iloCreds)  
+    if ($mmCreds)  
     { #we are using custom credentials, so let's grab the username and password from that
         try 
         {
-            $iloCredentials = Get-CustomCredentials -credname $iloCreds -ErrorAction Stop
+            $mmCredentials = Get-CustomCredentials -credname $mmCreds -ErrorAction Stop
         }
         catch 
         {
-            Set-CustomCredentials -credname $iloCreds
-            $iloCredentials = Get-CustomCredentials -credname $iloCreds -ErrorAction Stop
+            Set-CustomCredentials -credname $mmCreds
+            $mmCredentials = Get-CustomCredentials -credname $mmCreds -ErrorAction Stop
         }
-        $username = $iloCredentials.UserName
-        $iloSecurePassword = $iloCredentials.Password
-        $iloCredentials = New-Object PSCredential $username, $iloSecurePassword
+        $username = $mmCredentials.UserName
+        $mmSecurePassword = $mmCredentials.Password
+        $mmCredentials = New-Object PSCredential $username, $mmSecurePassword
     }
 #endregion
 
 
 #region processing
 
-    #* figure out if ilos is a csv file or not
-    if ($ilos.contains(".csv")) 
-    {#-ilos is a csv file
-        if (Test-Path -Path $ilos) 
+    #* figure out if mms is a csv file or not
+    if ($mms.contains(".csv")) 
+    {#-mms is a csv file
+        if (Test-Path -Path $mms) 
         {#file exists
-            $myvar_ilo_list = Import-Csv -Path $ilos #import the csv file data
+            $myvar_mm_list = Import-Csv -Path $mms #import the csv file data
         }
         else 
         {#file does not exist
-          throw "The specified csv file $($ilos) does not exist!"
+          throw "The specified csv file $($mms) does not exist!"
         }
     }
     else 
-    {#-ilos is not a csv file
-        $myvar_ilos = $ilos.Split(",")
-        [System.Collections.ArrayList]$myvar_ilo_list = New-Object System.Collections.ArrayList($null)
-        ForEach ($ilo in $myvar_ilos)
+    {#-mms is not a csv file
+        $myvar_mms = $mms.Split(",")
+        [System.Collections.ArrayList]$myvar_mm_list = New-Object System.Collections.ArrayList($null)
+        ForEach ($mm in $myvar_mms)
         {
-            $myvar_ilo_item = @{"ilo_ipv4_address" = $ilo}
-            $myvar_ilo_list.Add((New-Object PSObject -Property $myvar_ilo_item)) | Out-Null
+            $myvar_mm_item = @{"mm_ipv4_address" = $mm}
+            $myvar_mm_list.Add((New-Object PSObject -Property $myvar_mm_item)) | Out-Null
         }
     }
 
-    ForEach ($ilo in $myvar_ilo_list)
-    {#loop thru each ilo
-        if (!$ilo.ilo_ipv4_address)
+    ForEach ($mm in $myvar_mm_list)
+    {#loop thru each mm
+        if (!$mm.mm_ipv4_address)
         {
-            Write-Host "$(get-date) [ERROR] You must specify an ilo_ipv4_address attribute in your csv file!" -ForegroundColor Red
+            Write-Host "$(get-date) [ERROR] You must specify an mm_ipv4_address attribute in your csv file!" -ForegroundColor Red
             exit(1)
         }
-        Write-Host "$(get-date) [INFO] Processing ILO $($ilo.ilo_ipv4_address)..." -ForegroundColor Green
+        Write-Host "$(get-date) [INFO] Processing management module $($mm.mm_ipv4_address)..." -ForegroundColor Green
         
-        if ($iloCredentials)
+        if ($mmCredentials)
         {#user has defined a single credential to use
-            $myvar_credentials = $iloCredentials
+            $myvar_credentials = $mmCredentials
         }
         else 
-        {#user has not specified a single credential so let's prompt for credentials for this ilo
-            if ($ilo.username -and $ilo.password)
+        {#user has not specified a single credential so let's prompt for credentials for this management module
+            if ($mm.username -and $mm.password)
             {
-                $myvar_credentials = new-object -typename System.Management.Automation.PSCredential -argumentlist $ilo.username, $(ConvertTo-SecureString $ilo.password -AsPlainText -Force)
+                $myvar_credentials = new-object -typename System.Management.Automation.PSCredential -argumentlist $mm.username, $(ConvertTo-SecureString $mm.password -AsPlainText -Force)
             }
             else 
             {
-                $myvar_credentials = Get-Credential -Message "Please enter credentials for ILO $($ilo.ilo_ipv4_address)"
+                $myvar_credentials = Get-Credential -Message "Please enter credentials for management module $($mm.mm_ipv4_address)"
             }
         }
 
         #* make the api call
-        $api_server_endpoint = "/redfish/v1/systems/1/bios/settings/"
-        $url = "https://{0}{1}" -f $ilo.ilo_ipv4_address, $api_server_endpoint
+        if ($mm.mmType)
+        {#mmType is specified in the csv file, let's figure out what it is
+            if (($mm.mmType -ne "ilo") -and ($mm.mmType -ne "ipmi"))
+            {
+                Write-Host "$(get-date) [ERROR] You must specify an mmType attribute (either ilo or ipmi) in your csv file!" -ForegroundColor Red
+                exit(1)
+            }
+            else 
+            {
+                $mmType = $mm.mmType
+            }
+        }
+        if (!$mmType) 
+        {#the mmType was not specified by the user and was not in the csv file either
+            Write-Host "$(get-date) [ERROR] You must specify an mmType (ilo or ipmi)!" -ForegroundColor Red
+            exit(1)
+        }
+        if ($mmType -eq "ilo")
+        {#this is an ilo (HPE)
+            $api_server_endpoint = "/redfish/v1/systems/1/bios/settings/"
+        }
+        elseif ($mmType -eq "ipmi")
+        {#this is an ipmi (SuperMicro): the redfish endpoint is not the same
+            $api_server_endpoint = "/redfish/v1/Systems/1/Bios/"
+        }
+        $url = "https://{0}{1}" -f $mm.mm_ipv4_address, $api_server_endpoint
         $method = "GET"
         $api_response = Invoke-RESTAPICall -method $method -url $url -credential $myvar_credentials
-        Write-Host "$(get-date) [SUCCESS] Successfully retrieved configuration settings for $($ilo.ilo_ipv4_address)!" -ForegroundColor Cyan
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved configuration BIOS settings for $($mm.mm_ipv4_address)!" -ForegroundColor Cyan
         
         #* process results
 
-        $myvar_ilo_configuration = [ordered]@{}
-        if ($ilos.contains(".csv")) 
-        {#-ilos is a csv file, so import all custom properties in that csv
-            foreach( $ilo_item in $myvar_ilo_list )
-            {
-                foreach ($property in $ilo_item.psobject.properties.name)
-                {
-                    if ($property -eq "ilo_ipv4_address")
-                    {
-                        $myvar_ilo_configuration.ILO = $ilo_item.$property
-                    }
-                    elseif (($property -eq "username") -or ($property -eq "password"))
-                    {
-                        #do nothing
-                    }
-                    else
-                    {
-                        $myvar_ilo_configuration[$property] = $ilo_item.$property
-                    }
+        $myvar_mm_configuration = [ordered]@{}
+        if ($mms.contains(".csv")) 
+        {#-mms is a csv file, so import all custom properties in that csv
+            foreach ($property in $mm.psobject.properties.name)
+            {#processing all properties in that csv
+                if ($property -eq "mm_ipv4_address")
+                {#this is the ipv4 address
+                    $myvar_mm_configuration.management_module = $mm.$property
+                }
+                elseif (($property -eq "username") -or ($property -eq "password"))
+                {#we're skipping username and password
+                    #do nothing
+                }
+                else
+                {#add the custom attribute and value
+                    $myvar_mm_configuration[$property] = $mm.$property
                 }
             }
         }
         else 
-        {#-ilos is not a csv file
-            $myvar_ilo_configuration.ILO = $ilo.ilo_ipv4_address
+        {#-mms is not a csv file
+            $myvar_mm_configuration.management_module = $mm.mm_ipv4_address
         }
         
-        foreach( $property in $api_response.Attributes.psobject.properties.name )
+        if ($mmType -eq "ipmi")
+        {#for some reason, we need to convert the response when it's returned by a SuperMicro IPMI
+            foreach( $property in ($api_response | ConvertFrom-Json -AsHashTable).Attributes.Keys )
+            {#process all attributes/configuration settings returned by the API
+                $myvar_mm_configuration[$property] = ($api_response | ConvertFrom-Json -AsHashTable).Attributes.$property
+            }
+        }
+        else 
         {
-            $myvar_ilo_configuration[$property] = $api_response.Attributes.$property
+            foreach( $property in $api_response.Attributes.psobject.properties.name )
+            {#process all attributes/configuration settings returned by the API
+                $myvar_mm_configuration[$property] = $api_response.Attributes.$property
+            }
         }
 
-        $myvar_ilo_configuration_results.Add((New-Object PSObject -Property $myvar_ilo_configuration)) | Out-Null
+        $myvar_mm_configuration_results.Add((New-Object PSObject -Property $myvar_mm_configuration)) | Out-Null
     }
-    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")ilos_configuration.csv" -ForegroundColor Green
-    $myvar_ilo_configuration_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"ilos_configuration.csv")
+    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")mms_configuration.csv" -ForegroundColor Green
+    $myvar_mm_configuration_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"mms_configuration.csv")
 #endregion
 
 
@@ -533,11 +568,6 @@ Date       By   Updates (newest updates at the top)
     Remove-Variable log -ErrorAction SilentlyContinue
     Remove-Variable cluster -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
-    Remove-Variable ilo* -ErrorAction SilentlyContinue
+    Remove-Variable mm* -ErrorAction SilentlyContinue
     Remove-Variable api* -ErrorAction SilentlyContinue
 #endregion
-
-
-#todo: find a way to deal with credentials (either assume same creds across the board, or prompt for each)
-#todo: build main loop to retrieve data and store it in a collection
-#todo: build export options (csv, console, html)
