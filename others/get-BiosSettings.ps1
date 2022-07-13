@@ -16,7 +16,7 @@
 .PARAMETER mmCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details. This option assumes that you can use the same credential for all management modules you need to probe.  If that is not the case, don't specify credentials and you will be prompted for them for each management module.
 .PARAMETER mmType
-  Specifies the type of management module you are querying. Valid values are either ilo (for HPE hardware) or ipmi (for SuperMicro hardware).
+  Specifies the type of management module you are querying. Valid values are either ilo (for HPE hardware), idrac (for Dell hardware), or ipmi (for SuperMicro hardware).
 .EXAMPLE
 .\get-BiosSettings.ps1 -mms my_list_of_ilos.csv
 Retrieve settings from the specified list of management modules.
@@ -38,7 +38,7 @@ Param
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $true)] [string]$mms,
     [parameter(mandatory = $false)] $mmCreds,
-    [parameter(mandatory = $false)][ValidateSet("ilo","ipmi")] [string]$mmType
+    [parameter(mandatory = $false)][ValidateSet("ilo","ipmi","idrac")] [string]$mmType
 )
 #endregion
 
@@ -384,6 +384,7 @@ Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 07/12/2022 sb   Initial release (based on mn's work).
 07/13/2022 sb   Making it compatible with SMC as well as HPE.
+                Adding Dell iDRAC (untested).
 ################################################################################
 '@
     $myvarScriptName = ".\get-BiosSettings.ps1"
@@ -480,7 +481,7 @@ Date       By   Updates (newest updates at the top)
         #* make the api call
         if ($mm.mmType)
         {#mmType is specified in the csv file, let's figure out what it is
-            if (($mm.mmType -ne "ilo") -and ($mm.mmType -ne "ipmi"))
+            if (($mm.mmType -ne "ilo") -and ($mm.mmType -ne "ipmi") -and ($mm.mmType -ne "idrac"))
             {
                 Write-Host "$(get-date) [ERROR] You must specify an mmType attribute (either ilo or ipmi) in your csv file!" -ForegroundColor Red
                 exit(1)
@@ -502,6 +503,10 @@ Date       By   Updates (newest updates at the top)
         elseif ($mmType -eq "ipmi")
         {#this is an ipmi (SuperMicro): the redfish endpoint is not the same
             $api_server_endpoint = "/redfish/v1/Systems/1/Bios/"
+        }
+        elseif ($mmType -eq "idrac")
+        {#this is an ipmi (SuperMicro): the redfish endpoint is not the same
+            $api_server_endpoint = "/redfish/v1/Systems/System.Embedded.1/Bios/Settings"
         }
         $url = "https://{0}{1}" -f $mm.mm_ipv4_address, $api_server_endpoint
         $method = "GET"
