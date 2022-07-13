@@ -35,7 +35,7 @@ Get all critical alerts which are neither acknowledged nor resolved from Prism C
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 7th 2022
+  Revision: July 13th 2022
 #>
 
 #region Parameters
@@ -200,6 +200,8 @@ Function GetAlerts
 
 #region prep-work
 #check if we need to display help and/or history
+if ($PSVersionTable.PSVersion.Major -lt 6) {throw "$(get-date) [ERROR] Please upgrade to Powershell Core v6 or above (https://github.com/powershell/powershell)"}
+
 $HistoryText = @'
 Maintenance Log
 Date       By   Updates (newest updates at the top)
@@ -209,6 +211,7 @@ Date       By   Updates (newest updates at the top)
 02/06/2021 sb   Replaced username with get-credential
 02/07/2022 sb   Adding cluster name, possible cause and resolution to alert data
                 Adding Nutanix KB link (when there is one available)
+07/13/2022 sb   Forcing PoSH core as -AsHashTable is not recognized by PoSH 5.1
 ################################################################################
 '@
 $myvarScriptName = ".\use-ntnxAlerts.ps1"
