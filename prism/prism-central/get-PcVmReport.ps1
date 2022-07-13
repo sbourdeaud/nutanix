@@ -822,6 +822,7 @@ Date       By   Updates (newest updates at the top)
                 {
                     $vm_networks += ($myvarNetworksResults | Where-Object {$_.uuid -eq $network_uuid}).Name
                 }
+                if ($debugme) {Write-Host "$(get-date) [DATA] Processing virtual machine $($entity.name)..." -ForegroundColor White}
                 $myvarVmInfo = [ordered]@{
                     "cluster" = $cluster.name;
                     "host" = ($myvarHostsResults | Where-Object {$_.uuid -eq $entity.host_uuid}).name;
@@ -841,7 +842,7 @@ Date       By   Updates (newest updates at the top)
                     "vdisks" = $entity.vm_disk_info.disk_address.disk_label -join ',';
                     "cdrom_present" = if (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true})) {"true"} else {"false"};
                     "cdrom_iso" = (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true}) | select-object -property source_disk_address).source_disk_address.ndfs_filepath -join ',';
-                    "vdisk_total_bytes" = ($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false} | Measure-Object size -Sum).Sum;
+                    "vdisk_total_bytes" = if (($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false}).size) {($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false} | Measure-Object size -Sum).Sum} else {0};
                 }
                 #store the results for this entity in our overall result variable
                 $myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
