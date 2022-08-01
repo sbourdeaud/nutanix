@@ -983,6 +983,7 @@ Date       By   Updates (newest updates at the top)
             #Write-Host "$(get-date) [DATA] Message: $(($entity.data | Where-Object {$_.name -eq "message"}).values[0].values[0])" -ForegroundColor White
             #Write-Host "$(get-date) [DATA] Reason: $(($entity.data | Where-Object {$_.name -eq "reason"}).values[0].values[0])" -ForegroundColor White
         }
+        Write-Host "-----------------------------------" -ForegroundColor White
     }
 #endregion
 
