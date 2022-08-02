@@ -1131,10 +1131,37 @@ Date       By   Updates (newest updates at the top)
             ForEach ($myvar_cluster in $myvar_capacity_results)
             {
                 Write-Host "$(get-date) [DATA] Cluster: $($myvar_cluster.cluster)" -ForegroundColor White
-                if ($myvar_cluster.capacity_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor White}
-                if ($myvar_cluster.cpu_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor White}
-                if ($myvar_cluster.memory_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor White}
-                if ($myvar_cluster.storage_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor White}
+                if ($myvar_cluster.capacity_runway -eq "no_data") 
+                {
+                    Write-Host "$(get-date) [WARNING] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor Yellow
+                } 
+                else 
+                {
+                    Write-Host "$(get-date) [DATA] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor $(if ($myvar_cluster.capacity_runway -le $myvar_desired_runway) {"Red"} else {"White"})
+                }
+                if ($myvar_cluster.cpu_runway -eq "no_data") 
+                {
+                    Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow
+                } 
+                else 
+                {
+                    Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor $(if ($myvar_cluster.cpu_runway -le $myvar_desired_runway) {"Red"} else {"White"})
+                }
+                if ($myvar_cluster.memory_runway -eq "no_data") {
+                    Write-Host "$(get-date) [WARNING] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor Yellow
+                } 
+                else 
+                {
+                    Write-Host "$(get-date) [DATA] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor $(if ($myvar_cluster.memory_runway -le $myvar_desired_runway) {"Red"} else {"White"})
+                }
+                if ($myvar_cluster.storage_runway -eq "no_data") 
+                {
+                    Write-Host "$(get-date) [WARNING] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor Yellow
+                } 
+                else 
+                {
+                    Write-Host "$(get-date) [DATA] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor $(if ($myvar_cluster.storage_runway -le $myvar_desired_runway) {"Red"} else {"White"})
+                }
                 Write-Host "$(get-date) [DATA] AOS Version: $($myvar_cluster.aos_version)" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] CPU Cores Qty: $($myvar_cluster.num_cpus)" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] Memory Size in Bytes: $($myvar_cluster.memory_capacity_bytes)" -ForegroundColor White
