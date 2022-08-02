@@ -955,8 +955,8 @@ Date       By   Updates (newest updates at the top)
     $myvar_desired_runway = 30
 
     #* email configuration   
-    $myvar_smtp_server = "smtp.gmail.com"
-    $myvar_smtp_server_port = 25
+    $myvar_smtp_server = "smtp.office365.com"
+    $myvar_smtp_server_port = 587
     $myvar_smtp_to = "stephane.bourdeaud@nutanix.com"
     
     #* influxdb configuration 
@@ -1065,6 +1065,7 @@ Date       By   Updates (newest updates at the top)
 
 
 #region main processing	
+    #* get data
     #region retrieve the information we need
         Write-Host "$(get-date) [INFO] Retrieving capacity runway values from $($prism)..." -ForegroundColor Green
         
@@ -1122,12 +1123,13 @@ Date       By   Updates (newest updates at the top)
         
     #endregion retrieve the information we need
     
+    #* output data
     #region process retrieved data for output
         #* console output
         #region console output  
+            Write-Host "-----------------------------------" -ForegroundColor White
             ForEach ($myvar_cluster in $myvar_capacity_results)
             {
-                Write-Host "-----------------------------------" -ForegroundColor White
                 Write-Host "$(get-date) [DATA] Cluster: $($myvar_cluster.cluster)" -ForegroundColor White
                 if ($myvar_cluster.capacity_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor White}
                 if ($myvar_cluster.cpu_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor White}
@@ -1214,6 +1216,43 @@ Date       By   Updates (newest updates at the top)
         #endregion influxdb output
 
         #* email output
+        if ($email)
+        {#we need to send email
+            #sender ([MimeKit.MailboxAddress] http://www.mimekit.net/docs/html/T_MimeKit_MailboxAddress.htm, required)
+            $From=[MimeKit.MailboxAddress]$emailCredentials.UserName
+
+            #recipient list ([MimeKit.InternetAddressList] http://www.mimekit.net/docs/html/T_MimeKit_InternetAddressList.htm, required)
+            $RecipientList=[MimeKit.InternetAddressList]::new()
+            $RecipientList.Add([MimeKit.InternetAddress]$myvar_smtp_to)
+
+            #attachment list ([System.Collections.Generic.List[string]], optional)
+            $AttachmentList=[System.Collections.Generic.List[string]]::new()
+            $AttachmentList.Add($myvar_html_report_name)
+
+            #* putting together mail content (as html)
+            $myvar_smtp_subject = "Capacity Runway Report for $($prism)"
+            $myvar_smtp_html_body = EmailBody {
+                EmailTextBox -FontFamily 'Calibri' -Size 22 -TextDecoration underline -Color Blue -Alignment center {
+                    'Capacity Runway Report'
+                }
+                EmailText -LineBreak
+                EmailText -FontSize 20 -Text "Capacity Runway" -Color Blue -FontFamily 'Calibri'
+                EmailTable -Table $myvar_capacity_results -HideFooter -Title "Capacity Runway"
+                EmailText -LineBreak
+            }
+
+            #send message
+            Write-Host "$(get-date) [INFO] Sending email message to $($myvar_smtp_to)..." -ForegroundColor Green
+            try
+            {#sending mail
+                Send-MailKitMessage -UseSecureConnectionIfAvailable -Credential $emailCredentials -SMTPServer $myvar_smtp_server -Port $myvar_smtp_server_port -From $From -RecipientList $RecipientList -Subject $myvar_smtp_subject -HtmlBody $myvar_smtp_html_body -AttachmentList $AttachmentList -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Successfully sent email message to $($myvar_smtp_to)" -ForegroundColor Cyan
+            }
+            catch
+            {#could not send mail
+                Write-Host "$(get-date) [ERROR] Could not send email message to $($myvar_smtp_to): $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
 
         #* csv output
         Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")capacity_runway.csv" -ForegroundColor Green
