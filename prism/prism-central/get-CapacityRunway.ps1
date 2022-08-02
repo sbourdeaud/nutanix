@@ -950,6 +950,9 @@ Date       By   Updates (newest updates at the top)
 #region variables
     $myvar_ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
     [System.Collections.ArrayList]$myvar_capacity_results = New-Object System.Collections.ArrayList($null)
+    
+    #* html configuration
+    $myvar_desired_runway = 30
 
     #* email configuration   
     $myvar_smtp_server = "smtp.gmail.com"
@@ -1120,26 +1123,65 @@ Date       By   Updates (newest updates at the top)
     #endregion retrieve the information we need
     
     #region process retrieved data for output
-        #* console output
-        #region console output
-            ForEach ($myvar_cluster in $myvar_capacity_results)
-            {
-                Write-Host "-----------------------------------" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] Cluster: $(($entity.data | Where-Object {$_.name -eq "cluster_name"}).values[0].values[0])" -ForegroundColor White
-                if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {Write-Host "$(get-date) [DATA] Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Runway: No Data!" -ForegroundColor Yellow}
-                if (($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values) {Write-Host "$(get-date) [DATA] CPU Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] CPU Runway: No Data!" -ForegroundColor Yellow}
-                if (($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values) {Write-Host "$(get-date) [DATA] Memory Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Memory Runway: No Data!" -ForegroundColor Yellow}
-                if (($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values) {Write-Host "$(get-date) [DATA] Storage Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Storage Runway: No Data!" -ForegroundColor Yellow}
-                Write-Host "$(get-date) [DATA] AOS Version: $(($entity.data | Where-Object {$_.name -eq "version"}).values[0].values[0])" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] CPU Cores Qty: $(($entity.data | Where-Object {$_.name -eq "num_cpus"}).values[0].values[0])" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] Memory Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "memory_capacity_bytes"}).values[0].values[0])" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] Storage Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "disk_size_bytes"}).values[0].values[0])" -ForegroundColor White
-                Write-Host "$(get-date) [DATA] Number of hosted VMs: $(($entity.data | Where-Object {$_.name -eq "num_vms"}).values[0].values[0])" -ForegroundColor White
-                Write-Host "-----------------------------------" -ForegroundColor White
-            }
-        #endregion console output
-
+            #* console output
+            #region console output  
+                ForEach ($myvar_cluster in $myvar_capacity_results)
+                {
+                    Write-Host "-----------------------------------" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Cluster: $($myvar_cluster.cluster)" -ForegroundColor White
+                    if ($myvar_cluster.capacity_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor White}
+                    if ($myvar_cluster.cpu_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor White}
+                    if ($myvar_cluster.memory_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor White}
+                    if ($myvar_cluster.storage_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor White}
+                    Write-Host "$(get-date) [DATA] AOS Version: $(($entity.data | Where-Object {$_.name -eq "version"}).values[0].values[0])" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] CPU Cores Qty: $(($entity.data | Where-Object {$_.name -eq "num_cpus"}).values[0].values[0])" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Memory Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "memory_capacity_bytes"}).values[0].values[0])" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Storage Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "disk_size_bytes"}).values[0].values[0])" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Number of hosted VMs: $(($entity.data | Where-Object {$_.name -eq "num_vms"}).values[0].values[0])" -ForegroundColor White
+                    Write-Host "-----------------------------------" -ForegroundColor White
+                }
+            #endregion console output
+        
         #* html output
+        #region html output
+            if ($html) 
+            {#we need html output
+                Write-Host "$(get-date) [INFO] Creating HTML report in file $($myvar_html_report_name)..." -ForegroundColor Green
+
+                #* html report creation/formatting starts here
+                $myvar_html_report = New-Html -TitleText "Capacity Runway Report" -Online {
+                    New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor White -TextColor Black -TextAlign center -Type RowOdd
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor WhiteSmoke -TextColor Black -TextAlign center -Type RowEven
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowSelected
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHoverSelected
+                    New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#76787A" -TextColor WhiteSmoke -TextAlign center -Type RowHover
+                    New-HTMLTableStyle -Type Header -BorderLeftStyle dashed -BorderLeftColor "#4C4C4E" -BorderLeftWidthSize 1px
+                    New-HTMLTableStyle -Type Footer -BorderLeftStyle dotted -BorderLeftColor "#4C4C4E" -BorderleftWidthSize 1px
+                    New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
+                    
+                    New-HtmlTable -DataTable ($myvar_capacity_results) -HideFooter {
+                        New-HTMLTableCondition -Name 'capacity_runway' -Type number -Operator gt -Value $myvar_desired_runway -BackgroundColor Green -Color White
+                        New-HTMLTableCondition -Name 'capacity_runway' -Type number -Operator le -Value $myvar_desired_runway -BackgroundColor Red -Color White
+                        New-HTMLTableCondition -Name 'cpu_runway' -Type number -Operator gt -Value $myvar_desired_runway -BackgroundColor Green -Color White
+                        New-HTMLTableCondition -Name 'cpu_runway' -Type number -Operator le -Value $myvar_desired_runway -BackgroundColor Red -Color White
+                        New-HTMLTableCondition -Name 'memory_runway' -Type number -Operator gt -Value $myvar_desired_runway -BackgroundColor Green -Color White
+                        New-HTMLTableCondition -Name 'memory_runway' -Type number -Operator le -Value $myvar_desired_runway -BackgroundColor Red -Color White
+                        New-HTMLTableCondition -Name 'storage_runway' -Type number -Operator gt -Value $myvar_desired_runway -BackgroundColor Green -Color White
+                        New-HTMLTableCondition -Name 'storage_runway' -Type number -Operator le -Value $myvar_desired_runway -BackgroundColor Red -Color White
+                    }
+                }
+                $myvar_html_report | Out-File -FilePath $($myvar_html_report_name)
+                Write-Host ""
+
+                if ($viewnow)
+                {#open the html report now in the default browser
+                    Invoke-Item $myvar_html_report_name
+                }
+            }
+        #endregion html output
 
         #* influxdb output
 
