@@ -1053,7 +1053,7 @@ Date       By   Updates (newest updates at the top)
     if (Test-Path -path $dir)
     {#specified path exists
         $myvar_html_report_name = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-        $myvar_html_report_name += "$($cluster)_capacity_report.html"
+        $myvar_html_report_name += "$($prism)_capacity_report.html"
         $myvar_html_report_name = $dir + $myvar_html_report_name
     }
     else 
@@ -1123,24 +1123,24 @@ Date       By   Updates (newest updates at the top)
     #endregion retrieve the information we need
     
     #region process retrieved data for output
-            #* console output
-            #region console output  
-                ForEach ($myvar_cluster in $myvar_capacity_results)
-                {
-                    Write-Host "-----------------------------------" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Cluster: $($myvar_cluster.cluster)" -ForegroundColor White
-                    if ($myvar_cluster.capacity_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor White}
-                    if ($myvar_cluster.cpu_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor White}
-                    if ($myvar_cluster.memory_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor White}
-                    if ($myvar_cluster.storage_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor White}
-                    Write-Host "$(get-date) [DATA] AOS Version: $($myvar_cluster.version)" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] CPU Cores Qty: $($myvar_cluster.num_cpus)" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Memory Size in Bytes: $($myvar_cluster.memory_capacity_bytes)" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Storage Size in Bytes: $($myvar_cluster.disk_size_bytes)" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Number of hosted VMs: $($myvar_cluster.num_vms)" -ForegroundColor White
-                    Write-Host "-----------------------------------" -ForegroundColor White
-                }
-            #endregion console output
+        #* console output
+        #region console output  
+            ForEach ($myvar_cluster in $myvar_capacity_results)
+            {
+                Write-Host "-----------------------------------" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Cluster: $($myvar_cluster.cluster)" -ForegroundColor White
+                if ($myvar_cluster.capacity_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Runway (days): $($myvar_cluster.capacity_runway)" -ForegroundColor White}
+                if ($myvar_cluster.cpu_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor White}
+                if ($myvar_cluster.memory_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor White}
+                if ($myvar_cluster.storage_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor White}
+                Write-Host "$(get-date) [DATA] AOS Version: $($myvar_cluster.aos_version)" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] CPU Cores Qty: $($myvar_cluster.num_cpus)" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Memory Size in Bytes: $($myvar_cluster.memory_capacity_bytes)" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Storage Size in Bytes: $($myvar_cluster.disk_size_bytes)" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Number of hosted VMs: $($myvar_cluster.num_vms)" -ForegroundColor White
+                Write-Host "-----------------------------------" -ForegroundColor White
+            }
+        #endregion console output
         
         #* html output
         #region html output
@@ -1174,7 +1174,6 @@ Date       By   Updates (newest updates at the top)
                     }
                 }
                 $myvar_html_report | Out-File -FilePath $($myvar_html_report_name)
-                Write-Host ""
 
                 if ($viewnow)
                 {#open the html report now in the default browser
