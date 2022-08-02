@@ -23,7 +23,7 @@
 .PARAMETER dir
   Directory/path where to save the html report.  By default, it will be created in the current directory. Note that the name of the report is always capacity_report.html and that you can change this in the script variables section.
 .PARAMETER influxdb
-  Specifies you want to send data to influxdb server. You will need to configure the influxdb server URL and database instance in the variables section of this script.  The timeseries created by default is called uvm_capacity.
+  Specifies you want to send data to influxdb server. You will need to configure the influxdb server URL and database instance in the variables section of this script.  The timeseries created by default is called capacity_runway.
 .PARAMETER influxdbCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$influxdbCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER email
@@ -1133,11 +1133,11 @@ Date       By   Updates (newest updates at the top)
                     if ($myvar_cluster.cpu_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] CPU Runway (days): $($myvar_cluster.cpu_runway)" -ForegroundColor White}
                     if ($myvar_cluster.memory_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Memory Runway (days): $($myvar_cluster.memory_runway)" -ForegroundColor White}
                     if ($myvar_cluster.storage_runway -eq "no_data") {Write-Host "$(get-date) [WARNING] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor Yellow} else {Write-Host "$(get-date) [DATA] Storage Runway (days): $($myvar_cluster.storage_runway)" -ForegroundColor White}
-                    Write-Host "$(get-date) [DATA] AOS Version: $(($entity.data | Where-Object {$_.name -eq "version"}).values[0].values[0])" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] CPU Cores Qty: $(($entity.data | Where-Object {$_.name -eq "num_cpus"}).values[0].values[0])" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Memory Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "memory_capacity_bytes"}).values[0].values[0])" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Storage Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "disk_size_bytes"}).values[0].values[0])" -ForegroundColor White
-                    Write-Host "$(get-date) [DATA] Number of hosted VMs: $(($entity.data | Where-Object {$_.name -eq "num_vms"}).values[0].values[0])" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] AOS Version: $($myvar_cluster.version)" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] CPU Cores Qty: $($myvar_cluster.num_cpus)" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Memory Size in Bytes: $($myvar_cluster.memory_capacity_bytes)" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Storage Size in Bytes: $($myvar_cluster.disk_size_bytes)" -ForegroundColor White
+                    Write-Host "$(get-date) [DATA] Number of hosted VMs: $($myvar_cluster.num_vms)" -ForegroundColor White
                     Write-Host "-----------------------------------" -ForegroundColor White
                 }
             #endregion console output
@@ -1184,6 +1184,35 @@ Date       By   Updates (newest updates at the top)
         #endregion html output
 
         #* influxdb output
+        #region influxdb output
+            if ($influxdb)
+            {#we need to insert data into influxdb database
+                ForEach ($myvar_cluster in $myvar_capacity_results)
+                {
+                    if ($myvar_cluster.capacity_runway -ne "no_data") 
+                    {#there is available data for that cluster
+                        try 
+                        {#sending data to influxdb
+                            Write-Host "$(get-date) [INFO] Sending capacity runway data for cluster $($myvar_cluster.cluster) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series capacity_runway..." -ForegroundColor Green
+                            Write-Influx -Measure capacity_runway -Tags @{cluster=$myvar_cluster.cluster} -Metrics @{
+                                capacity_runway=$myvar_cluster.capacity_runway;
+                                cpu_runway=$myvar_cluster.cpu_runway;
+                                memory_runway=$myvar_cluster.memory_runway;
+                                storage_runway=$myvar_cluster.storage_runway;
+                                num_cpus=$myvar_cluster.num_cpus;
+                                memory_capacity_bytes=$myvar_cluster.memory_capacity_bytes;
+                                disk_size_bytes=$myvar_cluster.disk_size_bytes;
+                                num_vms=$myvar_cluster.num_vms;
+                            } -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
+                        }
+                        catch 
+                        {#could not send data to influxdb
+                            Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Could not send data to influxdb: $($_.Exception.Message)"
+                        }
+                    }
+                }
+            }
+        #endregion influxdb output
 
         #* email output
 
