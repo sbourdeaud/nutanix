@@ -36,7 +36,7 @@ When rule are _removed_, any categories, service groups and address groups it wa
 
 Rules are _updated_ when the source and target payloads do not match (other than uuids), so any type of change should be processed as the payload is updated with the correct uuid references and then applied as it is from source.
 
-Note that thoughout execution, the script display timestamped output entries which are green for informational output, yellow for warning output, red for error output (which usually interrupt script execution), white for data and debug output (debug output can be triggered with the **debugme** script parameter) and light blue for things which are attempted (such as an API call). Any light blue output should have a green, yellow or red matching output to indicate success, warning or failure.
+Note that thoughout execution, the script display timestamped output entries which are green for informational output, yellow for warning output, red for error output (which usually interrupt script execution), white for data and debug output (debug output can be triggered with the **debugme** script parameter) and light blue for things which are successfull (such as an API call).
 
 ## Technical requirements
 
