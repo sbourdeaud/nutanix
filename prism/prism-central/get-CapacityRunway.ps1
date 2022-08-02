@@ -16,6 +16,20 @@
   Prism Central fully qualified domain name or IP address.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER html
+  Produces an html output in addition to console output.
+.PARAMETER viewnow
+  Means you want the script to open the html report in your default browser immediately after creation.
+.PARAMETER dir
+  Directory/path where to save the html report.  By default, it will be created in the current directory. Note that the name of the report is always capacity_report.html and that you can change this in the script variables section.
+.PARAMETER influxdb
+  Specifies you want to send data to influxdb server. You will need to configure the influxdb server URL and database instance in the variables section of this script.  The timeseries created by default is called uvm_capacity.
+.PARAMETER influxdbCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$influxdbCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER email
+  Specifies that you want to send an email with the html report attached. This will require that you add smtp configuration in the variables section.
+.PARAMETER emailCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$emailCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .EXAMPLE
 .\get-CapacityRunway.ps1 -prism ntnxpc1.local
 Grabs the capacity runway for all managed clusters from ntnxpc1.local:
@@ -23,7 +37,7 @@ Grabs the capacity runway for all managed clusters from ntnxpc1.local:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 1st 2022
+  Revision: August 2nd 2022
 #>
 
 
@@ -36,7 +50,14 @@ Grabs the capacity runway for all managed clusters from ntnxpc1.local:
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$prism,
-        [parameter(mandatory = $false)] $prismCreds
+        [parameter(mandatory = $false)] $prismCreds,
+        [parameter(mandatory = $false)] [switch]$html,
+        [parameter(mandatory = $false)] [switch]$viewnow,
+        [parameter(mandatory = $false)] [string]$dir,
+        [parameter(mandatory = $false)] [switch]$influxdb,
+        [parameter(mandatory = $false)] $influxdbCreds,
+        [parameter(mandatory = $false)] [switch]$email,
+        [parameter(mandatory = $false)] $emailCreds
     )
 #endregion parameters
 
@@ -896,16 +917,30 @@ Date       By   Updates (newest updates at the top)
 06/19/2015 sb   Initial release.
 ################################################################################
 '@
-    $myvar_ScriptName = ".\template_powershell.ps1"
+    $myvar_ScriptName = ".\get-CapacityRunway.ps1"
 
     if ($log) 
     {#we want to create a log transcript
-        $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "Invoke-FlowRuleSync.log"
+        $myvar_output_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_") + "get-CapacityRunway.log"
         Start-Transcript -Path ./$myvar_output_log_file
     }
 
     if ($help) {get-help $myvar_ScriptName; exit}
     if ($History) {$HistoryText; exit}
+
+    #region module PSWriteHTML
+        if ($html)
+        {#we need html output, so let's load the PSWriteHTML module
+            LoadModule -module PSWriteHTML
+        }
+    #endregion module PSWriteHTML
+
+    #region module Influx
+        if ($influxdb)
+        {#we need influxdb output, so let's load the Influx module
+            LoadModule -module Influx
+        }
+    #endregion module Influx
 
     Set-PoSHSSLCerts
     Set-PoshTls
@@ -914,6 +949,16 @@ Date       By   Updates (newest updates at the top)
 
 #region variables
     $myvar_ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+    [System.Collections.ArrayList]$myvar_capacity_results = New-Object System.Collections.ArrayList($null)
+
+    #* email configuration   
+    $myvar_smtp_server = "smtp.gmail.com"
+    $myvar_smtp_server_port = 25
+    $myvar_smtp_to = "stephane.bourdeaud@nutanix.com"
+    
+    #* influxdb configuration 
+    $myvar_influxdb_url = "http://localhost:8086"
+    $myvar_influxdb_database = "prism"
 #endregion
 
 
@@ -937,57 +982,174 @@ Date       By   Updates (newest updates at the top)
     $username = $prismCredentials.UserName
     $PrismSecurePassword = $prismCredentials.Password
     $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-#endregion
 
-
-#region processing	
-    Write-Host "$(get-date) [INFO] Retrieving capacity runway values from $($prism)..." -ForegroundColor Green
-    
-    #configuring the API call
-    $url = "https://$($prism):9440/api/nutanix/v3/groups"
-    $method = "POST"
-    $content = @{
-        entity_type="cluster";
-        group_member_sort_attribute="cluster_name";
-        group_member_sort_order="ASCENDING";
-        group_member_attributes=@(
-            @{attribute="cluster_name"};
-            @{attribute="capacity.runway"};
-            @{attribute="capacity.cpu_runway"};
-            @{attribute="capacity.memory_runway"};
-            @{attribute="capacity.storage_runway"};
-            @{attribute="state"};
-            @{attribute="message"};
-            @{attribute="reason"}
-        )
-    }
-    $payload = (ConvertTo-Json $content -Depth 4)
-    
-    #making the API call
-    $myvar_capacity_runway_results = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-    
-    Write-Host "$(get-date) [SUCCESS] Successfully retrieved capacity runway values from $($prism)!" -ForegroundColor Cyan
-    
-    #processing results
-    ForEach ($myvar_cluster in $myvar_capacity_runway_results.group_results)
-    {
-        ForEach ($entity in $myvar_cluster.entity_results)
-        {
-            Write-Host "-----------------------------------" -ForegroundColor White
-            Write-Host "$(get-date) [DATA] Cluster: $(($entity.data | Where-Object {$_.name -eq "cluster_name"}).values[0].values[0])" -ForegroundColor White
-            if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {Write-Host "$(get-date) [DATA] Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Runway: No Data!" -ForegroundColor Yellow}
-            if (($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values) {Write-Host "$(get-date) [DATA] CPU Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] CPU Runway: No Data!" -ForegroundColor Yellow}
-            if (($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values) {Write-Host "$(get-date) [DATA] Memory Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Memory Runway: No Data!" -ForegroundColor Yellow}
-            if (($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values) {Write-Host "$(get-date) [DATA] Storage Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Storage Runway: No Data!" -ForegroundColor Yellow}
-            #Write-Host "$(get-date) [DATA] State: $(($entity.data | Where-Object {$_.name -eq "state"}).values[0].values[0])" -ForegroundColor White
-            #Write-Host "$(get-date) [DATA] Message: $(($entity.data | Where-Object {$_.name -eq "message"}).values[0].values[0])" -ForegroundColor White
-            #Write-Host "$(get-date) [DATA] Reason: $(($entity.data | Where-Object {$_.name -eq "reason"}).values[0].values[0])" -ForegroundColor White
+    if (!$influxdbCreds -and $influxdb) 
+    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+       $influxdbCredentials = Get-Credential -Message "Please enter InfluxDB credentials"
+    } 
+    elseif ($influxdb) 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {#Get-CustomCredentials
+            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+            $username = $influxdbCredentials.UserName
+            $InfluxDBSecurePassword = $influxdbCredentials.Password
         }
-        Write-Host "-----------------------------------" -ForegroundColor White
+        catch 
+        {#could not Get-CustomeCredentials, so Set-CustomCredentials
+            Set-CustomCredentials -credname $influxdbCreds
+            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+            $username = $influxdbCredentials.UserName
+            $InfluxDBSecurePassword = $influxdbCredentials.Password
+        }
+        $influxdbCredentials = New-Object PSCredential $username, $InfluxDBSecurePassword
+    }
+
+    if (!$emailCreds -and $email)
+    {#we want to send email
+        $emailCredentials = Get-Credential -Message "Please enter email credentials"
+    }
+    elseif ($email) 
+    { #we are using custom credentials, so let's grab the username and password from that
+        try 
+        {#Get-CustomCredentials
+            $emailCredentials = Get-CustomCredentials -credname $emailCreds -ErrorAction Stop
+            $username = $emailCredentials.UserName
+            $emailSecurePassword = $emailCredentials.Password
+        }
+        catch 
+        {#could not Get-CustomeCredentials, so Set-CustomCredentials
+            Set-CustomCredentials -credname $emailCreds
+            $emailCredentials = Get-CustomCredentials -credname $emailCreds -ErrorAction Stop
+            $username = $emailCredentials.UserName
+            $emailSecurePassword = $emailCredentials.Password
+        }
+        $emailCredentials = New-Object PSCredential $username, $emailSecurePassword
+
+        #make sure we'll use html
+        $html = $true
+        LoadModule Send-MailKitMessage
+    }
+
+    if (!$dir)
+    {#no report directory was specified, so we'll use the current directory
+        $dir = Get-Location | Select-Object -ExpandProperty Path
+    }
+
+    if (!$dir.EndsWith("\")) 
+    {#make sure given log path has a trailing \
+        if ($IsMacOS -or $IsLinux)
+        {#we are on Mac or Linux
+            $dir += "/"
+        }
+        else 
+        {#we are on Windows
+            $dir += "\"
+        }
+    }
+    if (Test-Path -path $dir)
+    {#specified path exists
+        $myvar_html_report_name = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
+        $myvar_html_report_name += "$($cluster)_capacity_report.html"
+        $myvar_html_report_name = $dir + $myvar_html_report_name
+    }
+    else 
+    {#specified path does not exist
+        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Specified log path $($dir) does not exist! Exiting."
+        Exit 1
     }
 #endregion
+
+
+#region main processing	
+    #region retrieve the information we need
+        Write-Host "$(get-date) [INFO] Retrieving capacity runway values from $($prism)..." -ForegroundColor Green
+        
+        #configuring the API call
+        $url = "https://$($prism):9440/api/nutanix/v3/groups"
+        $method = "POST"
+        $content = @{
+            entity_type="cluster";
+            group_member_sort_attribute="cluster_name";
+            group_member_sort_order="ASCENDING";
+            group_member_attributes=@(
+                @{attribute="cluster_name"};
+                @{attribute="capacity.runway"};
+                @{attribute="capacity.cpu_runway"};
+                @{attribute="capacity.memory_runway"};
+                @{attribute="capacity.storage_runway"};
+                @{attribute="version"};
+                @{attribute="num_cpus"};
+                @{attribute="memory_capacity_bytes"};
+                @{attribute="disk_size_bytes"};
+                @{attribute="num_vms"};
+                @{attribute="cluster_uuid"}
+            )
+            query_name="prism:EBQueryModel";
+            filter_criteria="feature_name==CAPACITY_FORECAST"
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        
+        #making the API call
+        $myvar_capacity_runway_results = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+        
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved capacity runway values from $($prism)!" -ForegroundColor Cyan
+
+        ForEach ($myvar_cluster in $myvar_capacity_runway_results.group_results)
+        {
+            ForEach ($entity in $myvar_cluster.entity_results)
+            {
+                $myvar_cluster_capacity_info = [ordered]@{
+                    "cluster" = ($entity.data | Where-Object {$_.name -eq "cluster_name"}).values[0].values[0];
+                    "capacity_runway" = if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values[0].values[0]} else {"no_data"};
+                    "cpu_runway" = if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values[0].values[0]} else {"no_data"};
+                    "memory_runway" = if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values[0].values[0]} else {"no_data"};
+                    "storage_runway" = if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values[0].values[0]} else {"no_data"};
+                    "aos_version" = ($entity.data | Where-Object {$_.name -eq "version"}).values[0].values[0];
+                    "num_cpus" = ($entity.data | Where-Object {$_.name -eq "num_cpus"}).values[0].values[0];
+                    "memory_capacity_bytes" = ($entity.data | Where-Object {$_.name -eq "memory_capacity_bytes"}).values[0].values[0];
+                    "disk_size_bytes" = ($entity.data | Where-Object {$_.name -eq "memory_capacity_bytes"}).values[0].values[0];
+                    "num_vms" = ($entity.data | Where-Object {$_.name -eq "num_vms"}).values[0].values[0];
+                }
+                #store the results for this entity in our overall result variable
+                $myvar_capacity_results.Add((New-Object PSObject -Property $myvar_cluster_capacity_info)) | Out-Null
+            }
+        }
+
+        
+    #endregion retrieve the information we need
+    
+    #region process retrieved data for output
+        #* console output
+        #region console output
+            ForEach ($myvar_cluster in $myvar_capacity_results)
+            {
+                Write-Host "-----------------------------------" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Cluster: $(($entity.data | Where-Object {$_.name -eq "cluster_name"}).values[0].values[0])" -ForegroundColor White
+                if (($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values) {Write-Host "$(get-date) [DATA] Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Runway: No Data!" -ForegroundColor Yellow}
+                if (($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values) {Write-Host "$(get-date) [DATA] CPU Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.cpu_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] CPU Runway: No Data!" -ForegroundColor Yellow}
+                if (($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values) {Write-Host "$(get-date) [DATA] Memory Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.memory_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Memory Runway: No Data!" -ForegroundColor Yellow}
+                if (($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values) {Write-Host "$(get-date) [DATA] Storage Runway: $(($entity.data | Where-Object {$_.name -eq "capacity.storage_runway"}).values[0].values[0])" -ForegroundColor White} else {Write-Host "$(get-date) [WARNING] Storage Runway: No Data!" -ForegroundColor Yellow}
+                Write-Host "$(get-date) [DATA] AOS Version: $(($entity.data | Where-Object {$_.name -eq "version"}).values[0].values[0])" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] CPU Cores Qty: $(($entity.data | Where-Object {$_.name -eq "num_cpus"}).values[0].values[0])" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Memory Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "memory_capacity_bytes"}).values[0].values[0])" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Storage Size in Bytes: $(($entity.data | Where-Object {$_.name -eq "disk_size_bytes"}).values[0].values[0])" -ForegroundColor White
+                Write-Host "$(get-date) [DATA] Number of hosted VMs: $(($entity.data | Where-Object {$_.name -eq "num_vms"}).values[0].values[0])" -ForegroundColor White
+                Write-Host "-----------------------------------" -ForegroundColor White
+            }
+        #endregion console output
+
+        #* html output
+
+        #* influxdb output
+
+        #* email output
+
+        #* csv output
+    #endregion process retrieved data for output
+#endregion main processing
 
 
 #region cleanup
     CleanUp
-#endregion
+#endregion cleanup
