@@ -1188,6 +1188,8 @@ Date       By   Updates (newest updates at the top)
         #* email output
 
         #* csv output
+        Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")capacity_runway.csv" -ForegroundColor Green
+        $myvar_capacity_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"capacity_runway.csv")
     #endregion process retrieved data for output
 #endregion main processing
 
