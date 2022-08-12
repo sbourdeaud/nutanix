@@ -1,62 +1,119 @@
-import boto3
+import boto3,os,time,sys,random,string
 from botocore.exceptions import ClientError
-import sys
+from datetime import datetime
 
-session = boto3.session.Session()
 
-# configuration for this connection
-# in a "real" script, these values would not be hard-coded
-configuration = {
-    "endpoint_url": "[endpoint_url_here]",
-    "access_key": "[access_key_here]",
-    "secret_key": "[secret_key_here]",
-    "bucket": "ntnxdev-uploads",
-    "filename": "/tmp/hello_world.txt",
-    "key": "hello_world.txt"
-}
+class bcolors:
+    OK = '\033[92m' #GREEN
+    WARNING = '\033[93m' #YELLOW
+    FAIL = '\033[91m' #RED
+    RESET = '\033[0m' #RESET COLOR   
 
-# create our s3c session using the variables above
-# note "use_ssl=False", as outlined in the accompanying article
-s3c = session.client(
-    aws_access_key_id=configuration["access_key"],
-    aws_secret_access_key=configuration["secret_key"],
-    endpoint_url=configuration["endpoint_url"],
-    service_name="s3",
-    use_ssl=False,
-)
+def generate_random_bin_file(filename,size):
+    """
+    generate binary file with the specified size in bytes
+    :param filename: the filename
+    :param size: the size in bytes
+    :return:void
+    """
+    import os 
+    with open('%s'%filename, 'wb') as fout:
+        fout.write(os.urandom(size))
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Random binary file {filename} with size {size} generated ok{bcolors.RESET}")
+    pass
 
-# check if bucket exists
-try:
-    s3c.head_bucket(Bucket=configuration["bucket"])
-    print(f"Bucket exists : {configuration['bucket']}")
-except ClientError:
-    print(f"Bucket {configuration['bucket']} does not exist.  "
-          + "Attempting to create bucket ...")
+def main():
+    """Main entry point"""
+
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Getting environment variables...{bcolors.RESET}")
+    endpoint_url = str(os.getenv("ENDPOINT_URL", "http://127.0.0.1"))
+    access_key = str(os.getenv("ACCESS_KEY", ""))
+    secret_key = str(os.getenv("SECRET_KEY", ""))
+    bucket = str(os.getenv("BUCKET", ""))
+    file_size_min_bytes = int(os.getenv("FILE_SIZE_MIN_BYTES", "1024"))
+    file_size_max_bytes = int(os.getenv("FILE_SIZE_MAX_BYTES", "524288000"))
+    file_count_min = int(os.getenv("FILE_COUNT_MIN", "1"))
+    file_count_max = int(os.getenv("FILE_COUNT_MAX", "50"))
+
+    #*main loop here
+    #*connect to s3
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Opening session to {endpoint_url}{bcolors.RESET}")
+    session = boto3.session.Session()
+    s3c = session.client(
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        endpoint_url=endpoint_url,
+        service_name="s3",
+        use_ssl=False,
+    )
+
+    #check if bucket exists
     try:
-        s3c.create_bucket(Bucket=configuration['bucket'])
-    except Exception as err:
-        print("An exception occurred while creating the "
-              + f"{configuration['bucket']} bucket.  "
-              + f"Details: {err}")
-        sys.exit()
+        s3c.head_bucket(Bucket=bucket)
+        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Bucket exists : {bucket}{bcolors.RESET}")
+    except ClientError:
+        print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Bucket {bucket} does not exist.  "
+            + f"Attempting to create bucket ...{bcolors.RESET}")
+        try:
+            s3c.create_bucket(Bucket=bucket)
+        except Exception as err:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] An exception occurred while creating the "
+                + f"{bucket} bucket.  "
+                + f"Details: {err}{bcolors.RESET}")
+            sys.exit()
 
-try:
-    # create file handle and upload the file to Objects endpoint.
-    print(f"Uploading file {configuration['filename']}, as object "
-          + "{configuration['key']} in bucket {configuration['bucket']} ...")
-    s3c.put_object(Bucket=configuration["bucket"],
-                   Key=configuration["key"],
-                   Body=configuration["filename"])
+    while True:
+        
+        file_count = random.randint(file_count_min,file_count_max)
+        #create 15 random characters string for filename seed
+        my_string = string.ascii_lowercase
+        my_characters = ''.join(random.choice(my_string) for i in range(15))
+        
+        #! creates files instead of processing random data from memory
+        ''' #*create random data/files of random size range
+        loop_count = file_count
+        while loop_count > 0:
+            file_size = random.randint(file_size_min_bytes,file_size_max_bytes)
+            filename = f"{my_characters}_{loop_count}.dat"
+            generate_random_bin_file(filename,file_size)
+            loop_count -= 1 '''
+        
+        #*upload files
+        loop_count = file_count
+        while loop_count > 0:
+            try:
+                filename = f"{my_characters}_{loop_count}.dat"
+                data_size = random.randint(file_size_min_bytes,file_size_max_bytes)
+                key=filename
+                # create file handle and upload the file to Objects endpoint.
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Uploading file {filename} with size {data_size} bytes as object "
+                    + f"{key} in bucket {bucket} ...{bcolors.RESET}")
+                s3c.put_object(Bucket=bucket,
+                            Key=key,
+                            Body=os.urandom(data_size))
 
-    # verify if file is uploaded
-    print(f"Checking if {configuration['key']} exists ...")
-    response = s3c.head_object(Bucket=configuration["bucket"],
-                               Key=configuration["key"])
-    print(f"Head Object Response : {response}")
-except s3c.exceptions.NoSuchBucket:
-    print(f"The {configuration['bucket']} bucket does not exist.  "
-          + "Aborting ...")
-except Exception as err:
-    print("An unexpected exception occurred while attempting "
-          + "file upload.  Details:")
-    print(f"{err}")
+                # verify if file is uploaded
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Checking if {key} exists ...{bcolors.RESET}")
+                response = s3c.head_object(Bucket=bucket,
+                                        Key=key)
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Head Object Response : {response}{bcolors.RESET}")
+            except s3c.exceptions.NoSuchBucket:
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] The {bucket} bucket does not exist.  "
+                    + f"Aborting ...{bcolors.RESET}")
+            except Exception as err:
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] An unexpected exception occurred while attempting "
+                    + f"file upload.  Details:")
+                print(f"{err}{bcolors.RESET}")
+            loop_count -= 1
+        
+        #! deletes created files
+        ''' #*remove files
+        loop_count = file_count
+        while loop_count > 0:
+            filename = f"{my_characters}_{loop_count}.dat"
+            os.remove(filename)
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Removed file {filename}{bcolors.RESET}")
+            loop_count -= 1'''
+        
+if __name__ == "__main__":
+    main()

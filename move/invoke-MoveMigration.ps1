@@ -60,7 +60,7 @@ Report the status of all migration plans from the specified Move instance:
 
 #region functions
     #this function cleans up
-    Function CleanUp 
+    function CleanUp 
     {
         process
         {
@@ -926,6 +926,172 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             return $taskDetails.status
         }
     }
+
+    function Move-Login
+    {#login the move instance and return a token
+        <#
+        .SYNOPSIS
+        Takes a move instance ip or fqdn and a PoSH credential object, logs in the move api and returns the response (which includes the token).
+
+        .DESCRIPTION
+        Takes a move instance ip or fqdn and a PoSH credential object, logs in the move api and returns the response (which includes the token).
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER credential
+        PoSH credential object that matches the move username/password with access to the move instance.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-Login -move 10.10.10.1 -credential $mycredentialobject
+        Logs in to move instance 10.10.10.1.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $move,
+            
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/users/login" -f $move
+            $method = "POST"
+            $content = @{
+                Spec= @{
+                    UserName="{0}" -f $credential.UserName;
+                    Password="{0}" -f [PSCredential]::new($moveCredentials).GetNetworkCredential().Password;
+                }
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
+
+    function Move-Logout
+    {#login the move instance and return a token
+        <#
+        .SYNOPSIS
+        Revokes the token on the designated move instance.
+
+        .DESCRIPTION
+        Revokes the token on the designated move instance.
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER token
+        Token object to revoke.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-Logout -move 10.10.10.1 -token $mytoken
+        Logs out of move instance 10.10.10.1.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $move,
+            
+            [parameter(mandatory = $true)]
+            [String]
+            $token
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/token/revoke" -f $move
+            $method = "POST"
+            $content = @{
+                Spec= @{
+                    Token="{0}" -f $token;
+                }
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json";
+                "Authorization"= "{0}" -f $token
+            }
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
 #endregion
 
 
@@ -980,8 +1146,12 @@ Date       By   Updates (newest updates at the top)
     $moveCredentials = New-Object PSCredential $username, $MoveSecurePassword
 #endregion
 
-
+#! main code execution region here
 #region processing
+    Write-Host "$(get-date) [STEP] Logging in to Move API..." -ForegroundColor Magenta
+    $myvar_move_login_response = Move-Login -move $move -credential $moveCredentials
+    $myvar_move_token = $myvar_move_login_response.Status.Token
+    
     if ($action -eq "migrate")
     {
         Write-Host "$(get-date) [STEP] Creating migration plan(s)..." -ForegroundColor Magenta
@@ -1002,6 +1172,9 @@ Date       By   Updates (newest updates at the top)
     {
         Write-Host "$(get-date) [STEP] Validating pre-reqs for virtual machines..." -ForegroundColor Magenta
     }
+
+    Write-Host "$(get-date) [STEP] Logging out of Move API..." -ForegroundColor Magenta
+    $myvar_move_logout_response = Move-Logout -move $move -token $myvar_move_token
 #endregion
 
 

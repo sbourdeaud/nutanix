@@ -1,0 +1,34 @@
+FROM python:3.10.0-alpine3.14
+
+WORKDIR /~
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD [ "python", "./AddS3Data.py" ]
+
+#used to specify Prism Element IP address or FQDN (assuming FADN can be resolved inside the container)
+ENV PRISM='127.0.0.1'
+#used to specify the username to access Prism (viewer is the least privilege required) 
+ENV PRISM_USERNAME='admin'
+#used to specify the password for username
+ENV PRISM_SECRET='secret'
+#leave this value to null if you don't want to verify SSL certificates. Set it to anything but null to check SSL certificates.
+ENV PRISM_SECURE=''
+#used to specify the port used by Prism Element API
+ENV APP_PORT='9440'
+
+#defines the time to wait between each poll
+ENV POLLING_INTERVAL_SECONDS='30'
+#used to specify the container port where the node exporter will publish metrics
+ENV EXPORTER_PORT='8000'
+
+#use a comma separated string with virtual machine names for which you want to collect metrics. If this is null, then no VM metrics will be collected.
+#it is strongly recommended not to get crazy with vm list as this would considerably lengthen the metric collection time.
+ENV VM_LIST=''
+#used to determine if clusters metrics will be generated; set it to null/empy value if you don't want to collect cluster metrics.
+ENV CLUSTER_METRICS='True'
+#used to determine if storage containers metrics will be generated; set it to null/empy value if you don't want to collect storage containers metrics.
+ENV STORAGE_CONTAINERS_METRICS='True'
