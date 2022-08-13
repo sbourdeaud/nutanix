@@ -9,26 +9,24 @@ COPY . .
 
 CMD [ "python", "./AddS3Data.py" ]
 
-#used to specify Prism Element IP address or FQDN (assuming FADN can be resolved inside the container)
-ENV PRISM='127.0.0.1'
-#used to specify the username to access Prism (viewer is the least privilege required) 
-ENV PRISM_USERNAME='admin'
-#used to specify the password for username
-ENV PRISM_SECRET='secret'
-#leave this value to null if you don't want to verify SSL certificates. Set it to anything but null to check SSL certificates.
-ENV PRISM_SECURE=''
-#used to specify the port used by Prism Element API
-ENV APP_PORT='9440'
+# MANDATORY: used to specify the objectstore url
+ENV ENDPOINT_URL='http://127.0.0.1'
+# MANDATORY: used to specify the access key for the objectstore 
+ENV ACCESS_KEY=''
+# MANDATORY: used to specify the secret key for the objectstore 
+ENV SECRET_KEY=''
+# MANDATORY: used to specify the bucket name
+ENV BUCKET=''
 
-#defines the time to wait between each poll
-ENV POLLING_INTERVAL_SECONDS='30'
-#used to specify the container port where the node exporter will publish metrics
-ENV EXPORTER_PORT='8000'
+#used to specify the minimum and maximum size of random data to generate. 
+#the script will randomly select a size in that range. 
+#the values indicated are default when nothing else is specified.
+ENV FILE_SIZE_MIN_BYTES='1024'
+ENV FILE_SIZE_MAX_BYTES='524288000'
 
-#use a comma separated string with virtual machine names for which you want to collect metrics. If this is null, then no VM metrics will be collected.
-#it is strongly recommended not to get crazy with vm list as this would considerably lengthen the metric collection time.
-ENV VM_LIST=''
-#used to determine if clusters metrics will be generated; set it to null/empy value if you don't want to collect cluster metrics.
-ENV CLUSTER_METRICS='True'
-#used to determine if storage containers metrics will be generated; set it to null/empy value if you don't want to collect storage containers metrics.
-ENV STORAGE_CONTAINERS_METRICS='True'
+#used to specify the minimum and maximum count of objects which will use the same seed for filename.
+#the script processes random data in batch using that seed, then loops again with a random number of files with another seed. 
+#the script will randomly select a size in that range. 
+#the values indicated are default when nothing else is specified.
+ENV FILE_COUNT_MIN='1'
+ENV FILE_COUNT_MAX='50'
