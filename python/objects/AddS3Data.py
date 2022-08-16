@@ -8,6 +8,7 @@ class bcolors:
     OK = '\033[92m' #GREEN
     WARNING = '\033[93m' #YELLOW
     FAIL = '\033[91m' #RED
+    STEP = '\033[35m' #PURPLE
     RESET = '\033[0m' #RESET COLOR   
 
 def generate_random_bin_file(filename,size):
@@ -61,7 +62,7 @@ def main():
         while loop_count > 0:
             retries = upload_retries_count
             filename = f"{my_characters}_{loop_count}.dat"
-            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing file {filename}...{bcolors.RESET}")
+            print(f"{bcolors.STEP}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Processing file {filename}...{bcolors.RESET}")
             while retries > 0:
                 try: 
                     #*connect to s3
