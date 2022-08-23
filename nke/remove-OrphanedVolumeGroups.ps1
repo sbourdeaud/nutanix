@@ -1018,32 +1018,14 @@ foreach ($myvar_orphaned_volume_group in $myvar_orphaned_volume_groups)
     if ($myvar_user_choice -ieq "y")
     {
 
+        #todo: check if vg is likely to belong to MSP
+        if (($myvar_orphaned_volume_group.spec.description -like "*Namespace: ntnx-system*") -or ($myvar_orphaned_volume_group.spec.description -like "*Namespace: ntnx-base*"))
+        {
+            Write-Host "$(get-date) [WARNING] Volume group $($myvar_orphaned_volume_group.spec.name) is likely to belong to the micro services plaform (MSP): skipping!" -ForegroundColor Yellow
+            continue
+        }
+
         #todo: check last 24 stats to make sure there are no iops
-        #https://10.68.97.150:9440/api/nutanix/v3/groups POST
-        <# {
-            "entity_type": "volume_group_config",
-            "entity_ids": [
-                "b030ad29-77d0-4402-83be-4d9f58beeb7e"
-            ],
-            "group_member_attributes": [
-                {
-                    "attribute": "controller_num_iops",
-                    "operation": "AVG"
-                },
-                {
-                    "attribute": "capacity.controller_num_iops.upper_buff",
-                    "operation": "AVG"
-                },
-                {
-                    "attribute": "capacity.controller_num_iops.lower_buff",
-                    "operation": "AVG"
-                }
-            ],
-            "interval_start_ms": 1661173069536,
-            "interval_end_ms": 1661259469928,
-            "downsampling_interval": 300,
-            "query_name": "prism:CPStatsModel"
-        } #>
         Write-Host "$(get-date) [INFO] Checking there is no iops activity in the last 24 hours on $($myvar_orphaned_volume_group.spec.name)..." -ForegroundColor Green
         $url = "https://{0}:9440/api/nutanix/v3/groups" -f $prismcentral
         $method = "POST"
