@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-  This script can be used to remove recovery points for a specified vm or remove orphaned recovery points (where the vm no longer exists).
+  This script can be used to remove volume groups which do not belong to any nke cluster.
 .DESCRIPTION
-  This script can be used to remove recovery points for a specified vm or remove orphaned recovery points (where the vm no longer exists).
+  This script can be used to remove volume groups which do not belong to any nke cluster.  It compares all listed volumes on all nke clusters with the list of volume groups that match a pvc name and also checks for iops activity in the last 24 hours.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -15,18 +15,11 @@
   Nutanix Prism Central fully qualified domain name or IP address.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
-.PARAMETER vm
-  Name of the virtual machine for which you want to remove recovery points. By default, you will be prompted to remove each matching recovery point, unless you use -all.
-.PARAMETER all
-  Switch to specify you do not want to be prompted for each recovery point to be removed.
-.PARAMETER orphans
-  Switch to indicate you want to remove all recovery points which do not belong to any existing virtual machine.
+.PARAMETER noprompt
+  Switch to specify you do not want to be prompted for each volume group to be removed.  WARNING: note that pvcs could belong to other k8s clusters using the Nutanix storage class (such as an OpenShift cluster). While the script checks for activity in the last 24 hours, it is not bullet proof. use at your own risk and be warned that you will be deleting data!
 .EXAMPLE
-.\remove-VmRecoveryPoints.ps1 -prismcentral mypc.local -prismcreds mycreds -orphans
-Remove all recovery points which don't belong to any vms.
-.EXAMPLE
-.\remove-VmRecoveryPoints.ps1 -prismcentral mypc.local -prismcreds mycreds -vm myvm
-Remove all recovery points which belong to myvm.
+.\remove-OrphanedVolumeGroups.ps1 -prismcentral mypc.local -prismcreds mycreds
+Remove all volume groups whose names match an nke pvc but which do not belong to any active nke cluster.
 .LINK
   http://www.nutanix.com/services
 .NOTES
@@ -44,9 +37,7 @@ Param
     [parameter(mandatory = $false)] [switch]$log,
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $true)] [string]$prismcentral,
-    [parameter(mandatory = $false)] [string]$vm,
-    [parameter(mandatory = $false)] [switch]$all,
-    [parameter(mandatory = $false)] [switch]$orphans,
+    [parameter(mandatory = $false)] [switch]$noprompt,
     [parameter(mandatory = $false)] $prismCreds
 )
 #endregion
@@ -54,7 +45,7 @@ Param
 
 #region functions
 #this function cleans up
-Function CleanUp 
+function CleanUp 
 {
     process
     {
@@ -896,6 +887,17 @@ https://github.com/sbourdeaud
         return $taskDetails.status
     }
 }
+
+function Format-FileSize() 
+{
+    Param ([int64]$size)
+    If     ($size -gt 1TB) {[string]::Format("{0:0.00} TB", $size / 1TB)}
+    ElseIf ($size -gt 1GB) {[string]::Format("{0:0.00} GB", $size / 1GB)}
+    ElseIf ($size -gt 1MB) {[string]::Format("{0:0.00} MB", $size / 1MB)}
+    ElseIf ($size -gt 1KB) {[string]::Format("{0:0.00} kB", $size / 1KB)}
+    ElseIf ($size -gt 0)   {[string]::Format("{0:0.00} B", $size)}
+    Else                   {""}
+}
 #endregion
 
 
@@ -907,7 +909,7 @@ Date       By   Updates (newest updates at the top)
 08/23/2022 sb   Initial release.
 ################################################################################
 '@
-$myvarScriptName = ".\remove-VmRecoveryPoints.ps1"
+$myvarScriptName = ".\remove-OrphanedVolumeGroups.ps1"
 
 if ($help) {get-help $myvarScriptName; exit}
 if ($History) {$HistoryText; exit}
@@ -922,6 +924,13 @@ Set-PoshTls
 
 #region variables
 $myvar_ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+[System.Collections.ArrayList]$myvar_nke_volumes = New-Object System.Collections.ArrayList($null)
+$length = 500
+$startdate = ((Get-Date).AddMinutes(-5)).AddDays(-1)
+$enddate = (Get-Date).AddMinutes(-5)
+$interval_end_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$interval_start_ms = $interval_end_ms - 86400000
+
 #endregion
 
 
@@ -945,82 +954,150 @@ else
 $username = $prismCredentials.UserName
 $PrismSecurePassword = $prismCredentials.Password
 $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-
-if (!$vm -and !$orphans) {Throw "$(get-date) [ERROR] You must specify either a vm name or use the orphans parameter!"}
 #endregion
 
 
 #region processing	
-#todo: get vm recovery points
-Write-Host "$(get-date) [INFO] Retrieving list of VM recovery points from Prism Central $($prismcentral)..." -ForegroundColor Green
-$myvar_vm_recovery_points = Get-PrismCentralObjectList -pc $prismcentral -object "vm_recovery_points" -kind "vm_recovery_point"
-Write-Host "$(get-date) [SUCCESS] Successfully retrieved VM recovery points from Prism Central $($prismcentral)!" -ForegroundColor Cyan
+#todo: get nke clusters
+Write-Host "$(get-date) [INFO] Retrieving list of Nutanix Kubernetes Engine (nke) clusters from Prism Central $($prismcentral)..." -ForegroundColor Green
+$url = "https://{0}:9440/karbon/acs/k8s/cluster/list" -f $prismcentral
+$method = "POST"
+$myvar_nke_clusters = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+Write-Host "$(get-date) [SUCCESS] Successfully retrieved nke clusters from Prism Central $($prismcentral)!" -ForegroundColor Cyan
+Write-Host "$(get-date) [DATA] Found $($myvar_nke_clusters.count) nke clusters on Prism Central $($prismcentral)" -ForegroundColor White
 
-#todo: get vms
-Write-Host "$(get-date) [INFO] Retrieving list of VMs from Prism Central $($prismcentral)..." -ForegroundColor Green
-$myvar_vms = Get-PrismCentralObjectList -pc $prismcentral -object "vms" -kind "vm"
-Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs from Prism Central $($prismcentral)!" -ForegroundColor Cyan
-if ($vm)
-{#figure out the uuid of the user specified vm
-    if ($myvar_vm_uuid = ($myvar_vms | ?{$_.status.name -eq $vm}).metadata.uuid)
-    {#the user specified vm exists: let's grab its uuid
-        Write-Host "$(get-date) [DATA] VM $($vm) has uuid $($myvar_vm_uuid)" -ForegroundColor White
-    }
-    else 
-    {#the user specified vm does not exist: error out
-        Write-Host "$(get-date) [ERROR] Could not find VM $($vm) on Prism Central $($prismcentral)!" -ForegroundColor Red
-        Exit 1
+#todo: list volumes for nke clusters
+foreach ($myvar_nke_cluster in $myvar_nke_clusters)
+{
+    Write-Host "$(get-date) [INFO] Retrieving list of volumes for nke clusters $($myvar_nke_cluster.cluster_metadata.name) from Prism Central $($prismcentral)..." -ForegroundColor Green
+    $url = "https://{0}:9440/karbon/acs/k8s/cluster/{1}/volume/list" -f $prismcentral,$myvar_nke_cluster.cluster_metadata.uuid
+    $method = "POST"
+    $content = @{}
+    $payload = (ConvertTo-Json $content -Depth 4)
+    $myvar_nke_cluster_volumes = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+    Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of volumes for nke clusters $($myvar_nke_cluster.cluster_metadata.name) from Prism Central $($prismcentral)!" -ForegroundColor Cyan
+    Write-Host "$(get-date) [DATA] Found $($myvar_nke_cluster_volumes.entities.count) volumes for nke cluster $($myvar_nke_cluster.cluster_metadata.name) on Prism Central $($prismcentral)" -ForegroundColor White
+
+    foreach ($myvar_nke_cluster_volume in $myvar_nke_cluster_volumes.entities)
+    {
+        $myvar_nke_volume_info = [ordered]@{
+            "nke_cluster" = $myvar_nke_cluster.cluster_metadata.name;
+            "name" = $myvar_nke_cluster_volume.metadata.name;
+            "namespace" = $myvar_nke_cluster_volume.metadata.namespace;
+            "pv_name" = $myvar_nke_cluster_volume.status.pv_name;
+            "storage_class" = $myvar_nke_cluster_volume.status.storage_class_name;
+            "size_gib" = $myvar_nke_cluster_volume.status.size;
+        }
+        $myvar_nke_volumes.Add((New-Object PSObject -Property $myvar_nke_volume_info)) | Out-Null
     }
 }
+Write-Host "$(get-date) [DATA] Found a total of $($myvar_nke_volumes.count) volumes on nke clusters on Prism Central $($prismcentral)" -ForegroundColor White
 
-#todo: process vm recovery points
-foreach ($myvar_recovery_point in $myvar_vm_recovery_points)
-{
-    if ($vm)
-    {#user specified a vm
-        if ($myvar_recovery_point.spec.resources.parent_vm_reference.uuid -eq $myvar_vm_uuid) 
-        {#this recovery point belongs to the vm specified by the user
-            if (!$all)
-            {#let's prompt for each recovery point
-                Write-Host "$(Get-Date) [WARNING] Do you want to delete VM recovery point $($myvar_recovery_point.spec.name) which belongs to vm $($vm) with owner $($myvar_recovery_point.metadata.owner_reference.name) created on $($myvar_recovery_point.status.resources.creation_time) with an expiration date of $($myvar_recovery_point.status.resources.expiration_time)?" -ForegroundColor Yellow
-                $myvar_user_choice = Write-CustomPrompt
-            }
-            else             
-            {#no need to prompt
-                $myvar_user_choice = "y" 
-            }
-            if ($myvar_user_choice -ieq "y")
-            {
-                Write-Host "$(get-date) [INFO] Deleting VM recovery point $($myvar_recovery_point.metadata.uuid)..." -ForegroundColor Green
-                $url = "https://$($prismcentral):9440/api/nutanix/v3/vm_recovery_points/{0}" -f $myvar_recovery_point.metadata.uuid
-                $method = "DELETE"
-                $myvar_vm_recovery_point_delete = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                Write-Host "$(get-date) [SUCCESS] Successfully deleted VM recovery point $($myvar_recovery_point.metadata.uuid) from $($prismcentral)!" -ForegroundColor Cyan
-            }
-        }
+#todo: list volume groups and keep those that contain are nke pvcs
+Write-Host "$(get-date) [INFO] Retrieving list of volume groups from Prism Central $($prismcentral)..." -ForegroundColor Green
+$myvar_volume_groups = Get-PrismCentralObjectList -pc $prismcentral -object "volume_groups" -kind "volume_group"
+Write-Host "$(get-date) [SUCCESS] Successfully retrieved volume groups from Prism Central $($prismcentral)!" -ForegroundColor Cyan
+Write-Host "$(get-date) [DATA] Found a total of $($myvar_volume_groups.count) volume groups on Prism Central $($prismcentral)" -ForegroundColor White
+
+$regex = '^pvc-[a-zA-Z\d]{8}-[a-zA-Z\d]{4}-[a-zA-Z\d]{4}-[a-zA-Z\d]{4}-[a-zA-Z\d]{12}$'
+$myvar_orphaned_volume_groups = $myvar_volume_groups | ?{($_.spec.name -notin $myvar_nke_volumes.pv_name) -and ($_.spec.name -match $regex)}
+Write-Host "$(get-date) [DATA] Found a total of $($myvar_orphaned_volume_groups.count) orphaned pvc volume groups on Prism Central $($prismcentral)" -ForegroundColor White
+
+#todo: delete vgs which contain pvc and do not belong to any nke cluster
+foreach ($myvar_orphaned_volume_group in $myvar_orphaned_volume_groups)
+{  
+    if (!$noprompt)
+    {#let's prompt for each volume group
+        Write-Host "$(Get-Date) [WARNING] Do you want to delete volume group $($myvar_orphaned_volume_group.spec.name) which does not belong to any nke cluster with size $(Format-FileSize($myvar_orphaned_volume_group.status.resources.size_bytes))?" -ForegroundColor Yellow
+        $myvar_user_choice = Write-CustomPrompt
     }
-    elseif ($orphans)
-    {#user wants to delete all recovery points that don't belong to any vm
-        if ($myvar_recovery_point.spec.resources.parent_vm_reference.uuid -notin $myvar_vms.metadata.uuid) 
-        {#this recovery point belongs to no vm
-            if (!$all)
-            {#let's prompt for each recovery point
-                Write-Host "$(Get-Date) [WARNING] Do you want to delete VM recovery point $($myvar_recovery_point.spec.name) which does not belong to any vm with owner $($myvar_recovery_point.metadata.owner_reference.name) created on $($myvar_recovery_point.status.resources.creation_time) with an expiration date of $($myvar_recovery_point.status.resources.expiration_time)?" -ForegroundColor Yellow
-                $myvar_user_choice = Write-CustomPrompt
-            }
-            else             
-            {#no need to prompt
-                $myvar_user_choice = "y" 
-            }
-            if ($myvar_user_choice -ieq "y")
+    else             
+    {#no need to prompt
+        $myvar_user_choice = "y" 
+    }
+    if ($myvar_user_choice -ieq "y")
+    {
+
+        #todo: check last 24 stats to make sure there are no iops
+        #https://10.68.97.150:9440/api/nutanix/v3/groups POST
+        <# {
+            "entity_type": "volume_group_config",
+            "entity_ids": [
+                "b030ad29-77d0-4402-83be-4d9f58beeb7e"
+            ],
+            "group_member_attributes": [
+                {
+                    "attribute": "controller_num_iops",
+                    "operation": "AVG"
+                },
+                {
+                    "attribute": "capacity.controller_num_iops.upper_buff",
+                    "operation": "AVG"
+                },
+                {
+                    "attribute": "capacity.controller_num_iops.lower_buff",
+                    "operation": "AVG"
+                }
+            ],
+            "interval_start_ms": 1661173069536,
+            "interval_end_ms": 1661259469928,
+            "downsampling_interval": 300,
+            "query_name": "prism:CPStatsModel"
+        } #>
+        Write-Host "$(get-date) [INFO] Checking there is no iops activity in the last 24 hours on $($myvar_orphaned_volume_group.spec.name)..." -ForegroundColor Green
+        $url = "https://{0}:9440/api/nutanix/v3/groups" -f $prismcentral
+        $method = "POST"
+        $content = @{
+            entity_type="volume_group_config";
+            entity_ids=@($myvar_orphaned_volume_group.metadata.uuid);
+            group_member_attributes=@(@{
+                attribute="controller_num_iops";
+                operation="AVG";
+            });
+            interval_start_ms= $interval_start_ms;
+            interval_end_ms= $interval_end_ms;
+            downsampling_interval= 300;
+            query_name="prism:CPStatsModel"
+        }
+        $payload = (ConvertTo-Json $content -Depth 9)
+        $myvar_vg_stats = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved iops stats for volume group $($myvar_orphaned_volume_group.spec.name) from $($prismcentral)!" -ForegroundColor Cyan
+        if (($myvar_vg_stats.group_results.entity_results.data | ?{$_.name -eq "controller_num_iops"}).values.count -le 0)
+        {
+            Write-Host "$(get-date) [DATA] There is no iops activity in the last 24 hours on $($myvar_orphaned_volume_group.spec.name)" -ForegroundColor White
+        }
+        else 
+        {
+            Write-Host "$(get-date) [WARNING] There is iops activity in the last 24 hours on $($myvar_orphaned_volume_group.spec.name)" -ForegroundColor Yellow
+            continue
+        }
+
+        #todo: get iscsi attachments
+        Write-Host "$(get-date) [INFO] Getting list of iscsi attachments on volume group $($myvar_orphaned_volume_group.spec.name)..." -ForegroundColor Green
+        $url = "https://{0}:9440/api/storage/v4.0.a2/config/volume-groups/{1}/iscsi-client-attachments" -f $prismcentral,$myvar_orphaned_volume_group.metadata.uuid
+        $method = "GET"
+        $myvar_vg_iscsi_attachments = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of iscsi attachments on volume group $($myvar_orphaned_volume_group.spec.name) from $($prismcentral)!" -ForegroundColor Cyan
+        
+        #todo: remove iscsi attachments
+        foreach ($myvar_vg_iscsi_attachment in $myvar_vg_iscsi_attachments)
+        {
+            if ($myvar_vg_iscsi_id = $myvar_vg_iscsi_attachment.data.extid)
             {
-                Write-Host "$(get-date) [INFO] Deleting VM recovery point $($myvar_recovery_point.metadata.uuid)..." -ForegroundColor Green
-                $url = "https://$($prismcentral):9440/api/nutanix/v3/vm_recovery_points/{0}" -f $myvar_recovery_point.metadata.uuid
-                $method = "DELETE"
-                $myvar_vm_recovery_point_delete = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                Write-Host "$(get-date) [SUCCESS] Successfully deleted VM recovery point $($myvar_recovery_point.metadata.uuid) from $($prismcentral)!" -ForegroundColor Cyan
+                Write-Host "$(get-date) [INFO] Removing iscsi attachments from volume group $($myvar_orphaned_volume_group.spec.name)..." -ForegroundColor Green
+                $url = "https://{0}:9440/api/storage/v4.0.a2/config/volume-groups/{1}/`$actions/detach-iscsi-client/{2}" -f $prismcentral,$myvar_orphaned_volume_group.metadata.uuid,$myvar_vg_iscsi_id
+                $method = "POST"
+                $myvar_vg_remove_iscsi_attachments = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(get-date) [SUCCESS] Successfully removed iscsi attachments from volume group $($myvar_orphaned_volume_group.spec.name) from $($prismcentral)!" -ForegroundColor Cyan
             }
         }
+
+        #todo: delete vg
+        Write-Host "$(get-date) [INFO] Deleting volume group $($myvar_orphaned_volume_group.spec.name)..." -ForegroundColor Green
+        $url = "https://{0}:9440/api/storage/v4.0.a2/config/volume-groups/{1}" -f $prismcentral,$myvar_orphaned_volume_group.metadata.uuid
+        $method = "DELETE"
+        $myvar_vg_delete = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+        Write-Host "$(get-date) [SUCCESS] Successfully deleted volume group $($myvar_orphaned_volume_group.spec.name) from $($prismcentral)!" -ForegroundColor Cyan
     }
 }
 
@@ -1030,3 +1107,4 @@ foreach ($myvar_recovery_point in $myvar_vm_recovery_points)
 #region cleanup
 CleanUp
 #endregion
+
