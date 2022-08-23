@@ -13,11 +13,13 @@
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER move
-  Nutanix Move instance fully qualified domain name or IP address.
+  Nutanix Move instance fully qualified domain name or IP address.  This can be a comma separated list if you need to take actions on multiple move instances (such as reporting plans status with -action report).
 .PARAMETER moveCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER action
-  Specifies what type of action the script should do. Valid actions are: migrate (to create migration plans), report (to show status of migration plans), cutover, failback and validate (to check pre-reqs are in place on source vms)
+  Specifies what type of action the script should do. Valid actions are: migrate (to create migration plans), report (to show status of migration plans), cutover, failback, suspend, resume and validate (to check pre-reqs are in place on source vms)
+.PARAMETER plans
+  Name(s) (in comma separated format for multiple entries) of the migration plans you want to take action on (valid with -action report, suspend, resume, validate).  You can also specify "all" if you want to take action on all migration plans.  All is assumed if no value is given for plans.
 .PARAMETER csvplans
   Specifies source csv files with the list of vms and plans to create.
 .EXAMPLE
@@ -32,10 +34,11 @@ Report the status of all migration plans from the specified Move instance:
 
 
 #todo: process csv input
-#todo: understand move api to create migration plan + deal with errors
+#todo: understand move api to deal with errors
 #todo: implement migrate action capability from csv
 #todo: implement migrate action capability from vcfolder and vctag
-#todo: implement report action capability
+#todo: enhance report action capability (how to compute migrated data size + include csv and html reports)
+#todo: implement functionality to find a specific vms amongst all migration plans and report its status
 #todo: implement cutover action capability
 #todo: implement failback action capability
 #todo: implement validate action capability
@@ -50,10 +53,11 @@ Report the status of all migration plans from the specified Move instance:
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$move,
+        [parameter(mandatory = $true)] $move,
         [parameter(mandatory = $false)] $moveCreds,
-        [parameter(mandatory = $true)] [string][ValidateSet("migrate","report","cutover","failback","validate")]$action,
-        [parameter(mandatory = $false)] $csvplans
+        [parameter(mandatory = $true)] [string][ValidateSet("migrate","report","cutover","failback","validate","suspend","resume")]$action,
+        [parameter(mandatory = $false)] $plans,
+        [parameter(mandatory = $false)] $csvPlans
     )
 #endregion parameters
 
@@ -927,6 +931,34 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
         }
     }
 
+    Function Format-FileSize() 
+    {#convert files sizes to human readbale form
+        Param ([int64]$size)
+        If     ($size -gt 1TB) {[string]::Format("{0:0.00} TB", $size / 1TB)}
+        ElseIf ($size -gt 1GB) {[string]::Format("{0:0.00} GB", $size / 1GB)}
+        ElseIf ($size -gt 1MB) {[string]::Format("{0:0.00} MB", $size / 1MB)}
+        ElseIf ($size -gt 1KB) {[string]::Format("{0:0.00} kB", $size / 1KB)}
+        ElseIf ($size -gt 0)   {[string]::Format("{0:0.00} B", $size)}
+        Else                   {""}
+    }
+
+    Function Convert-PlanState() 
+    {#convert files sizes to human readbale form
+        Param ([int64]$state)
+        If     ($state -eq 0) {[string]"Uninitialized"}
+        ElseIf ($state -eq 1) {[string]"Validation"}
+        ElseIf ($state -eq 2) {[string]"Scheduled"}
+        ElseIf ($state -eq 3) {[string]"Preparation"}
+        ElseIf ($state -eq 4) {[string]"MigrationInProgress"}
+        ElseIf ($state -eq 5) {[string]"Paused"}
+        ElseIf ($state -eq 6) {[string]"Aborted"}
+        ElseIf ($state -eq 7) {[string]"Completed"}
+        ElseIf ($state -eq 8) {[string]"Failed"}
+        ElseIf ($state -eq 9) {[string]"ValidationFailed"}
+        ElseIf ($state -eq 10) {[string]"Aborting"}
+        Else                  {[string]"Unknown"}
+    }
+
     function Move-Login
     {#login the move instance and return a token
         <#
@@ -994,7 +1026,14 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             catch 
             {
                 $saved_error = $_.Exception
-                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                if ($_.Exception.Source -eq "System.Net.Http")
+                {
+                    $saved_error_message = $_.ErrorDetails.Message
+                }
+                else
+                {
+                    $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                }
                 $resp_return_code = $_.Exception.Response.StatusCode.value__
                 Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
             }
@@ -1092,6 +1131,281 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             return $resp
         }
     }
+
+    function Move-ListProviders
+    {#list providers in move
+        <#
+        .SYNOPSIS
+        Given a move instance and a valid session token, list all providers available in that move instance.
+
+        .DESCRIPTION
+        Given a move instance and a valid session token, list all providers available in that move instance.
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER token
+        A valid session token string.
+
+        .PARAMETER refresh
+        If specified (no value required), then a refresh inventory will be forced on the providers.  By default, this won't happen.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-ListProviders -move 10.10.10.1 -credential $mytoken
+        Lists available providers on move instance 10.10.10.1.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $move,
+            
+            [parameter(mandatory = $true)]
+            [string]
+            $token,
+
+            [parameter(mandatory = $false)]
+            [switch]
+            $refresh
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/providers/list" -f $move
+            $method = "POST"
+            $content = @{
+                properties= @{
+                    RefreshInventory="{0}" -f $(if ($refresh) {"true"} else {"false"});
+                }
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json";
+                "Authorization"="$($token)";
+            }
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
+
+    function Move-GetWorkloadInventory
+    {#get workloads running in the specified source cluster
+        <#
+        .SYNOPSIS
+        Given a move instance, a valid session token, a provider uuid and a source cluster name list all workloads available in that source cluster.
+
+        .DESCRIPTION
+        Given a move instance, a valid session token and a source cluster name list all workloads available in that source cluster.
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER token
+        A valid session token string.
+
+        .PARAMETER provider_uuid
+        UUID of the Move provider which contains the source cluster.
+
+        .PARAMETER cluster
+        Source cluster name.
+
+        .PARAMETER refresh
+        If specified (no value required), then a refresh inventory will be forced on the providers.  By default, this won't happen.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-GetWorkloadInventory -move 10.10.10.1 -credential $mytoken -cluster myclustername
+        Lists available workloads on source cluster myclustername on move instance 10.10.10.1.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $move,
+            
+            [parameter(mandatory = $true)]
+            [string]
+            $token,
+
+            [parameter(mandatory = $true)]
+            [string]
+            $provider_uuid,
+
+            [parameter(mandatory = $true)]
+            [string]
+            $cluster,
+
+            [parameter(mandatory = $false)]
+            [switch]
+            $refresh
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/providers/{1}/workloads/list" -f $move,$provider_uuid
+            $method = "POST"
+            $content = @{
+                Filter= @{
+                    Clusters= @(
+                        "$($cluster)"
+                    )
+                };
+                RefreshInventory= if ($refresh) {true} else {false};
+                ShowVMs="all"
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json";
+                "Authorization"="$($token)";
+            }
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
+
+    function Move-GetMigrationPlans
+    {#get all migration plans for a given move instance
+        <#
+        .SYNOPSIS
+        Given a move instance and a valid session token, get all migration plans.
+
+        .DESCRIPTION
+        Given a move instance and a valid session token, get all migration plans.
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER token
+        A valid session token string.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-GetMigrationPlans -move 10.10.10.1 -credential $mytoken
+        Gets migration plans on move instance 10.10.10.1.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $move,
+            
+            [parameter(mandatory = $true)]
+            [string]
+            $token
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/plans/list?IncludeVMDetails=true" -f $move
+            $method = "POST"
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json";
+                "Authorization"="$($token)";
+            }
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
 #endregion
 
 
@@ -1144,37 +1458,95 @@ Date       By   Updates (newest updates at the top)
     $username = $moveCredentials.UserName
     $MoveSecurePassword = $moveCredentials.Password
     $moveCredentials = New-Object PSCredential $username, $MoveSecurePassword
+
+    $move_instances = $move.Split(",")
+    if (!$plans) 
+    {#no value was given for plans, so assume all
+        $plans = "all"
+    } 
+    elseif ($plans -ne "all")
+    {#all was specified for plans, otherwise assume csv list of multiple plans
+        $plans = $plans.Split(",")
+    }
 #endregion
 
 #! main code execution region here
 #region processing
-    Write-Host "$(get-date) [STEP] Logging in to Move API..." -ForegroundColor Magenta
-    $myvar_move_login_response = Move-Login -move $move -credential $moveCredentials
-    $myvar_move_token = $myvar_move_login_response.Status.Token
-    
-    if ($action -eq "migrate")
+    foreach ($move in $move_instances)
     {
-        Write-Host "$(get-date) [STEP] Creating migration plan(s)..." -ForegroundColor Magenta
-    }
-    elseif ($action -eq "report")
-    {
-        Write-Host "$(get-date) [STEP] Reporting migration plan(s) status..." -ForegroundColor Magenta
-    }
-    elseif ($action -eq "cutover")
-    {
-        Write-Host "$(get-date) [STEP] Performing cutover of virtual machines..." -ForegroundColor Magenta
-    }
-    elseif ($action -eq "failback")
-    {
-        Write-Host "$(get-date) [STEP] Failing back virtual machines..." -ForegroundColor Magenta
-    }
-    elseif ($action -eq "validate")
-    {
-        Write-Host "$(get-date) [STEP] Validating pre-reqs for virtual machines..." -ForegroundColor Magenta
-    }
+        Write-Host "$(get-date) [STEP] Logging in to Move API on instance $($move)..." -ForegroundColor Magenta
+        $myvar_move_login_response = Move-Login -move $move -credential $moveCredentials
+        if ($myvar_move_token = $myvar_move_login_response.Status.Token)
+        {#we got a token
+            Write-Host "$(get-date) [SUCCESS] Successfully logged in to Move instance $($move)!" -ForegroundColor Cyan
+        }
+        else 
+        {#we did not get a token
+            Write-Host "$(get-date) [ERROR] Could not log in to Move instance $($move)!" -ForegroundColor Red 
+            exit 1
+        }
+        
+        if ($action -eq "migrate")
+        {
+            Write-Host "$(get-date) [STEP] Creating migration plan(s)..." -ForegroundColor Magenta
 
-    Write-Host "$(get-date) [STEP] Logging out of Move API..." -ForegroundColor Magenta
-    $myvar_move_logout_response = Move-Logout -move $move -token $myvar_move_token
+            Write-Host "$(get-date) [INFO] Getting providers on Move instance $($move)..." -ForegroundColor Green
+            $myvar_move_providers = Move-ListProviders -move $move -token $myvar_move_token
+            Write-Host "$(get-date) [DATA] There are $($myvar_move_providers.entities.count) providers on Move instance $($move)..." -ForegroundColor White
+            foreach ($myvar_provider in $myvar_move_providers.entities)
+            {
+                Write-Host "$(get-date) [DATA] Provider $($myvar_provider.spec.name) has uuid $($myvar_provider.spec.uuid)and is of type $($myvar_provider.spec.type) version $($myvar_provider.spec.version)" -ForegroundColor White
+            }
+
+            $myvar_source_cluster = "ROCKET"
+            Write-Host "$(get-date) [INFO] Fetching workload inventory for source cluster $($myvar_source_cluster) on Move instance $($move)..." -ForegroundColor Green
+            $myvar_source_cluster_workloads = Move-GetWorkloadInventory -move $move -token $myvar_move_token -provider_uuid $myvar_move_providers.entities[0].spec.uuid -cluster $myvar_source_cluster -refresh
+            Write-Host "$(get-date) [DATA] There are $($myvar_source_cluster_workloads.entities.count) workloads available on source cluster $($myvar_source_cluster)..." -ForegroundColor White
+
+            #todo: read from csv (migration_plan_name, vm_name, network_mappings, test_network, guest_prep_mode, target_cluster, target_container)
+            #todo: figure out source and target providers uuid from myvar_move_providers
+            #todo: figure out target container uuid from myvar_move_providers
+            #todo: figure out target network uuid from myvar_move_providers
+            #todo: figure out source network id and vm uuid from myvar_source_cluster_workloads
+            #todo: consider other job options (schedule, retain mac address, etc...)   
+        }
+        elseif ($action -eq "report")
+        {
+            Write-Host "$(get-date) [STEP] Reporting migration plan(s) status..." -ForegroundColor Magenta
+            $myvar_move_migration_plans = Move-GetMigrationPlans -move $move -token $myvar_move_token
+            Write-Host "$(get-date) [DATA] There are $($myvar_move_migration_plans.entities.count) migration plans on Move instance $($move)..." -ForegroundColor White
+            foreach ($myvar_migration_plan in $myvar_move_migration_plans.entities)
+            {
+                if (($plans -eq "all") -or ($myvar_migration_plan.metadata.name -in $plans))
+                {
+                    Write-Host "$(get-date) [DATA] Migration plan $($myvar_migration_plan.metadata.name) with status $(Convert-PlanState($myvar_migration_plan.metadata.state)) contains $($myvar_migration_plan.metadata.numvms) VM(s) migrating from provider $($myvar_migration_plan.metadata.sourceinfo.name) of type $($myvar_migration_plan.metadata.sourceinfo.type) to $($myvar_migration_plan.metadata.targetinfo.name) of type $($myvar_migration_plan.metadata.targetinfo.type) and has a data size of $(Format-FileSize($myvar_migration_plan.metadata.datainbytes))" -ForegroundColor White
+                }
+            }
+        }
+        elseif ($action -eq "cutover")
+        {
+            Write-Host "$(get-date) [STEP] Performing cutover of virtual machines..." -ForegroundColor Magenta
+        }
+        elseif ($action -eq "failback")
+        {
+            Write-Host "$(get-date) [STEP] Failing back virtual machines..." -ForegroundColor Magenta
+        }
+        elseif ($action -eq "validate")
+        {
+            Write-Host "$(get-date) [STEP] Validating pre-reqs for virtual machines..." -ForegroundColor Magenta
+        }
+        elseif ($action -eq "suspend")
+        {
+            Write-Host "$(get-date) [STEP] Suspending migration plan(s)..." -ForegroundColor Magenta
+        }
+        elseif ($action -eq "resume")
+        {
+            Write-Host "$(get-date) [STEP] Resuming migration plan(s)..." -ForegroundColor Magenta
+        }
+
+        Write-Host "$(get-date) [STEP] Logging out of Move API..." -ForegroundColor Magenta
+        $myvar_move_logout_response = Move-Logout -move $move -token $myvar_move_token
+    }
 #endregion
 
 
