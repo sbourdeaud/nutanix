@@ -1416,6 +1416,9 @@ Date       By   Updates (newest updates at the top)
 08/02/2022 sb   Initial draft.
 08/24/2022 sb   Continuing work on migrate action: reading from csv, processing
                 inventories from multiple source clusters.
+                Adding move_instance in csv structure to enable processing of
+                multiple move instances in the same csv file for central
+                control/management.
 ################################################################################
 '@
     $myvar_ScriptName = ".\invoke-MoveMigration.ps1"
@@ -1499,7 +1502,7 @@ Date       By   Updates (newest updates at the top)
                 $myvar_csv_plans = Import-Csv -Path $csvPlans #read from the file
                 #create variable with information for each plan specified
                 $myvar_migration_plans = @{}
-                foreach ($myvar_item in $myvar_csv_plans)
+                foreach ($myvar_item in ($myvar_csv_plans | ?{$_.move_instance -eq $move}))
                 {#process each line in the csv
                     if (!$myvar_migration_plans.($myvar_item.migration_plan_name))
                     {#we haven't processed that migration plan yet
@@ -1509,6 +1512,7 @@ Date       By   Updates (newest updates at the top)
                         }
                     }  
                 }
+                Write-Host "$(get-date) [DATA] There is/are $($myvar_migration_plans.count) separate migration plan(s) to create on move instance $($move)." -ForegroundColor White
             }
             else 
             {#file does not exist
