@@ -1019,7 +1019,7 @@ foreach ($myvar_orphaned_volume_group in $myvar_orphaned_volume_groups)
     {
 
         #todo: check if vg is likely to belong to MSP
-        if (($myvar_orphaned_volume_group.spec.description -like "*Namespace: ntnx-system*") -or ($myvar_orphaned_volume_group.spec.description -like "*Namespace: ntnx-base*"))
+        if (($myvar_orphaned_volume_group.spec.description -like "*Namespace: ntnx-system*") -or ($myvar_orphaned_volume_group.spec.description -like "*Namespace: ntnx-base*") -or ($myvar_orphaned_volume_group.spec.description -like "*Namespace: kube-system*"))
         {
             Write-Host "$(get-date) [WARNING] Volume group $($myvar_orphaned_volume_group.spec.name) is likely to belong to the micro services plaform (MSP): skipping!" -ForegroundColor Yellow
             continue
