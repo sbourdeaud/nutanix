@@ -33,7 +33,6 @@ Report the status of all migration plans from the specified Move instance:
 #>
 
 
-#todo: process csv input
 #todo: understand move api to deal with errors
 #todo: implement migrate action capability from csv
 #todo: implement migrate action capability from vcfolder and vctag
@@ -42,7 +41,7 @@ Report the status of all migration plans from the specified Move instance:
 #todo: implement cutover action capability
 #todo: implement failback action capability
 #todo: implement validate action capability
-#todo: add create cluster sources from csv action capability
+#todo: add create providers from csv action capability
 
 
 #region parameters
@@ -943,7 +942,7 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
     }
 
     Function Convert-PlanState() 
-    {#convert files sizes to human readbale form
+    {#convert move migration plan status integer to corresponding human readable status string
         Param ([int64]$state)
         If     ($state -eq 0) {[string]"Uninitialized"}
         ElseIf ($state -eq 1) {[string]"Validation"}
@@ -1406,7 +1405,7 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             return $resp
         }
     }
-#endregion
+#endregion functions
 
 
 #region prepwork
@@ -1414,7 +1413,9 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
-08/02/2022 sb   Initial release.
+08/02/2022 sb   Initial draft.
+08/24/2022 sb   Continuing work on migrate action: reading from csv, processing
+                inventories from multiple source clusters.
 ################################################################################
 '@
     $myvar_ScriptName = ".\invoke-MoveMigration.ps1"
@@ -1430,12 +1431,12 @@ Date       By   Updates (newest updates at the top)
 
     Set-PoSHSSLCerts
     Set-PoshTls
-#endregion
+#endregion prepwork
 
 
 #region variables
     $myvar_ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-#endregion
+#endregion variables
 
 
 #region parameters validation
@@ -1468,50 +1469,87 @@ Date       By   Updates (newest updates at the top)
     {#all was specified for plans, otherwise assume csv list of multiple plans
         $plans = $plans.Split(",")
     }
-#endregion
+#endregion parameters validation
 
 #! main code execution region here
 #region processing
     foreach ($move in $move_instances)
-    {
+    {#process all move instances specified by the user
+        #todo: Step 1: logging in to Move and getting an authentication token
         Write-Host "$(get-date) [STEP] Logging in to Move API on instance $($move)..." -ForegroundColor Magenta
         $myvar_move_login_response = Move-Login -move $move -credential $moveCredentials
         if ($myvar_move_token = $myvar_move_login_response.Status.Token)
-        {#we got a token
+        {#we got an authentication token from the move instance
             Write-Host "$(get-date) [SUCCESS] Successfully logged in to Move instance $($move)!" -ForegroundColor Cyan
         }
         else 
-        {#we did not get a token
+        {#we did not get an authentication token from the move instance
             Write-Host "$(get-date) [ERROR] Could not log in to Move instance $($move)!" -ForegroundColor Red 
             exit 1
         }
         
+        #todo: Step 2: branch based on action selected
         if ($action -eq "migrate")
-        {
+        {#user wants to create a migration plan
             Write-Host "$(get-date) [STEP] Creating migration plan(s)..." -ForegroundColor Magenta
+
+            #todo: reading from csv
+            if (Test-Path -Path $csvPlans) 
+            {#file exists
+                $myvar_csv_plans = Import-Csv -Path $csvPlans #read from the file
+                #create variable with information for each plan specified
+                $myvar_migration_plans = @{}
+                foreach ($myvar_item in $myvar_csv_plans)
+                {#process each line in the csv
+                    if (!$myvar_migration_plans.($myvar_item.migration_plan_name))
+                    {#we haven't processed that migration plan yet
+                        $myvar_migration_plans.($myvar_item.migration_plan_name) = @{
+                            "vms" = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).vm_name  | Select-Object -Unique;
+                            "network_mappings" = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).network_mappings  | Select-Object -Unique;
+                        }
+                    }  
+                }
+            }
+            else 
+            {#file does not exist
+                Write-Host "$(get-date) [ERROR] The specified csv file $($csvPlans) does not exist!" -ForegroundColor Red
+                exit 1
+            }
 
             Write-Host "$(get-date) [INFO] Getting providers on Move instance $($move)..." -ForegroundColor Green
             $myvar_move_providers = Move-ListProviders -move $move -token $myvar_move_token
             Write-Host "$(get-date) [DATA] There are $($myvar_move_providers.entities.count) providers on Move instance $($move)..." -ForegroundColor White
             foreach ($myvar_provider in $myvar_move_providers.entities)
-            {
+            {#display information for each available provider on the move instance
                 Write-Host "$(get-date) [DATA] Provider $($myvar_provider.spec.name) has uuid $($myvar_provider.spec.uuid)and is of type $($myvar_provider.spec.type) version $($myvar_provider.spec.version)" -ForegroundColor White
             }
 
-            $myvar_source_cluster = "ROCKET"
-            Write-Host "$(get-date) [INFO] Fetching workload inventory for source cluster $($myvar_source_cluster) on Move instance $($move)..." -ForegroundColor Green
-            $myvar_source_cluster_workloads = Move-GetWorkloadInventory -move $move -token $myvar_move_token -provider_uuid $myvar_move_providers.entities[0].spec.uuid -cluster $myvar_source_cluster -refresh
-            Write-Host "$(get-date) [DATA] There are $($myvar_source_cluster_workloads.entities.count) workloads available on source cluster $($myvar_source_cluster)..." -ForegroundColor White
+            #todo: fetch inventory for source clusters
+            foreach ($myvar_source_cluster in ($myvar_csv_plans.source_cluster | Select-Object -Unique))
+            {#fetch inventory for source clusters
+                if (!($myvar_source_cluster_provider_name = ($myvar_csv_plans | ?{$_.source_cluster -eq $myvar_source_cluster}).provider | Select-Object -First 1))
+                {#we couldn't find a provider name for the specified source cluster in the csv file
+                    Write-Host "$(get-date) [ERROR] You need to specify the provider name for source cluster $($myvar_source_cluster) in the file $($csvPlans)!" -ForegroundColor Red
+                    exit 1
+                }
+                if (!($myvar_source_cluster_provider_uuid = ($myvar_move_providers.entities | ?{$_.spec.name -eq $myvar_source_cluster_provider_name}).spec.uuid))
+                {#we couldn't find that provider name in the move instance
+                    Write-Host "$(get-date) [ERROR] We couldn't find a provider called $($myvar_source_cluster_provider_name) in Move instance $($move)!" -ForegroundColor Red
+                    exit 1
+                }
+                Write-Host "$(get-date) [INFO] Fetching workload inventory for source cluster $($myvar_source_cluster) on Move instance $($move)..." -ForegroundColor Green
+                $myvar_source_cluster_workloads = Move-GetWorkloadInventory -move $move -token $myvar_move_token -provider_uuid $myvar_source_cluster_provider_uuid -cluster $myvar_source_cluster -refresh
+                Write-Host "$(get-date) [DATA] There are $($myvar_source_cluster_workloads.entities.count) workloads available on source cluster $($myvar_source_cluster)..." -ForegroundColor White
+            }
 
-            #todo: read from csv (migration_plan_name, vm_name, network_mappings, test_network, guest_prep_mode, target_cluster, target_container)
-            #todo: figure out source and target providers uuid from myvar_move_providers
+
             #todo: figure out target container uuid from myvar_move_providers
             #todo: figure out target network uuid from myvar_move_providers
             #todo: figure out source network id and vm uuid from myvar_source_cluster_workloads
             #todo: consider other job options (schedule, retain mac address, etc...)   
         }
         elseif ($action -eq "report")
-        {
+        {#user wants to report migration plan(s) status
             Write-Host "$(get-date) [STEP] Reporting migration plan(s) status..." -ForegroundColor Magenta
             $myvar_move_migration_plans = Move-GetMigrationPlans -move $move -token $myvar_move_token
             Write-Host "$(get-date) [DATA] There are $($myvar_move_migration_plans.entities.count) migration plans on Move instance $($move)..." -ForegroundColor White
@@ -1521,33 +1559,35 @@ Date       By   Updates (newest updates at the top)
                 {
                     Write-Host "$(get-date) [DATA] Migration plan $($myvar_migration_plan.metadata.name) with status $(Convert-PlanState($myvar_migration_plan.metadata.state)) contains $($myvar_migration_plan.metadata.numvms) VM(s) migrating from provider $($myvar_migration_plan.metadata.sourceinfo.name) of type $($myvar_migration_plan.metadata.sourceinfo.type) to $($myvar_migration_plan.metadata.targetinfo.name) of type $($myvar_migration_plan.metadata.targetinfo.type) and has a data size of $(Format-FileSize($myvar_migration_plan.metadata.datainbytes))" -ForegroundColor White
                 }
+                #todo: create csv/html report
             }
         }
         elseif ($action -eq "cutover")
-        {
+        {#user wants to cutover vm(s)
             Write-Host "$(get-date) [STEP] Performing cutover of virtual machines..." -ForegroundColor Magenta
         }
         elseif ($action -eq "failback")
-        {
+        {#user wants to failback vm(s)
             Write-Host "$(get-date) [STEP] Failing back virtual machines..." -ForegroundColor Magenta
         }
         elseif ($action -eq "validate")
-        {
+        {#user wants to validate a migration plan
             Write-Host "$(get-date) [STEP] Validating pre-reqs for virtual machines..." -ForegroundColor Magenta
         }
         elseif ($action -eq "suspend")
-        {
+        {#user wants to suspend migration operations for a migration plan
             Write-Host "$(get-date) [STEP] Suspending migration plan(s)..." -ForegroundColor Magenta
         }
         elseif ($action -eq "resume")
-        {
+        {#user wants to resume migration operations for a migration plan
             Write-Host "$(get-date) [STEP] Resuming migration plan(s)..." -ForegroundColor Magenta
         }
 
+        #todo: Final Step: logging out of Move to release the authentication token
         Write-Host "$(get-date) [STEP] Logging out of Move API..." -ForegroundColor Magenta
         $myvar_move_logout_response = Move-Logout -move $move -token $myvar_move_token
     }
-#endregion
+#endregion processing
 
 
 #region cleanup
