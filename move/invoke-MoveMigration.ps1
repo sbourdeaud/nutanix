@@ -21,7 +21,7 @@
 .PARAMETER plans
   Name(s) (in comma separated format for multiple entries) of the migration plans you want to take action on (valid with -action report, suspend, resume, validate).  You can also specify "all" if you want to take action on all migration plans.  All is assumed if no value is given for plans.
 .PARAMETER csvplans
-  Specifies source csv files with the list of vms and plans to create.
+  Specifies source csv files with the list of vms and plans to create.  Each line of that csv file must contain the following columns: migration_plan_name, vm_name, network_mappings, guest_prep_mode,	source_provider, source_cluster, target_provider, target_cluster, target_container, move_instance. In addition, the target provider, cluster and storage container for all vms within the same migration plan must be the same (if you need to specify different targets, then you will need to specify a different migration plan). Network mappings can be different per vm, must one mapping must exist for every network the vm is connected to.  Network mappings are specified in the source_network_name:target_network_name format and mutliple entries in that column are separated with a semi colon (;).
 .EXAMPLE
 .\invoke-MoveMigration.ps1 -move mymove.local -action report
 Report the status of all migration plans from the specified Move instance:
@@ -29,11 +29,10 @@ Report the status of all migration plans from the specified Move instance:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 2nd 2022
+  Revision: August 26th 2022
 #>
 
 
-#todo: understand move api to deal with errors
 #todo: implement migrate action capability from csv
 #todo: implement migrate action capability from vcfolder and vctag
 #todo: enhance report action capability (how to compute migrated data size + include csv and html reports)
@@ -42,7 +41,13 @@ Report the status of all migration plans from the specified Move instance:
 #todo: implement failback action capability
 #todo: implement validate action capability
 #todo: add create providers from csv action capability
+#todo: add a way to deal securely with credentials (exp: by fetching them from a vault instance)
+#todo: need to make sure source and target types are compatible (from providers information)
 
+#todo: enhance script to deal more elegantly (by offering choice) with csv input errors
+#todo: enhance script to edit existing migration plans (adding or removing vms)
+#todo: enhance script to add schedule to migration plan
+#todo: enhance script to add option to start immediately the migration plan
 
 #region parameters
     Param
@@ -1405,6 +1410,89 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             return $resp
         }
     }
+
+    function Move-CreateMigrationPlan
+    {#create migration plan for a given payload on the given move instance
+        <#
+        .SYNOPSIS
+        Given a move instance and a valid session token, get all migration plans.
+
+        .DESCRIPTION
+        Given a move instance and a valid session token, get all migration plans.
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER token
+        A valid session token string.
+
+        .PARAMETER payload
+        A valid json payload for a move migration plan.
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-CreateMigrationPlan -move 10.10.10.1 -credential $mytoken -payload $payload
+        Create a migration plan on move instance 10.10.10.1 based on the specified payload.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string] 
+            $move,
+            
+            [parameter(mandatory = $true)]
+            [string]
+            $token,
+
+            [parameter(mandatory = $true)]
+            $payload
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/plans" -f $move
+            $method = "POST"
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json";
+                "Authorization"="$($token)";
+            }
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop -Body $payload
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
 #endregion functions
 
 
@@ -1419,6 +1507,7 @@ Date       By   Updates (newest updates at the top)
                 Adding move_instance in csv structure to enable processing of
                 multiple move instances in the same csv file for central
                 control/management.
+08/26/2022 sb   Finished code to gather required info for plan payload.
 ################################################################################
 '@
     $myvar_ScriptName = ".\invoke-MoveMigration.ps1"
@@ -1439,6 +1528,9 @@ Date       By   Updates (newest updates at the top)
 
 #region variables
     $myvar_ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+    #[System.Collections.ArrayList]$myvar_all_available_source_workloads = New-Object System.Collections.ArrayList($null)
+    $myvar_all_available_source_workloads = @()
+    $myvar_vms_to_migrate_objects = @()
 #endregion variables
 
 
@@ -1478,7 +1570,7 @@ Date       By   Updates (newest updates at the top)
 #region processing
     foreach ($move in $move_instances)
     {#process all move instances specified by the user
-        #todo: Step 1: logging in to Move and getting an authentication token
+        #region Step 1: logging in to Move and getting an authentication token
         Write-Host "$(get-date) [STEP] Logging in to Move API on instance $($move)..." -ForegroundColor Magenta
         $myvar_move_login_response = Move-Login -move $move -credential $moveCredentials
         if ($myvar_move_token = $myvar_move_login_response.Status.Token)
@@ -1490,25 +1582,26 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [ERROR] Could not log in to Move instance $($move)!" -ForegroundColor Red 
             exit 1
         }
+        #endregion Step 1: logging in to Move and getting an authentication token
         
-        #todo: Step 2: branch based on action selected
+        #region Step 2: branch based on action selected
         if ($action -eq "migrate")
         {#user wants to create a migration plan
-            Write-Host "$(get-date) [STEP] Creating migration plan(s)..." -ForegroundColor Magenta
-
-            #todo: reading from csv
+            #* csv read
+            #region reading from csv
             if (Test-Path -Path $csvPlans) 
             {#file exists
                 $myvar_csv_plans = Import-Csv -Path $csvPlans #read from the file
                 #create variable with information for each plan specified
                 $myvar_migration_plans = @{}
                 foreach ($myvar_item in ($myvar_csv_plans | ?{$_.move_instance -eq $move}))
-                {#process each line in the csv
+                {#process each line in the csv and build a variable that will keep track of specific characteristics of each migration plan required to build the json payload
                     if (!$myvar_migration_plans.($myvar_item.migration_plan_name))
                     {#we haven't processed that migration plan yet
                         $myvar_migration_plans.($myvar_item.migration_plan_name) = @{
                             "vms" = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).vm_name  | Select-Object -Unique;
-                            "network_mappings" = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).network_mappings  | Select-Object -Unique;
+                            "network_mappings" = @();
+                            "vm_details" = @();
                         }
                     }  
                 }
@@ -1519,7 +1612,10 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [ERROR] The specified csv file $($csvPlans) does not exist!" -ForegroundColor Red
                 exit 1
             }
+            #endregion reading from csv
 
+            #* fetch providers
+            #region retrieving move providers information
             Write-Host "$(get-date) [INFO] Getting providers on Move instance $($move)..." -ForegroundColor Green
             $myvar_move_providers = Move-ListProviders -move $move -token $myvar_move_token
             Write-Host "$(get-date) [DATA] There are $($myvar_move_providers.entities.count) providers on Move instance $($move)..." -ForegroundColor White
@@ -1527,16 +1623,18 @@ Date       By   Updates (newest updates at the top)
             {#display information for each available provider on the move instance
                 Write-Host "$(get-date) [DATA] Provider $($myvar_provider.spec.name) has uuid $($myvar_provider.spec.uuid)and is of type $($myvar_provider.spec.type) version $($myvar_provider.spec.version)" -ForegroundColor White
             }
+            #endregion retrieving move providers information
 
-            #todo: fetch inventory for source clusters
+            #* fetch workloads inventory
+            #region fetch workloads inventory for source clusters
             foreach ($myvar_source_cluster in ($myvar_csv_plans.source_cluster | Select-Object -Unique))
             {#fetch inventory for source clusters
-                if (!($myvar_source_cluster_provider_name = ($myvar_csv_plans | ?{$_.source_cluster -eq $myvar_source_cluster}).provider | Select-Object -First 1))
+                if (!($myvar_source_cluster_provider_name = ($myvar_csv_plans | ?{$_.source_cluster -ieq $myvar_source_cluster}).source_provider | Select-Object -First 1))
                 {#we couldn't find a provider name for the specified source cluster in the csv file
                     Write-Host "$(get-date) [ERROR] You need to specify the provider name for source cluster $($myvar_source_cluster) in the file $($csvPlans)!" -ForegroundColor Red
                     exit 1
                 }
-                if (!($myvar_source_cluster_provider_uuid = ($myvar_move_providers.entities | ?{$_.spec.name -eq $myvar_source_cluster_provider_name}).spec.uuid))
+                if (!($myvar_source_cluster_provider_uuid = ($myvar_move_providers.entities | ?{$_.spec.name -ieq $myvar_source_cluster_provider_name}).spec.uuid))
                 {#we couldn't find that provider name in the move instance
                     Write-Host "$(get-date) [ERROR] We couldn't find a provider called $($myvar_source_cluster_provider_name) in Move instance $($move)!" -ForegroundColor Red
                     exit 1
@@ -1544,13 +1642,268 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [INFO] Fetching workload inventory for source cluster $($myvar_source_cluster) on Move instance $($move)..." -ForegroundColor Green
                 $myvar_source_cluster_workloads = Move-GetWorkloadInventory -move $move -token $myvar_move_token -provider_uuid $myvar_source_cluster_provider_uuid -cluster $myvar_source_cluster -refresh
                 Write-Host "$(get-date) [DATA] There are $($myvar_source_cluster_workloads.entities.count) workloads available on source cluster $($myvar_source_cluster)..." -ForegroundColor White
+                $myvar_all_available_source_workloads += $myvar_source_cluster_workloads.Entities
             }
+            #endregion fetch inventory for source clusters
 
-
+            #* dealing with plans
             #todo: figure out target container uuid from myvar_move_providers
-            #todo: figure out target network uuid from myvar_move_providers
-            #todo: figure out source network id and vm uuid from myvar_source_cluster_workloads
             #todo: consider other job options (schedule, retain mac address, etc...)   
+            #region process each migration plan
+            foreach ($myvar_migration_plan in $myvar_migration_plans.keys)
+            {#process each migration plan specified in the csv file
+                Write-Host "$(get-date) [STEP] Creating migration plan $($myvar_migration_plan)..." -ForegroundColor Magenta
+                #! need to make sure plan does not already exist (otherwise implement edit function?)
+
+                #region making sure we have only one source provider and cluster as well as a single target provider, cluster and container for this migration plan
+                $myvar_migration_plan_source_provider = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_migration_plan}).source_provider | Select-Object -Unique
+                $myvar_migration_plan_source_cluster = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_migration_plan}).source_cluster | Select-Object -Unique
+                $myvar_migration_plan_target_provider = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_migration_plan}).target_provider | Select-Object -Unique
+                $myvar_migration_plan_target_cluster = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_migration_plan}).target_cluster | Select-Object -Unique
+                $myvar_migration_plan_target_container = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_migration_plan}).target_container | Select-Object -Unique
+                if ($myvar_migration_plan_source_provider -is [array])
+                {#more than 1 source provider for the same plan has been specified
+                    Write-Host "$(get-date) [ERROR] You specified more than 1 source provider for the $($myvar_migration_plan) migration plan in $($csvPlans)!" -ForegroundColor Red
+                    exit 1
+                }
+                elseif ($myvar_migration_plan_source_cluster -is [array]) 
+                {#more than 1 source cluster for the same plan has been specified
+                    Write-Host "$(get-date) [ERROR] You specified more than 1 source cluster for the $($myvar_migration_plan) migration plan in $($csvPlans)!" -ForegroundColor Red
+                    exit 1
+                }
+                elseif ($myvar_migration_plan_target_provider -is [array]) 
+                {#more than 1 target provider for the same plan has been specified
+                    Write-Host "$(get-date) [ERROR] You specified more than 1 target provider for the $($myvar_migration_plan) migration plan in $($csvPlans)!" -ForegroundColor Red
+                    exit 1
+                }
+                elseif ($myvar_migration_plan_target_cluster -is [array]) 
+                {#more than 1 target cluster for the same plan has been specified
+                    Write-Host "$(get-date) [ERROR] You specified more than 1 target cluster for the $($myvar_migration_plan) migration plan in $($csvPlans)!" -ForegroundColor Red
+                    exit 1
+                }
+                elseif ($myvar_migration_plan_target_container -is [array]) 
+                {#more than 1 target container for the same plan has been specified
+                    Write-Host "$(get-date) [ERROR] You specified more than 1 target container for the $($myvar_migration_plan) migration plan in $($csvPlans)!" -ForegroundColor Red
+                    exit 1
+                }
+                #endregion making sure we have only one source provider and cluster as well as a single target provider, cluster and container for this migration plan
+
+                #* dealing with vms
+                #region let's make sure all vms exist in the source cluster and get the details for each valid vm
+                foreach ($myvar_vm in $myvar_migration_plans.($myvar_migration_plan).vms)
+                {#looking at each individual vm specified in the csv file for this migration plan
+                    if ($myvar_vm_details = $myvar_all_available_source_workloads | ?{$_.VMName -ieq $myvar_vm})
+                    {#found our vm
+                        Write-Host "$(get-date) [DATA] Found VM $($myvar_vm_details.VMName) on cluster $($myvar_vm_details.ClusterName) in datacenter $($myvar_vm_details.DatacenterName) running on host $($myvar_vm_details.HostName)!" -ForegroundColor Green
+                        $myvar_migration_plans.($myvar_migration_plan).vm_details += $myvar_vm_details
+                    }
+                    else 
+                    {#specified vm is not anywhere in the source providers inventory
+                        Write-Host "$(get-date) [WARNING] Could not find VM $($myvar_vm) listed in migration plan $($myvar_migration_plan) in any of the source clusters on move $($move)!" -ForegroundColor Yellow
+                        $myvar_migration_plans.($myvar_migration_plan).vms = $myvar_migration_plans.($myvar_migration_plan).vms | ?{$_ -ne $myvar_vm}
+                    }
+                }
+                if ($myvar_migration_plans.($myvar_migration_plan).vm_details.count -eq 0)
+                {#we couldn't find a single vm for that migration plan: displaying an error (but continuing)
+                    Write-Host "$(get-date) [ERROR] Found $($myvar_migration_plans.($myvar_migration_plan).vm_details.count) valid candidate(s) out of $($myvar_migration_plans.($myvar_migration_plan).vms.count) specified to migrate using Move instance $($move) for migration plan $($myvar_migration_plan)." -ForegroundColor Red
+                    continue
+                }
+                elseif ($myvar_migration_plans.($myvar_migration_plan).vm_details.count -ne $myvar_migration_plans.($myvar_migration_plan).vms.count)
+                {#we have less valid vms than specified for this migration plan: displaying a warning and continuing
+                    Write-Host "$(get-date) [WARNING] Found $($myvar_migration_plans.($myvar_migration_plan).vm_details.count) valid candidate(s) out of $($myvar_migration_plans.($myvar_migration_plan).vms.count) specified to migrate using Move instance $($move) for migration plan $($myvar_migration_plan)." -ForegroundColor Yellow
+                }
+                else 
+                {#we found all the vms specified for this migration plan: displaying a white data message with that information
+                    Write-Host "$(get-date) [DATA] Found $($myvar_migration_plans.($myvar_migration_plan).vm_details.count) valid candidate(s) out of $($myvar_migration_plans.($myvar_migration_plan).vms.count) specified to migrate using Move instance $($move) for migration plan $($myvar_migration_plan)." -ForegroundColor White    <# Action when all if and elseif conditions are false #>
+                }
+                #endregion let's make sure all vms exist in the source cluster and get the details for each valid vm
+
+                #* dealing with networks
+                #region let's figure out network uuids
+                foreach ($myvar_network_mapping in (($myvar_csv_plans | ?{$_.vm_name -in $myvar_migration_plans.($myvar_migration_plan).vms} | ?{$_.migration_plan_name -eq $myvar_migration_plan}).network_mappings))
+                {#looking at each individual vm specified in the csv file for this migration plan
+                    Write-Host "$(get-date) [INFO] Looking up networks on Move instance $($move)..." -ForegroundColor Green
+                    foreach ($myvar_network_mapping_item in $myvar_network_mapping.split(";"))
+                    {#cater for multiple network mappings specified for a single vm
+                        $myvar_source_network_name = ($myvar_network_mapping_item.split(":"))[0]
+                        if ($myvar_source_network_id = ($myvar_migration_plans.($myvar_migration_plan).vm_details.networks | ?{$_.Name -ieq $myvar_source_network_name}).ID)
+                        {#we found our source network id
+                            Write-Host "$(get-date) [DATA] Source network $($myvar_source_network_name) on source cluster $($myvar_migration_plan_source_cluster) in source provider $($myvar_migration_plan_source_provider) on Move instance $($move) has network id $($myvar_source_network_id)" -ForegroundColor White
+                        }
+                        else 
+                        {#we could not find out source network id
+                            Write-Host "$(get-date) [ERROR] Could not find source network $($myvar_source_network_name) on source cluster $($myvar_migration_plan_source_cluster) in source provider $($myvar_migration_plan_source_provider) on Move instance $($move)..." -ForegroundColor Red
+                            exit 1
+                        }
+                        
+                        $myvar_target_network_name = ($myvar_network_mapping_item.split(":"))[1]
+                        if ($myvar_target_network_id = ((($myvar_move_providers.entities.spec | ?{$_.Name -ieq $myvar_migration_plan_target_provider}).AOSProperties.Clusters | ?{$_.Name -ieq $myvar_migration_plan_target_cluster}).Networks | ?{$_.Name -ieq $myvar_target_network_name}).UUID)
+                        {#we found our target network uuid
+                            Write-Host "$(get-date) [DATA] Target network $($myvar_target_network_name) on target cluster $($myvar_migration_plan_target_cluster) in target provider $($myvar_migration_plan_target_provider) on Move instance $($move) has network id $($myvar_target_network_id)" -ForegroundColor White
+                        }
+                        else 
+                        {#we could not find our target network uuid
+                            Write-Host "$(get-date) [ERROR] Could not find target network $($myvar_target_network_name) on target cluster $($myvar_migration_plan_target_cluster) in target provider $($myvar_migration_plan_target_provider) on Move instance $($move)..." -ForegroundColor Red
+                            exit 1
+                        }
+                        $myvar_network_mapping_spec = @{
+                            SourceNetworkID=$myvar_source_network_id;
+                            TargetNetworkID=$myvar_target_network_id;
+                        }
+                        if ($myvar_network_mapping_spec -notin $myvar_migration_plans.($myvar_migration_plan).network_mappings)
+                        {#we haven't added this network mappings spec yet
+                            $myvar_migration_plans.($myvar_migration_plan).network_mappings += $myvar_network_mapping_spec
+                        }
+                    }
+                }
+                #we need to make sure that mappings have been specified for all the networks in use for each valid vm
+                if (($myvar_migration_plans.($myvar_migration_plan).network_mappings.SourceNetworkID | Select-Object -Unique) -notcontains ($myvar_migration_plans.($myvar_migration_plan).vm_details.Networks.ID | Select-Object -Unique))
+                {#some vm networks have no mapping specified
+                    Write-Host "$(get-date) [WARNING] Some virtual machines part of migration plan $($myvar_migration_plan) are connected to networks for which no mapping has been specified!" -ForegroundColor Yellow
+                }
+                #endregion let's figure out network uuids
+                
+                #* dealing with target cluster uuid, source provider uuid and target container uuid
+                #region let's figure out some uuids
+                if ($myvar_migration_plan_target_cluster_uuid = ($myvar_move_providers.Entities.Spec.AOSProperties.Clusters | ?{$_.Name -ieq $myvar_migration_plan_target_cluster}).UUID)
+                {#found target cluster uuid
+                    Write-Host "$(get-date) [DATA] Target cluster $($myvar_migration_plan_target_cluster) UUID is $($myvar_migration_plan_target_cluster_uuid)." -ForegroundColor White
+                }
+                else 
+                {#could not find target cluster uuid
+                    Write-Host "$(get-date) [ERROR] Could not find target cluster $($myvar_migration_plan_target_cluster) UUID on $($move)!" -ForegroundColor Red
+                    exit 1
+                }
+                if ($myvar_migration_plan_target_container_uuid = (($myvar_move_providers.Entities.Spec.AOSProperties.Clusters | ?{$_.Name -ieq $myvar_migration_plan_target_cluster}).Containers | ?{$_.Name -ieq $myvar_migration_plan_target_container}).UUID)
+                {#found target container uuid
+                    Write-Host "$(get-date) [DATA] Target container $($myvar_migration_plan_target_container) UUID is $($myvar_migration_plan_target_container_uuid)." -ForegroundColor White
+                }
+                else 
+                {#could not find target cluster uuid
+                    Write-Host "$(get-date) [ERROR] Could not find target container $($myvar_migration_plan_target_container) UUID on $($move)!" -ForegroundColor Red
+                    exit 1
+                }
+                if ($myvar_migration_plan_source_provider_uuid = ($myvar_move_providers.Entities | ?{$_.Spec.Name -ieq $myvar_migration_plan_source_provider}).Metadata.UUID)
+                {#found source provider uuid
+                    Write-Host "$(get-date) [DATA] Source Provider $($myvar_migration_plan_source_provider) UUID is $($myvar_migration_plan_source_provider_uuid)." -ForegroundColor White
+                }
+                else 
+                {#could not find source provider uuid
+                    Write-Host "$(get-date) [ERROR] Could not find source provider $($myvar_migration_plan_source_provider) UUID on $($move)!" -ForegroundColor Red
+                    exit 1
+                }
+                if ($myvar_migration_plan_target_provider_uuid = ($myvar_move_providers.Entities | ?{$_.Spec.Name -ieq $myvar_migration_plan_target_provider}).Metadata.UUID)
+                {#found target provider uuid
+                    Write-Host "$(get-date) [DATA] Target Provider $($myvar_migration_plan_target_provider) UUID is $($myvar_migration_plan_target_provider_uuid)." -ForegroundColor White
+                }
+                else 
+                {#could not find target provider uuid
+                    Write-Host "$(get-date) [ERROR] Could not find target provider $($myvar_migration_plan_target_provider) UUID on $($move)!" -ForegroundColor Red
+                    exit 1
+                }
+                #endregion let's figure out some uuids
+
+                #* dealing with the payload
+                #region build the plan payload
+                #example:
+                <# {
+                    "Spec": {
+                      "Name": "test_auto_plan",
+                      "NetworkMappings": [
+                        {
+                          "SourceNetworkID": "network-23685",
+                          "TargetNetworkID": "81f3f8c8-0a12-4028-8cfd-1c81fc05d1a4"
+                        }
+                      ],
+                      "Settings": {
+                        "Bandwidth": null,
+                        "GuestPrepMode": "manual",
+                        "Schedule": {
+                          "RWEndTimeAtEpochSec": 0,
+                          "RWStartTimeAtEpochSec": 0,
+                          "ScheduleAtEpochSec": -1
+                        }
+                      },
+                      "SourceInfo": {
+                        "ProviderUUID": "e11b52e2-8b7b-4434-a7d2-570dba97cd62"
+                      },
+                      "TargetInfo": {
+                        "AOSProviderAttrs": {
+                            "ClusterUUID": "000582c6-cf0d-e0a8-0000-000000016950",
+                            "ContainerUUID": "4e2ea259-ef3a-487a-9036-3581deba5207"
+                        },
+                        "ProviderUUID": "ec7cab9b-c4a1-4f70-8845-1bf3ab466d29"
+                      },
+                      "Workload": {
+                        "Type": "VM",
+                        "VMs": [
+                          {
+                            "AllowUVMOps": false,
+                            "RetainMacAddress": true,
+                            "UninstallGuestTools": false,
+                            "VMReference": {
+                              "UUID": "d586d7b9-5f9d-5f92-9e50-ba151ee3c11d"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  } #>
+                $myvar_migration_plan_payload = @{
+                    Spec=@{
+                        Name="$($myvar_migration_plan)";
+                        NetworkMappings=@(foreach ($myvar_network_mapping_item in $myvar_migration_plans.($myvar_migration_plan).network_mappings) {
+                            @{
+                                SourceNetworkID="$($myvar_network_mapping_item.SourceNetworkID)";
+                                TargetNetworkID="$($myvar_network_mapping_item.TargetNetworkID)";
+                            }
+                        });
+                        Settings=@{
+                            Bandwidth=$null;
+                            GuestPrepMode="manual";
+                            Schedule=@{
+                                RWEndTimeAtEpochSec=0;
+                                RWStartTimeAtEpochSec=0;
+                                ScheduleAtEpochSec=-1;
+                            };
+                        };
+                        SourceInfo=@{
+                            ProviderUUID="$($myvar_migration_plan_source_provider_uuid)";
+                        };
+                        TargetInfo=@{
+                            AOSProviderAttrs=@{
+                                ClusterUUID="$($myvar_migration_plan_target_cluster_uuid)";
+                                ContainerUUID="$($myvar_migration_plan_target_container_uuid)";
+                            };
+                            ProviderUUID="$($myvar_migration_plan_target_provider_uuid)"
+                        };
+                        Workload=@{
+                            Type="VM";
+                            VMs=@(foreach ($myvar_vm in $myvar_migration_plans.($myvar_migration_plan).vm_details)
+                                {
+                                    @{
+                                        AllowUVMOps=$false;
+                                        RetainMacAddress=$true;
+                                        UninstallGuestTools=$false;
+                                        VMReference=@{
+                                            UUID="$($myvar_vm.VMUuid)"
+                                        }
+                                    }
+                                }
+                            )
+                        };
+                    }
+                }
+                $myvar_migration_plan_json_payload = (ConvertTo-Json $myvar_migration_plan_payload -Depth 9)
+                #endregion build the plan payload
+                
+                #* dealing with plan creation
+                #region create the plan
+                $myvar_migration_plan_create_response = Move-CreateMigrationPlan -move $move -token $myvar_move_token -payload $myvar_migration_plan_json_payload
+                Write-Host "$(get-date) [SUCCESS] Successfully created migration plan $($myvar_migration_plan)!" -ForegroundColor Cyan
+                #endregion create the plan
+            }
+            #endregion process each migration plan
         }
         elseif ($action -eq "report")
         {#user wants to report migration plan(s) status
@@ -1559,7 +1912,7 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [DATA] There are $($myvar_move_migration_plans.entities.count) migration plans on Move instance $($move)..." -ForegroundColor White
             foreach ($myvar_migration_plan in $myvar_move_migration_plans.entities)
             {
-                if (($plans -eq "all") -or ($myvar_migration_plan.metadata.name -in $plans))
+                if (($plans -ieq "all") -or ($myvar_migration_plan.metadata.name -in $plans))
                 {
                     Write-Host "$(get-date) [DATA] Migration plan $($myvar_migration_plan.metadata.name) with status $(Convert-PlanState($myvar_migration_plan.metadata.state)) contains $($myvar_migration_plan.metadata.numvms) VM(s) migrating from provider $($myvar_migration_plan.metadata.sourceinfo.name) of type $($myvar_migration_plan.metadata.sourceinfo.type) to $($myvar_migration_plan.metadata.targetinfo.name) of type $($myvar_migration_plan.metadata.targetinfo.type) and has a data size of $(Format-FileSize($myvar_migration_plan.metadata.datainbytes))" -ForegroundColor White
                 }
@@ -1586,10 +1939,12 @@ Date       By   Updates (newest updates at the top)
         {#user wants to resume migration operations for a migration plan
             Write-Host "$(get-date) [STEP] Resuming migration plan(s)..." -ForegroundColor Magenta
         }
+        #endregion Step 2: branch based on action selected
 
-        #todo: Final Step: logging out of Move to release the authentication token
-        Write-Host "$(get-date) [STEP] Logging out of Move API..." -ForegroundColor Magenta
+        #region Final Step: logging out of Move to release the authentication token
+        Write-Host "$(get-date) [STEP] Logging out of Move API instance $($move)..." -ForegroundColor Magenta
         $myvar_move_logout_response = Move-Logout -move $move -token $myvar_move_token
+        #endregion Final Step: logging out of Move to release the authentication token
     }
 #endregion processing
 
