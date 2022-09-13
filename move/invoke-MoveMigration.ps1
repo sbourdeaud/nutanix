@@ -21,7 +21,7 @@
 .PARAMETER plans
   Name(s) (in comma separated format for multiple entries) of the migration plans you want to take action on (valid with -action report, suspend, resume, validate).  You can also specify "all" if you want to take action on all migration plans.  All is assumed if no value is given for plans.
 .PARAMETER csvplans
-  Specifies source csv files with the list of vms and plans to create.  Each line of that csv file must contain the following columns: migration_plan_name, vm_name, network_mappings, guest_prep_mode,	source_provider, source_cluster, target_provider, target_cluster, target_container, move_instance. In addition, the target provider, cluster and storage container for all vms within the same migration plan must be the same (if you need to specify different targets, then you will need to specify a different migration plan). Network mappings can be different per vm, must one mapping must exist for every network the vm is connected to.  Network mappings are specified in the source_network_name:target_network_name format and mutliple entries in that column are separated with a semi colon (;).
+  Specifies source csv files with the list of vms and plans to create.  Each line of that csv file must contain the following columns: migration_plan_name, vm_name, network_mappings, guest_prep_mode,	source_provider, source_cluster, target_provider, target_cluster, target_container, move_instance, start_schedule, snapshot_interval_min. In addition, the target provider, cluster and storage container for all vms within the same migration plan must be the same (if you need to specify different targets, then you will need to specify a different migration plan). Network mappings can be different per vm, must one mapping must exist for every network the vm is connected to.  Network mappings are specified in the source_network_name:target_network_name format and mutliple entries in that column are separated with a semi colon (;).
 .EXAMPLE
 .\invoke-MoveMigration.ps1 -move mymove.local -action report
 Report the status of all migration plans from the specified Move instance:
@@ -33,7 +33,6 @@ Report the status of all migration plans from the specified Move instance:
 #>
 
 
-#todo: implement migrate action capability from csv
 #todo: implement migrate action capability from vcfolder and vctag
 #todo: enhance report action capability (how to compute migrated data size + include csv and html reports)
 #todo: implement functionality to find a specific vms amongst all migration plans and report its status
@@ -41,13 +40,13 @@ Report the status of all migration plans from the specified Move instance:
 #todo: implement failback action capability
 #todo: implement validate action capability
 #todo: add create providers from csv action capability
-#todo: add a way to deal securely with credentials (exp: by fetching them from a vault instance)
+#todo: add a way to deal securely with vm credentials (exp: by fetching them from a vault instance)
 #todo: need to make sure source and target types are compatible (from providers information)
 
-#todo: enhance script to deal more elegantly (by offering choice) with csv input errors
+#todo: enhance script to deal more elegantly (by offering choice) with csv input errors: implement silent option for schedulability
 #todo: enhance script to edit existing migration plans (adding or removing vms)
 #todo: enhance script to add schedule to migration plan
-#todo: enhance script to add option to start immediately the migration plan
+#todo: add functionality for log file
 
 #region parameters
     Param
@@ -1493,6 +1492,100 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             return $resp
         }
     }
+
+    function Move-StartMigrationPlan
+    {#start migration plan on the given move instance
+        <#
+        .SYNOPSIS
+        Given a move instance and a valid session token, get all migration plans.
+
+        .DESCRIPTION
+        Given a move instance and a valid session token, get all migration plans.
+
+        .PARAMETER move
+        IP address or FQDN of the move instance.
+
+        .PARAMETER token
+        A valid session token string.
+
+        .PARAMETER plan
+        A valid migration plan uuid.
+
+        .PARAMETER snapshot_interval_min
+        Interval in minutes at which replication snapshots will be created (default is 120 min).
+
+        .NOTES
+        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+        .EXAMPLE
+        .\Move-StartMigrationPlan -move 10.10.10.1 -credential $mytoken -plan $my_plan_uuid
+        Start migration plan on move instance 10.10.10.1 based on the specified plan uuid.
+
+        .LINK
+        https://github.com/sbourdeaud
+        #>
+        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+        param 
+        (
+            [parameter(mandatory = $true)]
+            [string]$move,
+            
+            [parameter(mandatory = $true)]
+            [string]$token,
+
+            [parameter(mandatory = $true)]
+            [string]$plan,
+
+            [parameter(mandatory = $false)]
+            [int]$snapshot_interval_min
+        )
+
+        begin 
+        {
+            $url = "https://{0}/move/v2/plans/{1}/start" -f $move,$plan
+            $method = "POST"
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json";
+                "Authorization"="$($token)";
+            }
+            if (!$snapshot_interval_min) {$snapshot_interval_min = 120}
+            $content = @{
+                Spec=@{
+                    Time=$snapshot_interval_min;
+                }
+            }
+            $payload = (ConvertTo-Json $content -Depth 9)
+        }
+
+        process 
+        {
+            Write-Host "$(Get-Date) [INFO] Making a $($method) call to $($url)" -ForegroundColor Green
+            try 
+            {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication None -ErrorAction Stop -Body $payload
+                Write-Host "$(get-date) [SUCCESS] Call $($method) to $($url) succeeded." -ForegroundColor Cyan 
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            }
+            catch 
+            {
+                $saved_error = $_.Exception
+                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message
+                $resp_return_code = $_.Exception.Response.StatusCode.value__
+                Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"
+            }
+            finally 
+            {
+                #add any last words here; this gets processed no matter what
+            }
+        }
+
+        end 
+        {
+            return $resp
+        }
+    }
 #endregion functions
 
 
@@ -1598,10 +1691,28 @@ Date       By   Updates (newest updates at the top)
                 {#process each line in the csv and build a variable that will keep track of specific characteristics of each migration plan required to build the json payload
                     if (!$myvar_migration_plans.($myvar_item.migration_plan_name))
                     {#we haven't processed that migration plan yet
+                        if (($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).start_schedule  | Select-Object -Unique)
+                        {#user specified a start date and time: let's check the format is valid and let's use it
+                            $myvar_migration_plan_start_date = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).start_schedule  | Select-Object -Unique -First 1
+                        }
+                        else 
+                        {#user did not specify a start date and time, so we'll assume it will start now
+                            $myvar_migration_plan_start_date = "now"
+                        }
+                        if (($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).snapshot_interval_min  | Select-Object -Unique)
+                        {#user specified a snapshot interval
+                            [int]$myvar_migration_plan_snapshot_interval_min = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).snapshot_interval_min  | Select-Object -Unique -First 1
+                        }
+                        else 
+                        {#user did not specify a start date and time, so we'll assume it will start now
+                            [int]$myvar_migration_plan_snapshot_interval_min = 120
+                        }
                         $myvar_migration_plans.($myvar_item.migration_plan_name) = @{
                             "vms" = ($myvar_csv_plans | ?{$_.migration_plan_name -eq $myvar_item.migration_plan_name}).vm_name  | Select-Object -Unique;
                             "network_mappings" = @();
                             "vm_details" = @();
+                            "start_schedule" = $myvar_migration_plan_start_date;
+                            "snapshot_interval_min" = $myvar_migration_plan_snapshot_interval_min
                         }
                     }  
                 }
@@ -1700,7 +1811,7 @@ Date       By   Updates (newest updates at the top)
                     else 
                     {#specified vm is not anywhere in the source providers inventory
                         Write-Host "$(get-date) [WARNING] Could not find VM $($myvar_vm) listed in migration plan $($myvar_migration_plan) in any of the source clusters on move $($move)!" -ForegroundColor Yellow
-                        $myvar_migration_plans.($myvar_migration_plan).vms = $myvar_migration_plans.($myvar_migration_plan).vms | ?{$_ -ne $myvar_vm}
+                        #$myvar_migration_plans.($myvar_migration_plan).vms = $myvar_migration_plans.($myvar_migration_plan).vms | ?{$_ -ne $myvar_vm}
                     }
                 }
                 if ($myvar_migration_plans.($myvar_migration_plan).vm_details.count -eq 0)
@@ -1720,7 +1831,7 @@ Date       By   Updates (newest updates at the top)
 
                 #* dealing with networks
                 #region let's figure out network uuids
-                foreach ($myvar_network_mapping in (($myvar_csv_plans | ?{$_.vm_name -in $myvar_migration_plans.($myvar_migration_plan).vms} | ?{$_.migration_plan_name -eq $myvar_migration_plan}).network_mappings))
+                foreach ($myvar_network_mapping in (($myvar_csv_plans | ?{$_.vm_name -in $myvar_migration_plans.($myvar_migration_plan).vm_details.VMName} | ?{$_.migration_plan_name -eq $myvar_migration_plan}).network_mappings))
                 {#looking at each individual vm specified in the csv file for this migration plan
                     Write-Host "$(get-date) [INFO] Looking up networks on Move instance $($move)..." -ForegroundColor Green
                     foreach ($myvar_network_mapping_item in $myvar_network_mapping.split(";"))
@@ -1902,6 +2013,16 @@ Date       By   Updates (newest updates at the top)
                 $myvar_migration_plan_create_response = Move-CreateMigrationPlan -move $move -token $myvar_move_token -payload $myvar_migration_plan_json_payload
                 Write-Host "$(get-date) [SUCCESS] Successfully created migration plan $($myvar_migration_plan)!" -ForegroundColor Cyan
                 #endregion create the plan
+
+                #* dealing with migration start
+                #region start migration
+                if ($myvar_migration_plan_start_date -ieq "now")
+                {#we start migration immediately
+                    Write-Host "$(get-date) [INFO] Starting migration plan $($myvar_migration_plan)..." -ForegroundColor Green
+                    $myvar_migration_plan_start_response = Move-StartMigrationPlan -move $move -token $myvar_move_token -plan $($myvar_migration_plan_create_response.MetaData.uuid) -snapshot_interval_min $($myvar_migration_plans.($myvar_migration_plan).snapshot_interval_min)
+                    Write-Host "$(get-date) [SUCCESS] Successfully started migration plan $($myvar_migration_plan)!" -ForegroundColor Cyan
+                }
+                #endregion start migration
             }
             #endregion process each migration plan
         }
@@ -1909,7 +2030,7 @@ Date       By   Updates (newest updates at the top)
         {#user wants to report migration plan(s) status
             Write-Host "$(get-date) [STEP] Reporting migration plan(s) status..." -ForegroundColor Magenta
             $myvar_move_migration_plans = Move-GetMigrationPlans -move $move -token $myvar_move_token
-            Write-Host "$(get-date) [DATA] There are $($myvar_move_migration_plans.entities.count) migration plans on Move instance $($move)..." -ForegroundColor White
+            Write-Host "$(get-date) [DATA] There is/are $($myvar_move_migration_plans.entities.count) migration plan(s) on Move instance $($move)..." -ForegroundColor White
             foreach ($myvar_migration_plan in $myvar_move_migration_plans.entities)
             {
                 if (($plans -ieq "all") -or ($myvar_migration_plan.metadata.name -in $plans))
