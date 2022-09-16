@@ -977,7 +977,7 @@ Param
     Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Preparing--"
 
     #check if we need to display help and/or history
-$HistoryText = @'
+    $HistoryText = @'
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------

@@ -861,7 +861,7 @@ https://github.com/sbourdeaud
         {
             Do 
             {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
+                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length $taskDetails.percentage_complete -BarView AdvancedThin2
                 $Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
                 Sleep 5
                 $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -checking_task_status
