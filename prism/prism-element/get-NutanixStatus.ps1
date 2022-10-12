@@ -686,6 +686,7 @@ function Get-PrismCentralObjectList
  04/15/2022 sb	 Fixed divide by zero error. Added functions and removed 
  				 dependency to sbourdeaud module.
  10/12/2022 sb   Added multiple cluster information entries.
+                 Added HA information (at Drew Henning's request)
 ################################################################################
 '@
 	$myvarScriptName = ".\get-NutanixStatus.ps1"
@@ -762,6 +763,7 @@ function Get-PrismCentralObjectList
             $myvarClusterReportEntry = [ordered]@{
                 "name" = $myvarClusterInfo.name;
 			    "version" = $myvarClusterInfo.version;
+                "ncc_version" = $myvarClusterInfo.ncc_version;
                 "is_lts" = $myvarClusterInfo.is_lts;
                 "hypervisor_types" = $myvarClusterInfo.hypervisor_types -join ";";
                 "num_nodes" = $myvarClusterInfo.num_nodes;
@@ -789,8 +791,22 @@ function Get-PrismCentralObjectList
 				}
 			}
 		#endregion
+        
+        #! step 2: get ha information
+		#region get ha
+			Write-Host "$(get-date) [INFO] Retrieving HA information..." -ForegroundColor Green
+			$url = "https://$($cluster):9440/api/nutanix/v2.0/ha/"
+			$method = "GET"
+			$myvarHAInfo = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+			Write-Host "$(get-date) [SUCCESS] Successfully retrieved HA information!" -ForegroundColor Cyan
+			
+            $myvarClusterReportEntry.ha_failover_enabled = $myvarHAInfo.failover_enabled
+            $myvarClusterReportEntry.ha_num_host_failures_to_tolerate = $myvarHAInfo.num_host_failures_to_tolerate
+            $myvarClusterReportEntry.ha_reservation_type = $myvarHAInfo.reservation_type
+            $myvarClusterReportEntry.ha_state = $myvarHAInfo.ha_state
+		#endregion
 
-		#! step 2: get container information
+		#! step 3: get container information
 		#region get containers
 			Write-Host "$(get-date) [INFO] Retrieving storage containers information..." -ForegroundColor Green
 			$url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/storage_containers/"
