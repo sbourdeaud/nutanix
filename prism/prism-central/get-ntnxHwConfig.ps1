@@ -24,7 +24,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the hardware c
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: March 31st
+  Revision: October 12th 2022
 #>
 
 #region parameters
@@ -418,6 +418,7 @@ Date       By   Updates (newest updates at the top)
 02/06/2021 sb   Replaced username with get-credential
 03/31/2021 sb   Fixing an issue with a GET API call sending a payload...
 12/02/2021 sb   Removing dependency on sbourdeaud module
+10/12/2022 sb   Added HA information to cluster results csv
 ################################################################################
 '@
     $myvarScriptName = ".\get-ntnxHwConfig.ps1"
@@ -436,6 +437,7 @@ Date       By   Updates (newest updates at the top)
     #prepare our overall results variable
     [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarClustersResults = New-Object System.Collections.ArrayList($null)
+    [System.Collections.ArrayList]$myvar_ha_results = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarHostsResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarDisksResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarClustersResultsFinal = New-Object System.Collections.ArrayList($null)
@@ -631,6 +633,38 @@ Date       By   Updates (newest updates at the top)
         #endregion
     }
 
+    #! step 3: retrieve clusters HA information from Prism Element
+    #foreach cluster in $myvarClustersResults: query the ha configuration information
+    ForEach ($cluster in $myvarClustersResults) {
+        #region prepare api call
+        $api_server_endpoint = "/api/nutanix/v2.0/ha/"
+        $url = "https://{0}:{1}{2}" -f $cluster.external_ip,$api_server_port, $api_server_endpoint
+        $method = "GET"
+        #endregion
+
+        #region make api call
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        $myvar_cluster_ha_information = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+        #grab the information we need
+        $myvar_ha_info = [ordered]@{
+            "cluster_name" = $cluster.name;
+            "failover_enabled" = $myvar_cluster_ha_information.failover_enabled;
+            "num_host_failures_to_tolerate" = $myvar_cluster_ha_information.num_host_failures_to_tolerate;
+            "reservation_type" = $myvar_cluster_ha_information.reservation_type;
+            "ha_state" = $myvar_cluster_ha_information.ha_state;
+        }
+        #store the results for this entity in our overall result variable
+        $myvar_ha_results.Add((New-Object PSObject -Property $myvar_ha_info)) | Out-Null
+
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+            $myvar_ha_results
+        }
+        
+        #endregion
+    }
+
     #!step 3: retrieve hosts managed in Prism Central
     #region prepare api call
     $api_server_endpoint = "/api/nutanix/v3/hosts/list"
@@ -738,7 +772,11 @@ Date       By   Updates (newest updates at the top)
                 "total_capacity_tib" = "{0:n2}" -f ((($myvarHostsResults | Where-Object {$_.cluster_uuid -eq $cluster.uuid}).storage_capacity_tib | Measure-Object -Sum).Sum);
                 "max_node_capacity_tib" = "{0:n2}" -f ((($myvarHostsResults | Where-Object {$_.cluster_uuid -eq $cluster.uuid}).storage_capacity_tib | Measure-Object -Maximum).Maximum);
                 "min_node_ssd_qty" = "{0:n0}" -f ((($myvarHostsResults | Where-Object {$_.cluster_uuid -eq $cluster.uuid}).ssd_qty | Measure-Object -Minimum).Minimum);
-                "min_ssd_size_gib" = "{0:n0}" -f ((($myvarHostsResults | Where-Object {$_.cluster_uuid -eq $cluster.uuid}).ssd_size_gib | Measure-Object -Minimum).Minimum)
+                "min_ssd_size_gib" = "{0:n0}" -f ((($myvarHostsResults | Where-Object {$_.cluster_uuid -eq $cluster.uuid}).ssd_size_gib | Measure-Object -Minimum).Minimum);
+                "failover_enabled" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).failover_enabled;
+                "num_host_failures_to_tolerate" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).num_host_failures_to_tolerate;
+                "reservation_type" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).reservation_type;
+                "ha_state" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).ha_state;
                 #todo add number of nodes, total ssd qty, total disk qty
             }
             $myvarClustersResultsFinal.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
