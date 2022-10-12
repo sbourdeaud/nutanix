@@ -25,7 +25,7 @@ Retrieve status for a list of Nutanix clusters.
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 12th 2022
 #>
 
 #region parameters
@@ -685,6 +685,7 @@ function Get-PrismCentralObjectList
  02/06/2021 sb   Replaced username with get-credential
  04/15/2022 sb	 Fixed divide by zero error. Added functions and removed 
  				 dependency to sbourdeaud module.
+ 10/12/2022 sb   Added multiple cluster information entries.
 ################################################################################
 '@
 	$myvarScriptName = ".\get-NutanixStatus.ps1"
@@ -692,46 +693,6 @@ function Get-PrismCentralObjectList
 	if ($help) {get-help $myvarScriptName; exit}
 	if ($History) {$HistoryText; exit}
 
-	<# #region module sbourdeaud is used for facilitating Prism REST calls
-	$required_version = "3.0.8"
-	if (!(Get-Module -Name sbourdeaud)) {
-	Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-	try
-	{
-		Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-		Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-	}#end try
-	catch #we couldn't import the module, so let's install it
-	{
-		Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-		try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-		catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
-
-		try
-		{
-			Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-			Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-		}#end try
-		catch #we couldn't import the module
-		{
-			Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-			Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-			Exit
-		}#end catch
-	}#end catch
-	}#endif module sbourdeaud
-	$MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-	if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-	Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-	Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-	Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-	try {
-		Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop
-		Import-Module -Name sbourdeaud -ErrorAction Stop
-	}
-	catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-	}
-	#endregion #>
 	Set-PoSHSSLCerts
 	Set-PoshTls
 #endregion
@@ -761,25 +722,23 @@ function Get-PrismCentralObjectList
 	
 	if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
     else 
     { #we are using custom credentials, so let's grab the username and password from that
         try 
         {
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
         catch 
         {
             Set-CustomCredentials -credname $prismCreds
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-            $username = $prismCredentials.UserName
-            $PrismSecurePassword = $prismCredentials.Password
         }
-        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
+    $username = $prismCredentials.UserName
+    $PrismSecurePassword = $prismCredentials.Password
+    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 	
 	[System.Collections.ArrayList]$myvarClusterReport = New-Object System.Collections.ArrayList($null) #used for storing all entries.
 	[System.Collections.ArrayList]$myvarContainerReport = New-Object System.Collections.ArrayList($null) #used for storing all entries.
@@ -800,9 +759,24 @@ function Get-PrismCentralObjectList
 			$myvarClusterInfo = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 			Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information!" -ForegroundColor Cyan
 			
-			$myvarClusterReportEntry.Version = $myvarClusterInfo.version
-			$myvarClusterReportEntry.Name = $myvarClusterInfo.name
-			
+            $myvarClusterReportEntry = [ordered]@{
+                "name" = $myvarClusterInfo.name;
+			    "version" = $myvarClusterInfo.version;
+                "is_lts" = $myvarClusterInfo.is_lts;
+                "hypervisor_types" = $myvarClusterInfo.hypervisor_types -join ";";
+                "num_nodes" = $myvarClusterInfo.num_nodes;
+                "encrypted" = $myvarClusterInfo.encrypted;
+                "storage_type" = $myvarClusterInfo.storage_type;
+                "current_redundancy_factor" = $myvarClusterInfo.cluster_redundancy_state.current_redundancy_factor;
+                "fault_tolerance_domain_type" = $myvarClusterInfo.fault_tolerance_domain_type;
+                "enable_rebuild_reservation" = $myvarClusterInfo.enable_rebuild_reservation
+                "timezone" = $myvarClusterInfo.timezone;
+                "is_registered_to_pc" = $myvarClusterInfo.is_registered_to_pc;
+                "block_serials" = $myvarClusterInfo.block_serials -join ";";
+                "cluster_external_address" = $myvarClusterInfo.cluster_external_address.ipv4 -join ";";
+                "cluster_external_data_services_address" = $myvarClusterInfo.cluster_external_data_services_address.ipv4 -join ";";
+            }
+
 			foreach ($myvarUnit in $myvarClusterInfo.rackable_units)
 			{
 				if ($myvarUnit.model_name)
