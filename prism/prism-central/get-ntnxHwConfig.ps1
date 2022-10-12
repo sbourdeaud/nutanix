@@ -438,6 +438,7 @@ Date       By   Updates (newest updates at the top)
     [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarClustersResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvar_ha_results = New-Object System.Collections.ArrayList($null)
+    [System.Collections.ArrayList]$myvar_cluster_additional_information_results = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarHostsResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarDisksResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarClustersResultsFinal = New-Object System.Collections.ArrayList($null)
@@ -665,7 +666,45 @@ Date       By   Updates (newest updates at the top)
         #endregion
     }
 
-    #!step 3: retrieve hosts managed in Prism Central
+    #! step 4: retrieve additional clusters information from Prism Element
+    #foreach cluster in $myvarClustersResults: query the ha configuration information
+    ForEach ($cluster in $myvarClustersResults) {
+        #region prepare api call
+        $api_server_endpoint = "/PrismGateway/services/rest/v2.0/cluster/"
+        $url = "https://{0}:{1}{2}" -f $cluster.external_ip,$api_server_port, $api_server_endpoint
+        $method = "GET"
+        #endregion
+
+        #region make api call
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        $myvar_cluster_additional_information = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+
+        #grab the information we need
+        $myvar_additional_info = [ordered]@{
+            "cluster_name" = $cluster.name;
+            "hypervisor_types" = $myvar_cluster_additional_information.hypervisor_types -join ";";
+            "cluster_external_data_services_address" = $myvar_cluster_additional_information.cluster_external_data_services_address.ipv4 -join ";";
+            "enable_rebuild_reservation" = $myvar_cluster_additional_information.enable_rebuild_reservation;
+            "encrypted" = $myvar_cluster_additional_information.encrypted;
+            "storage_type" = $myvar_cluster_additional_information.storage_type;
+            "name_servers" = $myvar_cluster_additional_information.name_servers -join ";";
+            "ntp_servers" = $myvar_cluster_additional_information.ntp_servers -join ";";
+            "recycle_bin_ttlsecs" = $myvar_cluster_additional_information.recycle_bin_dto.recycle_bin_ttlsecs;
+            "disable_degraded_node_monitoring" = $myvar_cluster_additional_information.disable_degraded_node_monitoring;
+            "num_nodes" = $myvar_cluster_additional_information.num_nodes;
+        }
+        #store the results for this entity in our overall result variable
+        $myvar_cluster_additional_information_results.Add((New-Object PSObject -Property $myvar_additional_info)) | Out-Null
+
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+            $myvar_cluster_additional_information_results
+        }
+        
+        #endregion
+    }
+
+    #!step 5: retrieve hosts managed in Prism Central
     #region prepare api call
     $api_server_endpoint = "/api/nutanix/v3/hosts/list"
     $url = "https://{0}:{1}{2}" -f $prism,$api_server_port, $api_server_endpoint
@@ -756,7 +795,7 @@ Date       By   Updates (newest updates at the top)
     
     #endregion
 
-    #! step 4: process all the results
+    #! step 6: process all the results
     #create xls with multiple tabs or multiple csvs?
     #region agregate info for clusters
         ForEach ($cluster in $myvarClustersResults) {
@@ -777,6 +816,16 @@ Date       By   Updates (newest updates at the top)
                 "num_host_failures_to_tolerate" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).num_host_failures_to_tolerate;
                 "reservation_type" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).reservation_type;
                 "ha_state" = ($myvar_ha_results | ?{$_.cluster_name -eq $cluster.name}).ha_state;
+                "hypervisor_types" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).hypervisor_types -join ";";
+                "cluster_external_data_services_address" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).cluster_external_data_services_address -join ";";
+                "enable_rebuild_reservation" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).enable_rebuild_reservation;
+                "encrypted" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).encrypted;
+                "storage_type" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).storage_type;
+                "name_servers" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).name_servers -join ";";
+                "ntp_servers" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).ntp_servers -join ";";
+                "recycle_bin_ttlsecs" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).recycle_bin_ttlsecs;
+                "disable_degraded_node_monitoring" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).disable_degraded_node_monitoring;
+                "num_nodes" = ($myvar_cluster_additional_information_results | ?{$_.cluster_name -eq $cluster.name}).num_nodes;
                 #todo add number of nodes, total ssd qty, total disk qty
             }
             $myvarClustersResultsFinal.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
@@ -788,7 +837,7 @@ Date       By   Updates (newest updates at the top)
 
     #endregion
 
-    #! step 5: export the results
+    #! step 7: export the results
     #Write-Host "$(Get-Date) [INFO] Writing results to $(csv)" -ForegroundColor Green
     #$myvarResults | export-csv -NoTypeInformation $csv
     Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")DisksResults.csv" -ForegroundColor Green
