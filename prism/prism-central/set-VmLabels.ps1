@@ -507,7 +507,6 @@ Date       By   Updates (newest updates at the top)
             #region prepare api call
                 $vm_uuid_list = $myvar_vms_to_process.uuid                
                 if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of uuids for Vms to process: $($vm_uuid_list)" -ForegroundColor White}
-                if (!$vm_uuid_list) {continue}
 
                 #build json payload
                 $content = @{
@@ -523,8 +522,15 @@ Date       By   Updates (newest updates at the top)
                 $payload = (ConvertTo-Json $content -Depth 4)
                 if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Payload: $($payload)" -ForegroundColor White}
 
-                $api_server_endpoint = "/PrismGateway/services/rest/v1/tags/add_entities/fanout?async=true"
-                $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+                if ($action -eq "add")
+                {
+                    $api_server_endpoint = "/PrismGateway/services/rest/v1/tags/add_entities/fanout?async=true"
+                }
+                elseif ($action -eq "remove")
+                {
+                    $api_server_endpoint = "/PrismGateway/services/rest/v1/tags/remove_entities/fanout?async=true"
+                }
+                $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port,$api_server_endpoint
                 $method = "POST"
             #endregion
             
