@@ -22,13 +22,13 @@
 .PARAMETER labels
   One or more label that you want to apply to the specified vm(s). If the label does not exist, you will be prompted to create it.
 .EXAMPLE
-.\set-VmLabels.ps1 -prismcentral ntnxc1.local -labels mylabel -vms myvm
+.\set-VmLabels.ps1 -prismcentral ntnxc1.local -labels "mylabel1,mylabel2" -vms "myvm1,myvm2" -action add
 Connect to a Nutanix cluster of your choice:
 .LINK
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 26th 2021
+  Revision: October 26th 2022
 #>
 
 #region parameters
@@ -195,6 +195,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 04/26/2021 sb   Initial release.
+10/26/2022 sb   Tested version for add action.
 ################################################################################
 '@
     $myvarScriptName = ".\set-VmLabels.ps1"
