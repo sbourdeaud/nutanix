@@ -282,6 +282,8 @@ Date       By   Updates (newest updates at the top)
         }
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
     }
+    $vms = $vms.Split(",")
+    $labels = $labels.Split(",")
 #endregion
 
 #region processing
@@ -408,19 +410,14 @@ Date       By   Updates (newest updates at the top)
                 #prepare the json payload for the next batch of entities/response
                 $content = @{
                     kind="vm";
-                    offset=($resp.metadata.length + $offset);
+                    offset=(($resp.entities).count + $resp.metadata.offset);
                     length=$length
                 }
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
             While ($resp.metadata.length -eq $length)
 
-            if ($cluster) 
-            {
-                $myvarVmResults = $myvarVmResults | Where-Object -Property cluster -eq $cluster
-            }
-
-            if (!$myvarVmResults) 
+            if (!$myvar_vms_list) 
             {
                 Write-Host "$(Get-Date) [ERROR] Query did not return any results/vms on Prism Central $($prismcentral)" -ForegroundColor Red
                 Exit 1
@@ -462,55 +459,58 @@ Date       By   Updates (newest updates at the top)
         #endregion
 
         #region make the api call
-            $count = 1
-            While ($count -le 5) 
+            Foreach ($myvar_label in $labels)
             {
-                $tag_name = "boot_priority_{0}" -f $count
                 # this is used to capture the content of the payload
                 $content = @{
-                    name=$tag_name;
+                    name=$myvar_label;
                     entityType="vm";
                     description=$null
                 }
                 $payload = (ConvertTo-Json $content -Depth 4)
 
-                if (($myvar_pc_tags.entities.name) -contains $tag_name) 
+                if (($myvar_pc_tags.entities.name) -contains $myvar_label) 
                 {
-                    Write-Host "$(Get-Date) [INFO] Tag $($tag_name) already exists on Prism Central $($prismcentral)" -ForegroundColor Green
+                    Write-Host "$(Get-Date) [INFO] Tag $($myvar_label) already exists on Prism Central $($prismcentral)" -ForegroundColor Green
                 } 
                 else 
                 {
                     $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
                 }
-
-                $count++
             }
         #endregion
     #endregion
 
+    #* refresh existing tags (results stored in $pc_tags)
+    #region get tags
+        #region prepare api call
+        $api_server_endpoint = "/PrismGateway/services/rest/v1/tags"
+        $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+        $method = "GET"
+    #endregion
+
+    #region making the api call
+        $myvar_pc_tags = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+    #endregion
+#endregion
+
     #* tagging vms
     #region tagging vms
         #build list of vm uuids
-        $myvar_vms_to_process = Compare-Object -ReferenceObject $myvar_vms_list -DifferenceObject $tagRef -Property name -IncludeEqual -PassThru | Where-Object -Property SideIndicator -eq "=="
+        #$myvar_vms_to_process = Compare-Object -ReferenceObject $myvar_vms_list -DifferenceObject $tagRef -Property name -IncludeEqual -PassThru | Where-Object -Property SideIndicator -eq "=="
+        $myvar_vms_to_process = $myvar_vms_list | ?{$_.name -in $vms}
         #build list of tag uuids
-        $myvar_tag_uuids = $myvar_pc_tags.entities | where-object -Property name -Like "boot_priority_*" | Select-Object -Property name,uuid | Sort-Object -Property name
+        $myvar_tags_to_process = $myvar_pc_tags.entities | ?{$_.name -in $labels}
 
-        ForEach ($tag_uuid in $myvar_tag_uuids) {
+        ForEach ($myvar_tag in $myvar_tags_to_process) {
             #region prepare api call
-                #build list of vms with the matching boot_priority
-                $priority = $tag_uuid.name.Substring($tag_uuid.name.length - 1)
-                $vm_uuid_list = @()
-                ForEach ($vm in $myvar_vms_to_process) 
-                {
-                    $vm_priority = ($tagRef | Where-Object {$_.name -eq $vm.name}).boot_priority
-                    if ($vm_priority -eq $priority) {$vm_uuid_list += $vm.uuid}
-                }
-                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of uuids for Vms with priority $($priority): $($vm_uuid_list)" -ForegroundColor White}
-                if (!$vm_uuid_list) {continue} #if there are no entities to tag, proceed to the next priority
+                $vm_uuid_list = $myvar_vms_to_process.uuid                
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] List of uuids for Vms to process: $($vm_uuid_list)" -ForegroundColor White}
+                if (!$vm_uuid_list) {continue}
 
                 #build json payload
                 $content = @{
-                    tagUuid=$tag_uuid.uuid;
+                    tagUuid=$myvar_tag.uuid;
                     entitiesList=@(ForEach ($vm_uuid in $vm_uuid_list) {
                         @{
                             entityUuid=$vm_uuid;
