@@ -30,7 +30,7 @@ Copy myFlowRule1 to myFlowRule2 and apply it to AppType app2 in monitor mode:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: November 8th 2022
+  Revision: November 9th 2022
 #>
 
 
@@ -1277,6 +1277,7 @@ Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
 11/08/2022 sb   Initial release.
+11/09/2022 sb   Added functionality for specifying the mode (enforce vs monitor)
 ################################################################################
 '@
     $myvarScriptName = ".\Copy-FlowRule.ps1"
@@ -1369,6 +1370,15 @@ Date       By   Updates (newest updates at the top)
         #* apply AppType category value
         $source_AppType = $rule.spec.resources.app_rule.target_group.filter.params.AppType
         $rule = ($rule | ConvertTo-Json -Depth 100) -replace "$($source_AppType)","$($appType)" | ConvertFrom-Json
+        #* apply mode
+        if ($mode -ieq 'monitor')
+        {
+            $rule.spec.resources.app_rule.action = 'MONITOR'
+        }
+        elseif ($mode -ieq 'enforce') 
+        {
+            $rule.spec.resources.app_rule.action = 'APPLY'
+        }
         #* create new rule
         $payload = (ConvertTo-Json $rule -Depth 100)
         $api_server_endpoint = "/api/nutanix/v3/network_security_rules"
