@@ -24,7 +24,7 @@
 .PARAMETER json
   Name of json file to use for import. If none is specified with export, defaults to [pc]_[date]_flow_ruleset.json
 .EXAMPLE
-.\Sync-FlowRules.ps1 -pc pc1.local -prismCreds myadcreds -export -rules openshift*
+.\Save-FlowRules.ps1 -pc pc1.local -prismCreds myadcreds -export -rules openshift*
 Export all rules starting with openshitft from pc1 to the json file pc1.local_[date]_flow_ruleset.json:
 .LINK
   http://www.nutanix.com/services
@@ -981,7 +981,7 @@ public static void Ignore()
                         $method = "PUT"
                         $content = @{
                             api_version="3.1.0";
-                            description="added by Sync-FlowRules.ps1 script";
+                            description="added by Save-FlowRules.ps1 script";
                             value="$value"
                         }
                         $payload = (ConvertTo-Json $content -Depth 4)
@@ -1284,7 +1284,7 @@ Date       By   Updates (newest updates at the top)
 04/13/2022 sb   Initial complete and tested release.
 ################################################################################
 '@
-    $myvarScriptName = ".\Sync-FlowRules.ps1"
+    $myvarScriptName = ".\Save-FlowRules.ps1"
 
     if ($log) 
     {#we want to create a log transcript
