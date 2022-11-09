@@ -68,7 +68,7 @@ If the script runs correctly but does not produce the expected output, then the 
 
 Between multiple script executions, it may be necessary to re-initialize your PowerShell session (by closing and re-opening your PowerShell prompt).  The script tries to clear variables once it is done executing, but when execution fails for whatever reason, some variables may be left behind in memory which may affect any subsequent execution.
 
-# Sync-FlowRules.ps1:
+# Save-FlowRules.ps1:
 
 ## Export/Import Flow rules from one Prism Central instance to another
 
@@ -78,16 +78,16 @@ That **json** file can then be edited manually if required, then re-imported in 
 
 To export all Flow rules that start with _openshift_, run:
 
- `SyncFlowRules.ps1 -pc pc1.local -prismCreds myadcreds -export -rules openshift*`
+ `Save-FlowRules.ps1 -pc pc1.local -prismCreds myadcreds -export -rules openshift*`
 
  Where **_pc_** is the IP address or fully qualified domain name of the Prism Central instance and **_prismCred_** is the name of the encrypted credential file (if that file does not already exist, you will be prompted for the credentials you want to use and the file will get created automatically for subsequent uses).  If you do not specify a credentials file name, you will simply be prompted for credentials.
  The script will display where the **json** export file was created (in the current directory).
 
 To import Flow rules from a **json** file called _openshift.json_, run:
 
-`SyncFlowRules.ps1 -pc pc2.local -prismCreds myadcreds -import -rules openshift*`
+`Save-FlowRules.ps1 -pc pc2.local -prismCreds myadcreds -import -rules openshift*`
 
 If the required categories, addresses or service groups are missing from the target Prism Central instance, they will get created automatically so that the Flow rules can then be created successfully.
 If the rules already exist but have changed, they will get updated.
 
-To learn more about the script syntax and usage, you can use `get-help ./SyncFlowRules.ps1`
+To learn more about the script syntax and usage, you can use `get-help ./Save-FlowRules.ps1`
