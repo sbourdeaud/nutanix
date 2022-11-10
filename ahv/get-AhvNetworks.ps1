@@ -455,124 +455,100 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
 
 #this function is used to make a REST api call to Prism
 function Invoke-PrismAPICall
-{#makes a REST API call to Prism
-    <#
-    .SYNOPSIS
-    Makes api call to prism based on passed parameters. Returns the json response.
-    .DESCRIPTION
-    Makes api call to prism based on passed parameters. Returns the json response.
-    .NOTES
-    Author: Stephane Bourdeaud
-    .PARAMETER method
-    REST method (POST, GET, DELETE, or PUT)
-    .PARAMETER credential
-    PSCredential object to use for authentication.
-    PARAMETER url
-    URL to the api endpoint.
-    PARAMETER payload
-    JSON payload to send.
-    .EXAMPLE
-    .\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
-    Makes a POST api call to the specified endpoint with the specified payload.
-    #>
-    param
-    (
-        [parameter(mandatory = $true)]
-        [ValidateSet("POST","GET","DELETE","PUT")]
-        [string] 
-        $method,
-        
-        [parameter(mandatory = $true)]
-        [string] 
-        $url,
-
-        [parameter(mandatory = $false)]
-        [string] 
-        $payload,
-        
-        [parameter(mandatory = $true)]
-        [System.Management.Automation.PSCredential]
-        $credential
-    )
-
-    begin
-    {
-        
-    }
+{
+<#
+.SYNOPSIS
+  Makes api call to prism based on passed parameters. Returns the json response.
+.DESCRIPTION
+  Makes api call to prism based on passed parameters. Returns the json response.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER method
+  REST method (POST, GET, DELETE, or PUT)
+.PARAMETER credential
+  PSCredential object to use for authentication.
+PARAMETER url
+  URL to the api endpoint.
+PARAMETER payload
+  JSON payload to send.
+.EXAMPLE
+.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+Makes a POST api call to the specified endpoint with the specified payload.
+#>
+param
+(
+    [parameter(mandatory = $true)]
+    [ValidateSet("POST","GET","DELETE","PUT")]
+    [string] 
+    $method,
     
-    process
-    {
-        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-        try {
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-            if ($PSVersionTable.PSVersion.Major -gt 5) 
-            {
-                $headers = @{
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
-                }
-                if ($payload) 
-                {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
-                } 
-                else 
-                {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
-                }
-            } 
-            else 
-            {
-                $username = $credential.UserName
-                $password = $credential.Password
-                $headers = @{
-                    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
-                }
-                if ($payload) 
-                {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-                } 
-                else 
-                {
-                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
-                }
-            }
-            Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-        }
-        catch {
-            $saved_error = $_.Exception
-            $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
-            $resp_return_code = $_.Exception.Response.StatusCode.value__
-            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-            if ($resp_return_code -eq 409) 
-            {
-                Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
-                Throw
-            }
-            else 
-            {
-                if ($saved_error_message -match 'rule already exists')
-                {
-                    Throw "$(get-date) [WARNING] $saved_error_message" 
-                }
-                else 
-                {
-                    if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
-                    Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"    
-                }
-            }
-        }
-        finally {
-            #add any last words here; this gets processed no matter what
-        }
-    }
+    [parameter(mandatory = $true)]
+    [string] 
+    $url,
+
+    [parameter(mandatory = $false)]
+    [string] 
+    $payload,
     
-    end
-    {
-        return $resp
-    }    
+    [parameter(mandatory = $true)]
+    [System.Management.Automation.PSCredential]
+    $credential,
+    
+    [parameter(mandatory = $false)]
+    [switch] 
+    $checking_task_status
+)
+
+begin
+{
+    
+}
+process
+{
+    if (!$checking_task_status) {Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green}
+    try {
+        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            }
+        } else {
+            $username = $credential.UserName
+            $password = $credential.Password
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+            }
+        }
+        if (!$checking_task_status) {Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan} 
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
+    catch {
+        $saved_error = $_.Exception.Message
+        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
+    }
+    finally {
+        #add any last words here; this gets processed no matter what
+    }
+}
+end
+{
+    return $resp
+}    
 }
 
 #helper-function Get-RESTError
@@ -802,69 +778,30 @@ Date       By   Updates (newest updates at the top)
     }
     $payload = (ConvertTo-Json $content -Depth 4)
     [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
-    Do {
-      try {
-          $api_server_endpoint = "/api/nutanix/v3/vms/list"
-          $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-          $method = "POST"
-          $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-          $listLength = 0
-          if ($resp.metadata.offset) {
-              $firstItem = $resp.metadata.offset
-          } else {
-              $firstItem = 0
-          }
-          if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
-              $listLength = $resp.metadata.length
-          } else {
-              $listLength = $resp.metadata.total_matches
-          }
-          Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-          if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    $myvar_vms = Get-PrismCentralObjectList -pc $prismcentral -object "vms" -kind "vm"
 
-          #grab the information we need in each entity
-          ForEach ($entity in $resp.entities) 
-          {
-            $myvarVmInfo = [ordered]@{
-                "name" = $entity.spec.name;
-                "num_sockets" = $entity.spec.resources.num_sockets;
-                "memory_size_mib" = $entity.spec.resources.memory_size_mib;
-                "power_state" = $entity.spec.resources.power_state;
-                "cluster" = $entity.spec.cluster_reference.name;
-                "hypervisor" = $entity.status.resources.hypervisor_type;
-                "creation_time" = $entity.metadata.creation_time;
-                "owner" = $entity.metadata.owner_reference.name;
-                "vdisk_count" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"}).Count;
-                "vdisk_total_mib" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"} | Measure-Object disk_size_mib -Sum).Sum;
-                "vnic_count" = ($entity.spec.resources.nic_list).Count;
-                "vnic_vlans" = (($entity.spec.resources.nic_list | Select-Object -Property subnet_reference).subnet_reference.name) -join ',';
-                "vnic_macs" = (($entity.spec.resources.nic_list | Select-Object -Property mac_address).mac_address) -join ',';
-                "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
-                "uuid" = $entity.metadata.uuid
-            }
-            #store the results for this entity in our overall result variable
-            $myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
-          }
-
-          #prepare the json payload for the next batch of entities/response
-          $content = @{
-              kind="vm";
-              offset=($resp.metadata.length + $resp.metadata.offset);
-              length=$length
-          }
-          $payload = (ConvertTo-Json $content -Depth 4)
-      }
-      catch {
-          $saved_error = $_.Exception.Message
-          # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-          Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-          Throw "$(get-date) [ERROR] $saved_error"
-      }
-      finally {
-          #add any last words here; this gets processed no matter what
-      }
+    ForEach ($entity in $myvar_vms) 
+    {
+        $myvarVmInfo = [ordered]@{
+            "name" = $entity.spec.name;
+            "num_sockets" = $entity.spec.resources.num_sockets;
+            "memory_size_mib" = $entity.spec.resources.memory_size_mib;
+            "power_state" = $entity.spec.resources.power_state;
+            "cluster" = $entity.spec.cluster_reference.name;
+            "hypervisor" = $entity.status.resources.hypervisor_type;
+            "creation_time" = $entity.metadata.creation_time;
+            "owner" = $entity.metadata.owner_reference.name;
+            "vdisk_count" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"}).Count;
+            "vdisk_total_mib" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"} | Measure-Object disk_size_mib -Sum).Sum;
+            "vnic_count" = ($entity.spec.resources.nic_list).Count;
+            "vnic_vlans" = (($entity.spec.resources.nic_list | Select-Object -Property subnet_reference).subnet_reference.name) -join ',';
+            "vnic_macs" = (($entity.spec.resources.nic_list | Select-Object -Property mac_address).mac_address) -join ',';
+            "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
+            "uuid" = $entity.metadata.uuid
+        }
+        #store the results for this entity in our overall result variable
+        $myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
     }
-    While ($resp.metadata.length -eq $length)
 
     if ($debugme) {
       Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
@@ -998,9 +935,10 @@ Date       By   Updates (newest updates at the top)
         $myvarNetworksResults
     }
   #endregion
-
-  Write-Host "$(Get-Date) [DATA] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")NetworksList.csv" -ForegroundColor White
-  $myvarNetworksResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"NetworksList.csv")
+  
+  $myvar_csv_out_file = $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($prismcentral)+"_NetworksList.csv"
+  Write-Host "$(Get-Date) [DATA] Writing results to $($myvar_csv_out_file)" -ForegroundColor White
+  $myvarNetworksResults | export-csv -NoTypeInformation $($myvar_csv_out_file)
 #endregion
 
 #region Cleanup	
