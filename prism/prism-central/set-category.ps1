@@ -19,6 +19,8 @@
   Adds the specified category:value to vm.
 .PARAMETER remove
   Removes the specified category:value to vm.
+.PARAMETER async
+  Switch to specify that you don't want to wait for the update tasks to complete.  When categories are updated for vms in Prism Central, the API will return with success and a task uuid.  That task may still fail for whatever reason, but if you're doing mass updates, it may also cause significant processing delays to wait for each task to return status.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -35,7 +37,7 @@ Adds the category mycategory:myvalue to myvm.
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: November 10th 2022
 #>
 
 #region Parameters
@@ -53,7 +55,8 @@ Adds the category mycategory:myvalue to myvm.
       [parameter(mandatory = $false)] [string]$category,
       [parameter(mandatory = $false)] [string]$value,
       [parameter(mandatory = $false)] [switch]$add,
-      [parameter(mandatory = $false)] [switch]$remove
+      [parameter(mandatory = $false)] [switch]$remove,
+      [parameter(mandatory = $false)] [switch]$async
   )
 #endregion
 
@@ -96,7 +99,11 @@ param
     
     [parameter(mandatory = $true)]
     [System.Management.Automation.PSCredential]
-    $credential
+    $credential,
+    
+    [parameter(mandatory = $false)]
+    [switch] 
+    $checking_task_status
 )
 
 begin
@@ -105,7 +112,7 @@ begin
 }
 process
 {
-    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+    if (!$checking_task_status) {Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green}
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
         if ($PSVersionTable.PSVersion.Major -gt 5) {
@@ -132,24 +139,14 @@ process
                 $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
             }
         }
-        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+        if (!$checking_task_status) {Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan} 
         if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
     }
     catch {
-        $saved_error = $_.Exception
-        $saved_error_message = $saved_error.Message
-        $resp_return_code = $_.Exception.Response.StatusCode.value__
+        $saved_error = $_.Exception.Message
         # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        if ($resp_return_code -eq 409) 
-        {
-          Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
-          Throw
-        }
-        else 
-        {
-          Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-          Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message" 
-        }
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
     }
     finally {
         #add any last words here; this gets processed no matter what
@@ -604,6 +601,97 @@ public class ServerCertificateValidationCallback
 
     }#endend
 }#end function Set-PoSHSSLCerts
+
+Function Get-PrismCentralTaskStatus
+{
+    <#
+.SYNOPSIS
+Retrieves the status of a given task uuid from Prism and loops until it is completed.
+
+.DESCRIPTION
+Retrieves the status of a given task uuid from Prism and loops until it is completed.
+
+.PARAMETER Task
+Prism task uuid.
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Get-PrismCentralTaskStatus -Task $task -cluster $cluster -credential $prismCredentials
+Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
+
+.LINK
+https://github.com/sbourdeaud
+#>
+[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param
+    (
+        [Parameter(Mandatory)]
+        $task,
+        
+        [parameter(mandatory = $true)]
+        [System.Management.Automation.PSCredential]
+        $credential,
+
+        [parameter(mandatory = $true)]
+        [String]
+        $cluster
+    )
+
+    begin
+    {
+        $url = "https://$($cluster):9440/api/nutanix/v3/tasks/$task"
+        $method = "GET"
+    }
+    process 
+    {
+        #region get initial task details
+            Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
+            $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -checking_task_status
+            Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
+        #endregion
+
+        if ($taskDetails.percentage_complete -ne "100") 
+        {
+            Do 
+            {
+                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
+                $Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
+                Sleep 5
+                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -checking_task_status
+                
+                if ($taskDetails.status -ne "running") 
+                {
+                    if ($taskDetails.status -ne "succeeded") 
+                    {
+                        Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.operation_type) failed with the following status and error code : $($taskDetails.status) : $($taskDetails.progress_message)" -ForegroundColor Yellow
+                    }
+                }
+            }
+            While ($taskDetails.percentage_complete -ne "100")
+            
+            New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
+            Write-Host ""
+            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
+        } 
+        else 
+        {
+            if ($taskDetails.status -ine "succeeded") {
+                Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.operation_type) status is $($taskDetails.status): $($taskDetails.progress_message) $($taskDetails.error_detail)" -ForegroundColor Yellow
+            } else {
+                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
+                Write-Host ""
+                Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
+            }
+        }
+    }
+    end
+    {
+        return $taskDetails.status
+    }
+}
 #endregion
 
 #region prep-work
@@ -622,6 +710,9 @@ Date       By   Updates (newest updates at the top)
                 Now just printing a warning when category is already assigned.
 25/05/2022 sb   Fixed an issue with $myvar_already_tagged. Thanks to Jason Scott
                 for catching this one and letting me know.
+10/11/2022 sb   Changed the way category updates are processed in API v3.1 (
+                making use of category mappings)
+                Added update task status check and ability to skip those.
 ################################################################################
 '@
   $myvarScriptName = ".\set-category.ps1"
@@ -784,7 +875,7 @@ Date       By   Updates (newest updates at the top)
     #region process add
       if ($add) {
         try {
-          $myvarNull = $vm_config.metadata.categories | Add-Member -MemberType NoteProperty -Name $category -Value $value -PassThru -ErrorAction Stop
+          #$myvarNull = $vm_config.metadata.categories | Add-Member -MemberType NoteProperty -Name $category -Value $value -PassThru -ErrorAction Stop
           $myvarNull = $vm_config.metadata.categories_mapping | Add-Member -MemberType NoteProperty -Name $category -Value @($value) -PassThru -ErrorAction Stop
         }
         catch {
@@ -800,7 +891,7 @@ Date       By   Updates (newest updates at the top)
       if ($remove) {
         #todo match the exact value pair here as a category could have multiple values assigned
         #Write-Host "$(Get-Date) [WARNING] Remove hasn't been implemented yet (still working on it)" -ForegroundColor Yellow
-        $myvarNull = $vm_config.metadata.categories.PSObject.Properties.Remove($category)
+        #$myvarNull = $vm_config.metadata.categories.PSObject.Properties.Remove($category)
         $myvarNull = $vm_config.metadata.categories_mapping.PSObject.Properties.Remove($category)
       }
     #endregion
@@ -816,8 +907,10 @@ Date       By   Updates (newest updates at the top)
           $method = "PUT"
 
           #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
-          $vm_config.metadata.spec_version += 1
+          #$vm_config.metadata.spec_version += 1
           #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
+          $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
+          $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
 
           $payload = (ConvertTo-Json $vm_config -Depth 6)
         #endregion
@@ -827,8 +920,20 @@ Date       By   Updates (newest updates at the top)
           do {
             try {
               $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-              Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
-              $resp_return_code = 200
+              if (!$async)
+              {#user does want to wait for each vm update task to complete
+                $task_status = Get-PrismCentralTaskStatus -Task $resp.status.execution_context.task_uuid -cluster $prism -credential $prismCredentials
+                if ($task_status -ine "failed") 
+                {
+                  Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
+                  $resp_return_code = 200
+                }
+              }
+              else 
+              {#user does not care about waiting for update task status
+                Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
+                $resp_return_code = 200
+              }
             }
             catch {
               $saved_error = $_.Exception
