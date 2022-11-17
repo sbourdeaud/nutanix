@@ -23,6 +23,8 @@
   Name of the container where you want the image to reside. If none is specified, the image will be created in the same container as the VM.
 .PARAMETER device
   Name of the device (exp: scsi.1) you want to import in the library.  By default, scsi.0 will get imported in the library.
+.PARAMETER pcImport
+  Specifies that you want to trigger an import of that new image in Prism Central once it has been successfully created in Prism Element.
 .EXAMPLE
 .\new-AhvImage.ps1 -cluster ntnxc1.local -vm myvm -image _template-windows2016
 Create a new image called _template-windows2016 in the image library of AHV cluster ntnxc1.local based on the first scsi disk of VM myvm.
@@ -30,8 +32,11 @@ Create a new image called _template-windows2016 in the image library of AHV clus
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: November 17th 2021
 #>
+
+#todo: improve by adding a switch to push new image to PC
+#todo: check if image exists already in PC: ask to delete if that's the case (already covered for PE)
 
 #region parameters
     Param
@@ -46,7 +51,8 @@ Create a new image called _template-windows2016 in the image library of AHV clus
         [parameter(mandatory = $true,HelpMessage = "Enter the name of the VM to base the image on")] [string]$vm,
         [parameter(mandatory = $true,HelpMessage = "Enter the name you want to give to the new image")] [string]$image,
         [parameter(mandatory = $false)] [string]$container,
-        [parameter(mandatory = $false)] [string]$device
+        [parameter(mandatory = $false)] [string]$device,
+        [parameter(mandatory = $false)] [switch]$pcImport
     )
 #endregion
 
@@ -1044,6 +1050,7 @@ https://github.com/sbourdeaud
  06/11/2018 sb   Initial release.
  04/06/2020 sb   Do over with sbourdeaud module
  02/06/2021 sb   Replaced username with get-credential
+ 11/17/2022 sb   Adding pcImport parameter
 ################################################################################
 '@
     $myvarScriptName = ".\new-AhvImage.ps1"
@@ -1182,6 +1189,7 @@ https://github.com/sbourdeaud
 
             if ($overwrite)
             {#user wants to overwrite the image
+                #todo: if image is managed in PC, this will probably fail: double check
                 Write-Host "$(get-date) [INFO] Requesting deletion of image $($image) with uuid $($image_object.uuid) from Nutanix cluster $cluster ..." -ForegroundColor Green
                 $url = "https://"+$cluster+":9440/PrismGateway/services/rest/v2.0/images/$($image_object.uuid)"
                 $imageRemove_taskUuid = Invoke-PrismRESTCall  -credential $prismCredentials -method "DELETE" -url $url
@@ -1231,6 +1239,14 @@ https://github.com/sbourdeaud
 
     #endregion
 
+    #region import image in prism central
+    if ($pcImport)
+    {#user wants to import image into Prism Central
+        #* retrieve prism central information from Prism Element
+        #* trigger image migration
+        #* check task status
+    }
+    #endregion
 #endregion
 
 #region cleanup
