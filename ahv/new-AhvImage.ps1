@@ -1243,7 +1243,23 @@ https://github.com/sbourdeaud
     if ($pcImport)
     {#user wants to import image into Prism Central
         #* retrieve prism central information from Prism Element
+        #https://{{pe_ip}}:9440/PrismGateway/services/rest/v1/multicluster/cluster_external_state?__=1668777097092 GET
+        #in .clusterDetails.ipAddresses
         #* trigger image migration
+        #/api/nutanix/v3/images/migrate POST
+        <# {
+            "image_reference_list": [
+                {
+                    "uuid": "f1dae20c-9006-4b91-bce6-966b80682aa9",
+                    "kind": "image",
+                    "name": "string"
+                }
+            ],
+            "cluster_reference": {
+                "uuid": "000582c6-cf0d-e0a8-0000-000000016950",
+                "kind": "cluster",
+                "name": "string"
+            } #>
         #* check task status
     }
     #endregion
