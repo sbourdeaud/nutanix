@@ -340,6 +340,7 @@ end
  12/19/2019 sb   Updated code to use REST API instead of cmdlets.
  04/17/2020 sb   Do over to use sbourdeaud module.
  02/06/2021 sb   Replaced username with get-credential
+ 01/23/2023 sb   Removing dependency on sbourdeaud module and adding functions.
 ################################################################################
 '@
   $myvarScriptName = ".\get-ntnxAlertPolicy.ps1"
