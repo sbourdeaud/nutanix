@@ -360,12 +360,13 @@ end
   $myvarOutputLogFile += "OutputLog.log"
 
   [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
-  $api_server = $prism
+
   $api_server_port = "9440"
 	
   #let's initialize parameters if they haven't been specified
   if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism"}
-  
+  $api_server = $prism
+
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
@@ -448,7 +449,7 @@ end
 
   #region Export results
     Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
-    $myvarResults | export-csv -NoTypeInformation $csv
+    $myvarResults | export-csv -NoTypeInformation $csv -Delimiter ";"
   #endregion
 
 #endregion processing
