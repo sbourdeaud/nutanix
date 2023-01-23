@@ -1,4 +1,4 @@
-import random
+import random, string
 from datetime import datetime
 
 class bcolors:
@@ -22,8 +22,8 @@ def generate_random_bin_file(filename,size):
     pass
 
 if __name__ == '__main__':
-    file_count_min = 1
-    file_count_max = 10
+    file_count_min = 3
+    file_count_max = 5
     file_size_min_bytes = 1024
     file_size_max_bytes = 1024*1024*1024
     

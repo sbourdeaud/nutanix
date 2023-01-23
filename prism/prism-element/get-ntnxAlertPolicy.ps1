@@ -49,6 +49,287 @@
 #TODO: add ability to point to PC and get all clusters from there
 #TODO: add ability to read clusters list from csv file
 
+#region functions
+#this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
+function Write-LogOutput
+{
+<#
+.SYNOPSIS
+Outputs color coded messages to the screen and/or log file based on the category.
+
+.DESCRIPTION
+This function is used to produce screen and log output which is categorized, time stamped and color coded.
+
+.PARAMETER Category
+This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+
+.PARAMETER Message
+This is the actual message you want to display.
+
+.PARAMETER LogFile
+If you want to log output to a file as well, use logfile to pass the log file full path name.
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
+Displays an error message.
+
+.LINK
+https://github.com/sbourdeaud
+#>
+    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+	param
+	(
+		[Parameter(Mandatory)]
+        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
+        [string]
+        $Category,
+
+        [string]
+		$Message,
+
+        [string]
+        $LogFile
+	)
+
+    process
+    {
+        $Date = get-date #getting the date so we can timestamp the output entry
+	    $FgColor = "Gray" #resetting the foreground/text color
+	    switch ($Category) #we'll change the text color depending on the selected category
+        {
+            "INFO" {$FgColor = "Green"}
+            "WARNING" {$FgColor = "Yellow"}
+            "ERROR" {$FgColor = "Red"}
+            "SUM" {$FgColor = "Magenta"}
+            "SUCCESS" {$FgColor = "Cyan"}
+            "STEP" {$FgColor = "Magenta"}
+            "DEBUG" {$FgColor = "White"}
+            "DATA" {$FgColor = "Gray"}
+        }
+
+	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
+	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
+        {
+            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
+            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+        }
+    }
+
+}#end function Write-LogOutput
+
+#helper-function Get-RESTError
+function Help-RESTError 
+{
+    $global:helpme = $body
+    $global:helpmoref = $moref
+    $global:result = $_.Exception.Response.GetResponseStream()
+    $global:reader = New-Object System.IO.StreamReader($global:result)
+    $global:responseBody = $global:reader.ReadToEnd();
+
+    return $global:responsebody
+
+    break
+}#end function Get-RESTError
+function Set-PoshTls
+{
+<#
+.SYNOPSIS
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.DESCRIPTION
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Set-PoshTls
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.LINK
+https://github.com/sbourdeaud
+#>
+[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param 
+    (
+        
+    )
+
+    begin 
+    {
+    }
+
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = `
+        ([Net.ServicePointManager]::SecurityProtocol -bor `
+        [Net.SecurityProtocolType]::Tls12)
+    }
+
+    end
+    {
+
+    }
+}
+
+#this function is used to configure posh to ignore invalid ssl certificates
+function Set-PoSHSSLCerts
+{
+<#
+.SYNOPSIS
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+.DESCRIPTION
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+#>
+    begin
+    {
+
+    }#endbegin
+    process
+    {
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if(ServicePointManager.ServerCertificateValidationCallback ==null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback += 
+                delegate
+                (
+                    Object obj, 
+                    X509Certificate certificate, 
+                    X509Chain chain, 
+                    SslPolicyErrors errors
+                )
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }#endif
+        [ServerCertificateValidationCallback]::Ignore()
+    }#endprocess
+    end
+    {
+
+    }#endend
+}#end function Set-PoSHSSLCerts
+
+#this function is used to make a REST api call to Prism
+function Invoke-PrismAPICall
+{
+<#
+.SYNOPSIS
+  Makes api call to prism based on passed parameters. Returns the json response.
+.DESCRIPTION
+  Makes api call to prism based on passed parameters. Returns the json response.
+.NOTES
+  Author: Stephane Bourdeaud
+.PARAMETER method
+  REST method (POST, GET, DELETE, or PUT)
+.PARAMETER credential
+  PSCredential object to use for authentication.
+PARAMETER url
+  URL to the api endpoint.
+PARAMETER payload
+  JSON payload to send.
+.EXAMPLE
+.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+Makes a POST api call to the specified endpoint with the specified payload.
+#>
+param
+(
+    [parameter(mandatory = $true)]
+    [ValidateSet("POST","GET","DELETE","PUT")]
+    [string] 
+    $method,
+    
+    [parameter(mandatory = $true)]
+    [string] 
+    $url,
+
+    [parameter(mandatory = $false)]
+    [string] 
+    $payload,
+    
+    [parameter(mandatory = $true)]
+    [System.Management.Automation.PSCredential]
+    $credential,
+    
+    [parameter(mandatory = $false)]
+    [switch] 
+    $checking_task_status
+)
+
+begin
+{
+    
+}
+process
+{
+    if (!$checking_task_status) {Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green}
+    try {
+        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            }
+        } else {
+            $username = $credential.UserName
+            $password = $credential.Password
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+            }
+        }
+        if (!$checking_task_status) {Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan} 
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+    }
+    catch {
+        $saved_error = $_.Exception.Message
+        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
+    }
+    finally {
+        #add any last words here; this gets processed no matter what
+    }
+}
+end
+{
+    return $resp
+}    
+}
+#endregion
+
 #region prep-work
   #check if we need to display help and/or history
   $HistoryText = @'
@@ -65,46 +346,6 @@
   if ($help) {get-help $myvarScriptName; exit}
   if ($History) {$HistoryText; exit}
 
-  #region module sbourdeaud is used for facilitating Prism REST calls
-  $required_version = "3.0.8"
-  if (!(Get-Module -Name sbourdeaud)) {
-    Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-    try
-    {
-        Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-        Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-    }#end try
-    catch #we couldn't import the module, so let's install it
-    {
-        Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-        try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-        catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
-
-        try
-        {
-            Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-            Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-        }#end try
-        catch #we couldn't import the module
-        {
-            Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-            Exit
-        }#end catch
-    }#end catch
-  }#endif module sbourdeaud
-  $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-  if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-    Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-    Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-    Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-    try {
-      Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-      Import-Module -Name sbourdeaud -ErrorAction Stop
-    }
-    catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-  }
-  #endregion
   Set-PoSHSSLCerts
   Set-PoshTls
 
