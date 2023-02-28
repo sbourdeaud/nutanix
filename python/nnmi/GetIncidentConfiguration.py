@@ -1,4 +1,4 @@
-import requests,xml.etree.ElementTree,os
+import requests,xml.etree.ElementTree,os,json
 
 #region variables
 api_server = "nnmi.emeagso.lab"

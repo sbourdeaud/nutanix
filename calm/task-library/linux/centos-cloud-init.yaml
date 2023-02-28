@@ -1,0 +1,46 @@
+disable_root: False
+cloud_config_modules: 
+  - resolv_conf
+
+hostname: @@{vm_name}@@
+fqdn: @@{vm_name}@@.@@{domain}@@
+
+users:
+  - default
+  - name: @@{linux.username}@@
+    ssh-authorized-keys:
+      - @@{public_key}@@
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+
+write_files:
+  - path: /etc/sysconfig/network-scripts/ifcfg-eth0
+    content: |
+      IPADDR=@@{vm_ip}@@
+      NETMASK=@@{subnet_mask}@@
+      GATEWAY=@@{gateway}@@
+      BOOTPROTO=static
+      ONBOOT=yes
+      DEVICE=eth0
+manage_resolv_conf: true
+resolv_conf:
+  nameservers: ['@@{dns1}@@','@@{dns2}@@']
+  domain: '@@{domain}@@'
+  options:
+    attempts: 5
+    timeout: 15
+
+runcmd:
+  - [sudo, ifdown, eth0]
+  - [sudo, ifup, eth0]
+  - [sudo, systemctl, restart, network]
+  - [sudo, systemctl, mask, cloud-init-local, cloud-init, cloud-config, cloud-final]
+  - [eject]
+
+package_upgrade: true
+
+power_state:
+  delay: "+1"
+  mode: reboot
+  message: Rebooting after cloud-init
+  timeout: 30
+  condition: True

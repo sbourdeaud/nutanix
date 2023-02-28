@@ -1,0 +1,50 @@
+#cloud-config
+apt_upgrade: true
+repo_update: true
+repo_upgrade: all
+hostname: @@{your_hostname_here}@@
+users:
+   - default
+   - name: ubuntu
+     groups: sudo
+     shell: /bin/bash
+     lock_passwd: false
+     ssh-authorized-keys:
+      - @@{your_public key_here}@@
+     sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+chpasswd:
+   list: |
+     ubuntu:@@{your_password_here}@@
+   expire: false
+write_files: 
+   - path: /etc/netplan/50-cloud-init.yaml
+     content: |
+        network:
+           version: 2
+           renderer: networkd
+           ethernets:
+              ens3:
+                addresses: [@@{your_ip_address_here}@@/24]
+                gateway4: @@{your_gateway_here}@@
+                nameservers:
+                  addresses: [@@{your_primary_dns_address_here}@@,@@{your_secondary_dns_address_here}@@]
+runcmd:
+   - netplan apply
+packages:
+  - git
+  - wget
+  - curl
+  - unzip
+  - tar
+  - python3
+  - cloud-guest-utils
+growpart:
+  mode: auto
+  devices: ['/']
+  ignore_growroot_disabled: false
+power_state:
+  delay: "+1"
+  mode: reboot
+  message: Rebooting after cloud-init
+  timeout: 30
+  condition: True
