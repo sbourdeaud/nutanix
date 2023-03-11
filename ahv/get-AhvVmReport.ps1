@@ -887,7 +887,7 @@ Date       By   Updates (newest updates at the top)
           } 
           else 
           {
-              $listLength = $resp.metadata.total_matches
+              $listLength = $resp.metadata.total_matches,
           }
           Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
           if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
