@@ -959,7 +959,7 @@ $myvar_vms_to_process = $vms.Split(",")
 #region check image
 Write-Host "$(get-date) [INFO] Retrieving list of images..." -ForegroundColor Green
 $myvar_images = Get-PrismCentralObjectList -pc $prismcentral -object "images" -kind "image"
-Write-Host "$(get-date) [SUCCESS] Successfully retrieved images list from $($prism)!" -ForegroundColor Cyan
+Write-Host "$(get-date) [SUCCESS] Successfully retrieved images list from $($prismcentral)!" -ForegroundColor Cyan
 
 if ($myvar_image = $myvar_images | ?{$_.spec.name -eq $iso})
 {#we found our image, let's make sure it is an iso image
@@ -979,7 +979,7 @@ else
 #region get vms
 Write-Host "$(get-date) [INFO] Retrieving list of VMs..." -ForegroundColor Green
 $myvar_vms = Get-PrismCentralObjectList -pc $prismcentral -object "vms" -kind "vm"
-Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs list from $($prism)!" -ForegroundColor Cyan
+Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs list from $($prismcentral)!" -ForegroundColor Cyan
 #endregion get vms
 
 #region process vms
