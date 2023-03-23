@@ -1,10 +1,4 @@
 #cloud-config
-apt_upgrade: true
-
-repo_update: true
-
-repo_upgrade: all
-
 hostname: @@{vm_name}@@
 
 fqdn: @@{vm_name}@@.@@{domain}@@
@@ -23,21 +17,15 @@ chpasswd:
    list: |
      @@{linux.username}@@:@@{linux.secret}@@
    expire: false
-write_files: 
-   - path: /etc/netplan/50-cloud-init.yaml
-     content: |
-        network:
-           version: 2
-           renderer: networkd
-           ethernets:
-              ens3:
-                addresses: [@@{vm_ip}@@/@@{subnet_mask_bits}@@]
-                gateway4: @@{gateway}@@
-                nameservers:
-                  addresses: [@@{dns1}@@,@@{dns2}@@]
 
 runcmd:
-   - netplan apply
+   - nmcli connection migrate
+   - nmcli con down "System eth0"
+   - nmcli con del "System eth0"
+   - nmcli con add con-name "System eth0" ifname eth0 type ethernet ip4 @@{vm_ip}@@/@@{subnet_mask_bits}@@ gw4 @@{gateway}@@ ipv4.dns "@@{dns1}@@ @@{dns2}@@"
+   - nmcli con up "System eth0"
+   - nmcli general reload
+   - nmcli connection reload
 
 packages:
   - git
@@ -47,6 +35,8 @@ packages:
   - tar
   - python3
   - cloud-guest-utils
+
+package_upgrade: true
 
 growpart:
   mode: auto

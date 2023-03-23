@@ -1,4 +1,6 @@
+#cloud-config
 disable_root: False
+
 cloud_config_modules: 
   - resolv_conf
 
@@ -21,7 +23,9 @@ write_files:
       BOOTPROTO=static
       ONBOOT=yes
       DEVICE=eth0
+
 manage_resolv_conf: true
+
 resolv_conf:
   nameservers: ['@@{dns1}@@','@@{dns2}@@']
   domain: '@@{domain}@@'
@@ -37,6 +41,11 @@ runcmd:
   - [eject]
 
 package_upgrade: true
+
+growpart:
+  mode: auto
+  devices: ['/']
+  ignore_growroot_disabled: false
 
 power_state:
   delay: "+1"
