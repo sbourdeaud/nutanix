@@ -1,0 +1,12 @@
+{
+    "exclusion_list": [
+        "Nutanix VM Mobility",
+        "Microsoft Edge",
+        "Microsoft Edge Update",
+        "Nutanix Guest Tools",
+        "Microsoft Visual C++ 2015-2022 Redistributable (x86) - 14.34.31938",
+        "Python Launcher",
+        "Microsoft Visual C++ 2012 Redistributable (x64) - 11.0.61030",
+        "Microsoft Visual C++ 2015-2022 Redistributable (x64) - 14.34.31938"
+    ]
+}

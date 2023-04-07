@@ -553,6 +553,7 @@ Date       By   Updates (newest updates at the top)
     [System.Collections.ArrayList]$myvarNetworksResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarHostsResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
+    [System.Collections.ArrayList]$myvarVmReport = New-Object System.Collections.ArrayList($null)
 #endregion
 
 #region parameters validation
@@ -807,7 +808,55 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
-    #* step 4: for each cluster, get the list of hosts and vms
+    #* step 4: retrieve vms using groups
+    #region get vms using groups
+        Write-Host "$(get-date) [INFO] Retrieving virtual machines information from Prism Central..." -ForegroundColor Green
+        #region prepare api call
+            $api_server_endpoint = "/api/nutanix/v3/groups"
+            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+            $method = "POST"
+
+            $attributes = "vm_name,uuid,cluster_name,categories,project_name,ip_addresses,owner_username,_created_timestamp_usecs_,ngt.installed_version,ngt.communication_over_serial_port_active,ngt.communication_active,memory_reserved_bytes,memory_overcommit,is_live_migratable,network_security_rule_id_list,zone_type,capacity.policy_anomaly_detail,capacity.vm_constrained_status,capacity.vm_constrained_detail,capacity.policy_efficiency_detail,protection_type,guest_os_name,ngt.guest_os,ngt.enabled_applications,ngt.cluster_version,volume_group,protection_policy_state,recovery_plan_state_list,cbr_not_capable_reason"
+            # this is used to capture the content of the payload
+            $content = @{
+                entity_type="mh_vm";
+                query_name="";
+                grouping_attribute=" ";
+                group_count=3;
+                group_offset=0;
+                group_attributes=@();
+                group_member_count=$length;
+                group_member_offset=$page_offset;
+                group_member_sort_attribute="vm_name";
+                group_member_sort_order="ASCENDING";
+                group_member_attributes=@(
+                    ForEach ($attribute in ($attributes -Split ","))
+                    {
+                        @{attribute="$($attribute)"}
+                    } 
+                );
+                filter_criteria="(platform_type!=aws,platform_type==[no_val]);is_cvm==0"
+            }
+            $payload = (ConvertTo-Json $content -Depth 4)
+        #endregion
+        #region make api call
+            try {
+                $myvar_mh_vms_groups = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            }
+            catch {
+                $saved_error = $_.Exception.Message
+                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+                Throw "$(get-date) [ERROR] $saved_error"
+            }
+            finally {
+                #add any last words here; this gets processed no matter what
+            }
+        #endregion
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved virtual machines information from $prismcentral!" -ForegroundColor Cyan
+    #endregion get vms using groups
+
+    #* step 5: for each cluster, get the list of hosts and vms
     ForEach ($cluster in $myvarClustersResults) {        
         #region get vms
             $api_server_endpoint = "/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
@@ -849,11 +898,63 @@ Date       By   Updates (newest updates at the top)
             }
         #endregion
     }
+
+    #*step 6: building the report for al vms
+    ForEach ($myvar_vm in $myvarVmResults) {
+        $myvar_vm_groups_information = $myvar_mh_vms_groups.group_results[0].entity_results | ?{$_.data.values.values -eq $myvar_vm.name}
+        if ($myvar_vm_groups_information -is [array])
+        {#we found more than 1 vm with the same name, let's filter down using the mac address
+            ForEach ($myvar_vm_uuid in $(($myvar_vm_groups_information | ?{$_.data.name -eq "vm_name"}).entity_id))
+            {
+                $api_server_endpoint = "/api/nutanix/v3/vms/$($myvar_vm_uuid)"
+                $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+                $method = "GET"
+                $myvar_vm_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                if ($($myvar_vm_details.spec.resources.nic_list.mac_address -join ",") -eq $myvar_vm.mac_addresses)
+                {#we found a vm match!
+                    $myvar_vm_groups_information = $myvar_vm_groups_information | ?{$_.data.entity_id -eq $myvar_vm_uuid}
+                }
+            }
+        }
+        $myvar_creation_timestamp = [int64]($myvar_vm_groups_information.data | ?{$_.name -eq "_created_timestamp_usecs_"}).values.values
+        $myvar_creation_date = (Get-Date 01.01.1970)+([System.TimeSpan]::fromseconds( $myvar_creation_timestamp / 1000000))
+        $myvarVmInfo = [ordered]@{
+            "cluster" = $myvar_vm.cluster;
+            "host" = $myvar_vm.host;
+            "hypervisor" = $myvar_vm.hypervisor;
+            "name" = $myvar_vm.name;
+            "description" = $myvar_vm.description;
+            "uuid" = $myvar_vm.uuid;
+            "num_vcpus" = $myvar_vm.num_vcpus;
+            "num_cores_per_vcpu" = $myvar_vm.num_cores_per_vcpu;
+            "memory_mb" = $myvar_vm.memory_mb;
+            "power_state" = $myvar_vm.power_state;
+            "gpus_assigned" = $myvar_vm.gpus_assigned;
+            "uefi_boot" = $myvar_vm.uefi_boot;
+            "ip_addresses" = $myvar_vm.ip_addresses;
+            "mac_addresses" = $myvar_vm.mac_addresses;
+            "networks" = $myvar_vm.networks;
+            "vdisks" = $myvar_vm.vdisks;
+            "cdrom_present" = $myvar_vm.cdrom_present;
+            "cdrom_iso" = $myvar_vm.cdrom_iso;
+            "vdisk_total_bytes" = $myvar_vm.vdisk_total_bytes;
+            "categories" = ($myvar_vm_groups_information.data | ?{$_.name -eq "categories"}).values.values -join ",";
+            "project" = ($myvar_vm_groups_information.data | ?{$_.name -eq "project_name"}).values.values;
+            "owner"= ($myvar_vm_groups_information.data | ?{$_.name -eq "owner_username"}).values.values;
+            "creation_date"= $myvar_creation_date;
+            "ngt_version"= ($myvar_vm_groups_information.data | ?{$_.name -eq "ngt.installed_version"}).values.values;
+            "ngt_communication_over_serial"= ($myvar_vm_groups_information.data | ?{$_.name -eq "ngt.communication_over_serial_port_active"}).values.values;
+            "protection_type"= ($myvar_vm_groups_information.data | ?{$_.name -eq "protection_type"}).values.values;
+            "guest_os_name"= ($myvar_vm_groups_information.data | ?{$_.name -eq "ngt.guest_os"}).values.values
+        }
+        $myvarVmReport.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
+    }
     
 
     #* step 4: export results
-    Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")VmList.csv" -ForegroundColor Green
-    $myvarVmResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"VmList.csv")
+    $report_name = "$(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$($prismcentral)_VmList.csv"
+    Write-Host "$(Get-Date) [INFO] Writing results to $($report_name)" -ForegroundColor Green
+    $myvarVmReport | export-csv -NoTypeInformation $report_name
 
 #endregion
 
