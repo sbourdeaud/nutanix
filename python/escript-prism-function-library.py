@@ -148,6 +148,82 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
 
 #region functions
 
+def prism_get_entities(api_server,username,secret,resource_type,secure=False):
+    """Retrieve the list of entities for the specified resource type from Prism Central or a Calm VM.
+
+    Args:
+        api_server: The IP or FQDN of Prism or the Calm VM.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        
+    Returns:
+        A list of entities.
+    """
+    entities = []
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/api/nutanix/v3/{}s/list".format(resource_type)
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "POST"
+    length = 50
+
+    # Compose the json payload
+    payload = {
+        "kind": resource_type,
+        "offset": 0,
+        "length": length
+    }
+    #endregion
+    while True:
+        print("Making a {} API call to {}".format(method, url))
+        resp = process_request(url,method,username,secret,headers,payload,secure)
+
+        # deal with the result/response
+        if resp.ok:
+            json_resp = json.loads(resp.content)
+            entities.extend(json_resp['entities'])
+            key = 'length'
+            if key in json_resp['metadata']:
+                if json_resp['metadata']['length'] == length:
+                    print("Processing results from {} to {} out of {}".format(
+                        json_resp['metadata']['offset'], 
+                        json_resp['metadata']['length']+json_resp['metadata']['offset'],
+                        json_resp['metadata']['total_matches']))
+                    payload = {
+                        "kind": resource_type,
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
+                        "length": length
+                    }
+                else:
+                    return entities
+                    break
+            else:
+                return entities
+                break
+        else:
+            print("Request failed!")
+            print("status code: {}".format(resp.status_code))
+            print("reason: {}".format(resp.reason))
+            print("text: {}".format(resp.text))
+            print("raise_for_status: {}".format(resp.raise_for_status()))
+            print("elapsed: {}".format(resp.elapsed))
+            print("headers: {}".format(resp.headers))
+            print("payload: {}".format(payload))
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
+
+
 def prism_get_vms(api_server,username,secret,secure=False):
     """Retrieve the list of VMs from Prism Central.
 

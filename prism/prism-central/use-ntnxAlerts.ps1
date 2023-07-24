@@ -422,7 +422,7 @@ Set-PoshTls
               if ($csv) 
               {
                 Write-Host "$(Get-Date) [INFO] Exporting results to $csv..." -ForegroundColor Green
-                $myvarResults | export-csv -NoTypeInformation $csv
+                $myvarResults | export-csv -NoTypeInformation $csv -Delimiter ";"
               } 
               else 
               {

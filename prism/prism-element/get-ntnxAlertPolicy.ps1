@@ -45,7 +45,6 @@
   )
 #endregion
 
-#TODO: add cluster name to csv file
 #TODO: add ability to point to PC and get all clusters from there
 #TODO: add ability to read clusters list from csv file
 
@@ -387,7 +386,7 @@ end
   $PrismSecurePassword = $prismCredentials.Password
   $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
-  if (!$csv) {$csv = "prism-alerts-report.csv"}
+  if (!$csv) {$csv = "$($prism)_prism-alerts-report.csv"}
 #endregion
 
 #region processing

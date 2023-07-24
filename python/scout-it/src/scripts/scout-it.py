@@ -6,10 +6,13 @@ from platform import node
 from os import cpu_count
 import jsonschema
 from wmi import WMI
-from snipeit import Assets, Licenses
+from snipeit import Assets, Licenses, Components
 from winapps import list_installed
 from getmac import get_mac_address
 from psutil import virtual_memory
+
+
+#todo: retrieve available categories to avoid hard coding the category ids
 
 
 class bcolors:
@@ -22,6 +25,7 @@ class bcolors:
     FAIL = '\033[91m' #RED
     STEP = '\033[95m' #PURPLE
     RESET = '\033[0m' #RESET COLOR
+
 
 
 def load_software_exclusion_list(exclusion_file):
@@ -69,13 +73,15 @@ def get_snipeit_information(api_server, api_key):
             api_server: URL string to snipe-it server instance.
             api_key: String with the API token to use for
                     authentication with the snipe-it server.
-        Returns: assets, licenses.
+        Returns: assets, licenses, components.
     '''
     assets_object = Assets()
     assets = assets_object.get(api_server, api_key)
     licenses_object = Licenses()
     licenses = licenses_object.get(api_server, api_key)
-    return assets, licenses
+    components_object = Components()
+    components = components_object.get(api_server, api_key)
+    return assets, licenses, components
 
 
 def get_inventory():
@@ -136,7 +142,7 @@ def process_asset(api_server, api_key, assets, inventory):
         return asset_id
 
 
-def process_software_inventory(api_server, api_key, asset_id, licenses, inventory, software_exclusion_list):
+def process_software_inventory(api_server, api_key, asset_id, licenses, components, inventory, software_exclusion_list):
     '''Creates and/or checks out licenses.
         Args:
             api_server: URL string to snipe-it server instance.
@@ -157,42 +163,58 @@ def process_software_inventory(api_server, api_key, asset_id, licenses, inventor
             continue
         software_license = next((item for item in json.loads(licenses.decode('utf-8'))['rows'] if item['name'] == installed_software['name']), False)
         if software_license is False:
-            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Software {bcolors.DATA}{installed_software['name']}{bcolors.OK} does not already exist in the snipe-it server.{bcolors.RESET}")
-            license_object = Licenses()
-            payload = {
-                "name": installed_software['name'],
-                "seats": 1,
-                "category_id": "1"
-            }
-            response = license_object.create(api_server, api_key, json.dumps(payload))
-            if json.loads(response)['status'] == "error":
-                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Could not create license: {json.loads(response)['messages']}{bcolors.RESET}")
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Software {bcolors.DATA}{installed_software['name']}{bcolors.OK} has no existing license in the snipe-it server. Checking software components.{bcolors.RESET}")
+            software_component = next((item for item in json.loads(components.decode('utf-8'))['rows'] if item['name'] == installed_software['name']), False)
+            if software_component is False:
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Software {bcolors.DATA}{installed_software['name']}{bcolors.OK} has no existing component in the snipe-it server. Creating the software component.{bcolors.RESET}")
+                component_object = Components()
+                payload = {
+                    "name": installed_software['name'],
+                    "qty": 1,
+                    "category_id": "2"
+                }
+                response = component_object.create(api_server, api_key, json.dumps(payload))
+                if json.loads(response)['status'] == "error":
+                    print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Could not create software component: {json.loads(response)['messages']}{bcolors.RESET}")
+                else:
+                    software_component = json.loads(response)['payload']
+                    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Successfully created component with id {software_component['id']}.{bcolors.RESET}")
             else:
-                software_license = json.loads(response)['payload']
-                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Successfully created license with id {software_license['id']}.{bcolors.RESET}")
-            
-        license_seats = get_license_seats(api_server, api_key, software_license['id'])
-        installed_software_seat = False
-        for seat in license_seats['rows']:
-            if seat['assigned_asset']:
-                if seat['assigned_asset']['id'] == asset_id:
-                    installed_software_seat = seat
-        if installed_software_seat:
-            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Asset id {asset_id} has already checked out license {bcolors.DATA}{installed_software['name']}{bcolors.OK}: {bcolors.WARNING}skipping{bcolors.RESET}")
-            continue
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Software {bcolors.DATA}{installed_software['name']}{bcolors.OK} has an existing component in the snipe-it server. Checking if our asset has already checked out this component.{bcolors.RESET}")
+                component_assets = get_component_assets(api_server, api_key, software_component['id'])
+                asset_has_checked_out_component = False
+                for asset in component_assets['rows']:
+                    if asset['id'] == asset_id:
+                        asset_has_checked_out_component = True
+                if asset_has_checked_out_component is True:
+                    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Asset id {asset_id} has already checked out software component {bcolors.DATA}{installed_software['name']}{bcolors.OK}: {bcolors.WARNING}skipping{bcolors.RESET}")
+                    continue
+                else:
+                    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Asset id {asset_id} has not checked out software component {bcolors.DATA}{installed_software['name']}: increasing available quantity and checking out this component.{bcolors.RESET}")
+                    #todo: resume coding effort here once categories have been sorted out
         else:
-            installed_software_seat = next((item for item in license_seats['rows'] if item['user_can_checkout'] is True), False)
+            license_seats = get_license_seats(api_server, api_key, software_license['id'])
+            installed_software_seat = False
+            for seat in license_seats['rows']:
+                if seat['assigned_asset']:
+                    if seat['assigned_asset']['id'] == asset_id:
+                        installed_software_seat = seat
             if installed_software_seat:
-                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found available seat {bcolors.DATA}{installed_software_seat['id']}{bcolors.OK} so checking out license {bcolors.DATA}{installed_software['name']}{bcolors.OK} for asset id {bcolors.DATA}{asset_id}{bcolors.RESET}")
-                response = checkout_license(api_server, api_key, software_license['id'], installed_software_seat['id'], asset_id)
+                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Asset id {asset_id} has already checked out license {bcolors.DATA}{installed_software['name']}{bcolors.OK}: {bcolors.WARNING}skipping{bcolors.RESET}")
+                continue
             else:
-                print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Could not find an available seat for license {bcolors.DATA}{installed_software['name']}{bcolors.WARNING} for asset id {bcolors.DATA}{asset_id}{bcolors.RESET}")
-                response = increase_license_seat_count(api_server, api_key, software_license['id'], software_license)
-                assets, licenses = get_snipeit_information(api_server,api_key)
-                print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Successfully updated license with id {software_license['id']} and added a seat.{bcolors.RESET}")
-                license_seats = get_license_seats(api_server, api_key, software_license['id'])
                 installed_software_seat = next((item for item in license_seats['rows'] if item['user_can_checkout'] is True), False)
-                response = checkout_license(api_server, api_key, software_license['id'], installed_software_seat['id'], asset_id)
+                if installed_software_seat:
+                    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found available seat {bcolors.DATA}{installed_software_seat['id']}{bcolors.OK} so checking out license {bcolors.DATA}{installed_software['name']}{bcolors.OK} for asset id {bcolors.DATA}{asset_id}{bcolors.RESET}")
+                    response = checkout_license(api_server, api_key, software_license['id'], installed_software_seat['id'], asset_id)
+                else:
+                    print(f"{bcolors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Could not find an available seat for license {bcolors.DATA}{installed_software['name']}{bcolors.WARNING} for asset id {bcolors.DATA}{asset_id}{bcolors.RESET}")
+                    response = increase_license_seat_count(api_server, api_key, software_license['id'], software_license)
+                    assets, licenses, components = get_snipeit_information(api_server,api_key)
+                    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Successfully updated license with id {software_license['id']} and added a seat.{bcolors.RESET}")
+                    license_seats = get_license_seats(api_server, api_key, software_license['id'])
+                    installed_software_seat = next((item for item in license_seats['rows'] if item['user_can_checkout'] is True), False)
+                    response = checkout_license(api_server, api_key, software_license['id'], installed_software_seat['id'], asset_id)
 
 
 def get_license_seats(api_server, api_key, license_id):
@@ -211,6 +233,24 @@ def get_license_seats(api_server, api_key, license_id):
     if response.ok:
         license_seats = json.loads(response.content)
         return license_seats
+
+
+def get_component_assets(api_server, api_key, component_id):
+    '''Retrieve asset details for a specified component id.
+        Args:
+            api_server: URL string to snipe-it server instance.
+            api_key: String with the API token to use for
+                    authentication with the snipe-it server.
+            component_id: Id string of the component.
+        Returns: component_assets (dictionary object with API response content).
+    '''
+    api_endpoint = f"/api/v1/components/{component_id}/assets"
+    url = f"{api_server}{api_endpoint}"
+    headers = {'Authorization': f'Bearer {api_key}'}
+    response = requests.get(url,headers=headers,timeout=30)
+    if response.ok:
+        component_assets = json.loads(response.content)
+        return component_assets
 
 
 def checkout_license(api_server, api_key, license_id, seat_id, asset_id):
@@ -281,14 +321,14 @@ def main(api_server,api_key,exclusion_file='./software_exclusion_file.json'):
 
     #* getting all the information we need
     software_exclusion_list = load_software_exclusion_list(exclusion_file)
-    assets, licenses = get_snipeit_information(api_server,api_key)
+    assets, licenses, components = get_snipeit_information(api_server,api_key)
     inventory = get_inventory()
 
     #* dealing with the asset itself
     asset_id = process_asset(api_server, api_key, assets, inventory)
 
     #* dealing with the software inventory
-    process_software_inventory(api_server, api_key, asset_id, licenses, inventory, software_exclusion_list)
+    process_software_inventory(api_server, api_key, asset_id, licenses, components, inventory, software_exclusion_list)
 
 
 
