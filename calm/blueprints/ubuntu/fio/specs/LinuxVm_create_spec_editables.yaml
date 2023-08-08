@@ -1,0 +1,3 @@
+resources:
+  memory_size_mib: true
+  num_sockets: true

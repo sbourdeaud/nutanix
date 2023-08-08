@@ -1,0 +1,12 @@
+|-
+#cloud-config
+hostname: @@{name}@@
+fqdn: @@{name}@@.emeagso.lab
+users:
+  - name: runner
+    ssh-authorized-keys:
+      - @@{public_key}@@
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+runcmd:
+  - [systemctl, mask, cloud-init-local, cloud-init, cloud-config, cloud-final]
+  - [eject]
