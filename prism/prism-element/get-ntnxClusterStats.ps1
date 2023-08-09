@@ -67,7 +67,7 @@ Generate one csv file per overview metric for the last 7 days.
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
-        [parameter(mandatory = $false)] $prismCredsObject,
+        [parameter(mandatory = $false)] [pscredential]$prismCredsObject,
         [parameter(mandatory = $false)] [switch]$hour,
         [parameter(mandatory = $false)] [switch]$day,
         [parameter(mandatory = $false)] [switch]$week,
