@@ -842,24 +842,24 @@ public class ServerCertificateValidationCallback
         Throw "$(get-date) [ERROR] You must specify a metric with -metric or use -overview (to specify a standard set of metrics)!"
     }
 
-    if (!$prismCreds -and !$prismCredsObject) 
-    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
-    } 
-    else 
-    { #we are using custom credentials, so let's grab the username and password from that
-        try 
-        {
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        }
-        catch 
-        {
-            Set-CustomCredentials -credname $prismCreds
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-        }
-    }
     if (!$prismCredsObject)
     {
+        if (!$prismCreds) 
+        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+            $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        } 
+        else 
+        { #we are using custom credentials, so let's grab the username and password from that
+            try 
+            {
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            }
+            catch 
+            {
+                Set-CustomCredentials -credname $prismCreds
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            }
+        }
         $username = $prismCredentials.UserName
         $PrismSecurePassword = $prismCredentials.Password
         $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
