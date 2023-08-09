@@ -16,6 +16,8 @@
   Nutanix cluster fully qualified domain name or IP address.
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+.PARAMETER prismCredsObject
+  A PowerShell credential object to authenticate on the cluster.
 .PARAMETER hour
   Will set the start time and end time to match the last 1 hour minus 5 minutes.
 .PARAMETER day
@@ -50,7 +52,7 @@ Generate one csv file per overview metric for the last 7 days.
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 8th 2023
+  Revision: August 9th 2023
 #>
 
 #TODO: graphs - deal with unplotted values (because single linear value or below first y axis step)
@@ -65,6 +67,7 @@ Generate one csv file per overview metric for the last 7 days.
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
+        [parameter(mandatory = $false)] $prismCredsObject,
         [parameter(mandatory = $false)] [switch]$hour,
         [parameter(mandatory = $false)] [switch]$day,
         [parameter(mandatory = $false)] [switch]$week,
@@ -788,6 +791,7 @@ public class ServerCertificateValidationCallback
  04/28/2021 sb   Fixed some incorrect script name references in the code 
                  (thx Aritro!).
  08/08/2023 sb   Removing dependency on sbourdeaud module in the gallery.
+ 08/09/2023 sb   Adding prismCredsObject parameter.
 ################################################################################
 '@
     $myvarScriptName = ".\get-ntnxClusterStats.ps1"
@@ -838,7 +842,7 @@ public class ServerCertificateValidationCallback
         Throw "$(get-date) [ERROR] You must specify a metric with -metric or use -overview (to specify a standard set of metrics)!"
     }
 
-    if (!$prismCreds) 
+    if (!$prismCreds -and !$prismCredsObject) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
     } 
@@ -854,9 +858,16 @@ public class ServerCertificateValidationCallback
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
         }
     }
-    $username = $prismCredentials.UserName
-    $PrismSecurePassword = $prismCredentials.Password
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    if (!$prismCredsObject)
+    {
+        $username = $prismCredentials.UserName
+        $PrismSecurePassword = $prismCredentials.Password
+        $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    }
+    else 
+    {
+        $prismCredentials = $prismCredsObject
+    }
     
     if (!$influxdbCreds -and $influxdb) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
