@@ -1,0 +1,81 @@
+https://pypi.org/project/netflow/
+https://pythontic.com/modules/socket/recvfrom
+
+import netflow
+import socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(("0.0.0.0", 2055))
+payload, client = sock.recvfrom(4096)  # experimental, tested with 1464 bytes
+p = netflow.parse_packet(payload)  # Test result: <ExportPacket v5 with 30 records>
+
+
+>>> dir(p.header)
+['__class__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', '__weakref__', 'count', 'engine_id', 'engine_type', 'length', 'sampling_interval', 'sequence', 'timestamp', 'timestamp_nano', 'to_dict', 'uptime', 'version']
+
+>>> p.header.timestamp
+1692964381
+>>> p.header.count
+29
+>>> p.header.version
+5
+
+
+>>> dir(p.flows[0])
+['DST_AS', 'DST_MASK', 'DST_PORT', 'FIRST_SWITCHED', 'INPUT', 'IN_OCTETS', 'IN_PACKETS', 'IPV4_DST_ADDR', 'IPV4_SRC_ADDR', 'LAST_SWITCHED', 'NEXT_HOP', 'OUTPUT', 'PROTO', 'SRC_AS', 'SRC_MASK', 'SRC_PORT', 'TCP_FLAGS', 'TOS', '__class__', '__delattr__', '__dict__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', '__weakref__', 'data', 'length']
+
+>>> p.flows[0].data
+{'IPV4_SRC_ADDR': 3232235521, 'IPV4_DST_ADDR': 3232235690, 'NEXT_HOP': 0, 'INPUT': 1, 'OUTPUT': 1, 'IN_PACKETS': 3, 'IN_OCTETS': 164, 'FIRST_SWITCHED': 49, 'LAST_SWITCHED': 50, 'SRC_PORT': 2512, 'DST_PORT': 9090, 'TCP_FLAGS': 22, 'PROTO': 6, 'TOS': 0, 'SRC_AS': 0, 'DST_AS': 0, 'SRC_MASK': 0, 'DST_MASK': 0}
+
+>>> import ipaddress
+>>> p.flows[0].data['IPV4_SRC_ADDR']
+3232235521
+>>> ipaddress.ip_address(p.flows[0].data['IPV4_SRC_ADDR'])
+IPv4Address('192.168.0.1')
+
+>>> dir(ipaddress.ip_address(p.flows[0].data['IPV4_SRC_ADDR']))
+['_ALL_ONES', '__add__', '__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__int__', '__le__', '__lt__', '__module__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__slots__', '__str__', '__sub__', '__subclasshook__', '__weakref__', '_check_int_address', '_check_packed_address', '_constants', '_explode_shorthand_ip_string', '_get_address_key', '_ip', '_ip_int_from_prefix', '_ip_int_from_string', '_make_netmask', '_max_prefixlen', '_netmask_cache', '_parse_octet', '_prefix_from_ip_int', '_prefix_from_ip_string', '_prefix_from_prefix_string', '_report_invalid_netmask', '_reverse_pointer', '_split_addr_prefix', '_string_from_ip_int', '_version', 'compressed', 'exploded', 'is_global', 'is_link_local', 'is_loopback', 'is_multicast', 'is_private', 'is_reserved', 'is_unspecified', 'max_prefixlen', 'packed', 'reverse_pointer', 'version']
+
+>>> ipaddress.ip_address(p.flows[0].data['IPV4_SRC_ADDR']).exploded
+'192.168.0.1'
+
+https://en.wikipedia.org/wiki/List_of_IP_protocol_numbers
+>>> prefix = "IPPROTO_"
+>>> table = {num:name[len(prefix):]
+...           for name,num in vars(socket).items()
+...             if name.startswith(prefix)}
+>>> table
+{0: 'HOPOPTS', 1: 'ICMP', 2: 'IGMP', 3: 'GGP', 4: 'IPIP', 41: 'IPV6', 6: 'TCP', 8: 'EGP', 12: 'PUP', 17: 'UDP', 22: 'IDP', 63: 'HELLO', 77: 'ND', 29: 'TP', 43: 'ROUTING', 44: 'FRAGMENT', 46: 'RSVP', 47: 'GRE', 50: 'ESP', 51: 'AH', 58: 'ICMPV6', 59: 'NONE', 60: 'DSTOPTS', 36: 'XTP', 80: 'EON', 103: 'PIM', 108: 'IPCOMP', 132: 'SCTP', 255: 'RAW', 256: 'MAX'}
+>>> table[6]
+'TCP'
+>>> from pprint import pprint
+>>> pprint(table)
+{0: 'HOPOPTS',
+ 1: 'ICMP',
+ 2: 'IGMP',
+ 3: 'GGP',
+ 4: 'IPIP',
+ 6: 'TCP',
+ 8: 'EGP',
+ 12: 'PUP',
+ 17: 'UDP',
+ 22: 'IDP',
+ 29: 'TP',
+ 36: 'XTP',
+ 41: 'IPV6',
+ 43: 'ROUTING',
+ 44: 'FRAGMENT',
+ 46: 'RSVP',
+ 47: 'GRE',
+ 50: 'ESP',
+ 51: 'AH',
+ 58: 'ICMPV6',
+ 59: 'NONE',
+ 60: 'DSTOPTS',
+ 63: 'HELLO',
+ 77: 'ND',
+ 80: 'EON',
+ 103: 'PIM',
+ 108: 'IPCOMP',
+ 132: 'SCTP',
+ 255: 'RAW',
+ 256: 'MAX'}
