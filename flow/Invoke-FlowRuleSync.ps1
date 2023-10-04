@@ -28,7 +28,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 19th 2021
+  Revision: October 4th 2023
 #>
 
 
@@ -44,7 +44,8 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
         [parameter(mandatory = $true)] [string]$targetPc,
         [parameter(mandatory = $true)] [string]$prefix,
         [parameter(mandatory = $false)][ValidateSet("scan","sync")] [string]$action="scan",
-        [parameter(mandatory = $false)] $prismCreds
+        [parameter(mandatory = $false)] $prismCreds,
+        [parameter(mandatory = $false)] [switch]$securedCalls
     )
 #endregion
 
@@ -121,6 +122,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
     }#end function Write-LogOutput
 
+
     #this function loads a powershell module
     function LoadModule
     {#tries to load a module, import it, install it if necessary
@@ -189,6 +191,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
         }
     }
+
 
     function Set-CustomCredentials 
     {#creates files to store creds
@@ -293,6 +296,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
         {}
     }
 
+
     #this function is used to retrieve saved credentials for the current user
     function Get-CustomCredentials 
     {#retrieves creds from files
@@ -363,6 +367,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
         }
     }
 
+
     #this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
     function Set-PoshTls
     {#disables unsecure Tls protocols
@@ -407,6 +412,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
 
         }
     }
+
 
     #this function is used to configure posh to ignore invalid ssl certificates
     function Set-PoSHSSLCerts
@@ -464,6 +470,7 @@ public static void Ignore()
         }#endend
     }#end function Set-PoSHSSLCerts
 
+
     #this function is used to make a REST api call to Prism
     function Invoke-PrismAPICall
     {#makes a REST API call to Prism
@@ -488,22 +495,11 @@ public static void Ignore()
         #>
         param
         (
-            [parameter(mandatory = $true)]
-            [ValidateSet("POST","GET","DELETE","PUT")]
-            [string] 
-            $method,
-            
-            [parameter(mandatory = $true)]
-            [string] 
-            $url,
-
-            [parameter(mandatory = $false)]
-            [string] 
-            $payload,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential
+            [parameter(mandatory = $true)][ValidateSet("POST","GET","DELETE","PUT")][string]$method,
+            [parameter(mandatory = $true)][string]$url,
+            [parameter(mandatory = $false)][string]$payload,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential,
+            [parameter(mandatory = $false)][boolean]$check_certificates=$false
         )
 
         begin
@@ -524,11 +520,25 @@ public static void Ignore()
                     }
                     if ($payload) 
                     {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        if (!$check_certificates)
+                        {#not checking ssl certs
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        }
+                        else 
+                        {#checking ssl certs
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        }
                     } 
                     else 
                     {
-                        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        if (!$check_certificates)
+                        {#not checking ssl certs
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        }
+                        else 
+                        {#checking ssl certs
+                            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                        }
                     }
                 } 
                 else 
@@ -554,25 +564,31 @@ public static void Ignore()
             }
             catch {
                 $saved_error = $_.Exception
-                $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
-                $resp_return_code = $_.Exception.Response.StatusCode.value__
-                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                if ($resp_return_code -eq 409) 
+                if ($_.Exception.Source -ne "System.Net.Http")
                 {
-                    Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
-                    Throw
-                }
-                else 
-                {
-                    if ($saved_error_message -match 'rule already exists')
+                    $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
+                    $resp_return_code = $_.Exception.Response.StatusCode.value__
+                    if ($resp_return_code -eq 409) 
                     {
-                        Throw "$(get-date) [WARNING] $saved_error_message" 
+                        Write-Host "$(Get-Date) [WARNING] $saved_error_message" -ForegroundColor Yellow
+                        Throw
                     }
                     else 
                     {
-                        if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
-                        Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"    
+                        if ($saved_error_message -match 'rule already exists')
+                        {
+                            Throw "$(get-date) [WARNING] $saved_error_message" 
+                        }
+                        else 
+                        {
+                            if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+                            Throw "$(get-date) [ERROR] $resp_return_code $saved_error_message"    
+                        }
                     }
+                }
+                else 
+                {
+                    Throw "$(get-date) [ERROR] $($_.ErrorDetails.Message)"
                 }
             }
             finally {
@@ -585,6 +601,7 @@ public static void Ignore()
             return $resp
         }    
     }
+
 
     #helper-function Get-RESTError
     function Help-RESTError 
@@ -599,6 +616,7 @@ public static void Ignore()
 
         break
     }#end function Get-RESTError
+
 
     function Get-PrismCentralObjectList
     {#retrieves multiple pages of Prism REST objects v3
@@ -629,7 +647,7 @@ public static void Ignore()
         {
             Do {
                 try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials -check_certificates $check_ssl_certificates
                     
                     if ($total -eq 0) {$total = $resp.metadata.total_matches} #this is the first time we go thru this loop, so let's assign the total number of objects
                     $first = $offset #this is the first object for this iteration
@@ -679,6 +697,7 @@ public static void Ignore()
         }
     }
 
+
     function Get-PrismCentralTaskStatus
     {#loops on Prism Central task status until completed
         <#
@@ -727,7 +746,7 @@ public static void Ignore()
         {
             #region get initial task details
                 Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
-                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -check_certificates $check_ssl_certificates
                 Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
             #endregion
 
@@ -737,7 +756,7 @@ public static void Ignore()
                 {
                     New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
                     Sleep 5
-                    $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+                    $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -check_certificates $check_ssl_certificates
                     
                     if ($taskDetails.status -ne "running") 
                     {
@@ -768,6 +787,7 @@ public static void Ignore()
             return $taskDetails.status
         }
     }
+
 
     function Sync-Categories
     {#syncs Prism categories used in a given network policy
@@ -870,7 +890,7 @@ public static void Ignore()
                     Write-Host "$(Get-Date) [INFO] Checking category:value pair $($category):$($value) exists in $targetPc..." -ForegroundColor Green
                     try 
                     {
-                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -check_certificates $check_ssl_certificates
                         Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $targetPc" -ForegroundColor Cyan
                     }
                     catch 
@@ -917,7 +937,7 @@ public static void Ignore()
                             Write-Host "$(Get-Date) [INFO] Checking category $($category) exists in $targetPc..." -ForegroundColor Green
                             try 
                             {#get the category
-                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -check_certificates $check_ssl_certificates
                                 Write-Host "$(Get-Date) [SUCCESS] Found the category $($category) in $targetPc" -ForegroundColor Cyan
                                 $processed_categories_list.Add($category) | Out-Null
                             }
@@ -940,7 +960,7 @@ public static void Ignore()
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                     try 
                                     {#add the category
-                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                                         Write-Host "$(Get-Date) [SUCCESS] Added category $($category) in $targetPc" -ForegroundColor Cyan
                                         if ($debugme) {$resp}
                                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
@@ -971,7 +991,7 @@ public static void Ignore()
                     $payload = (ConvertTo-Json $content -Depth 4)
                     try 
                     {#add the value
-                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                         Write-Host "$(Get-Date) [SUCCESS] Added value $($value) to category $($category) in $targetPc" -ForegroundColor Cyan
                         if ($debugme) {$resp}
                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
@@ -986,6 +1006,7 @@ public static void Ignore()
 
         end {}
     }
+
 
     function Sync-AddressGroups
     {#syncs Prism address groups used in a given network policy
@@ -1028,7 +1049,7 @@ public static void Ignore()
                     $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
                     $method = "GET"
 
-                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                    $source_address_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -check_certificates $check_ssl_certificates
 
                     if ($source_address_group.address_group.name -notin $target_address_groups.address_group.name)
                     {#based on its name, that address group does not exist on the target
@@ -1073,7 +1094,7 @@ public static void Ignore()
                     Write-Host "$(Get-Date) [INFO] Adding address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Green
                     try 
                     {#add address group
-                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                         Write-Host "$(Get-Date) [SUCCESS] Added address group $($address_group.address_group.name) to $targetPc" -ForegroundColor Cyan
                         if ($debugme) {$resp}
                         #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc
@@ -1102,6 +1123,7 @@ public static void Ignore()
 
         end {}
     }
+
 
     function Sync-ServiceGroups
     {#syncs Prism service groups used in a given network policy
@@ -1144,7 +1166,7 @@ public static void Ignore()
                     $url = "https://{0}:9440{1}" -f $sourcePc,$api_server_endpoint
                     $method = "GET"
 
-                    $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                    $source_service_group = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -check_certificates $check_ssl_certificates
 
                     #Write-Host "$(Get-Date) [INFO] Checking service group $($source_service_group.service_group.name) exists in $targetPc..." -ForegroundColor Green
                     if ($source_service_group.service_group.name -notin $target_service_groups.service_group.name)
@@ -1190,7 +1212,7 @@ public static void Ignore()
                     Write-Host "$(Get-Date) [INFO] Adding service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Green
                     try 
                     {#add service group
-                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                         Write-Host "$(Get-Date) [SUCCESS] Added service group $($service_group.service_group.name) to $targetPc" -ForegroundColor Cyan
                         if ($debugme) {$resp}
                         if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
@@ -1218,6 +1240,32 @@ public static void Ignore()
 
         end {}
     }
+
+
+    function Get-SecurityPolicies
+    {#gets FNS >3.0 security policies using API v4
+        param
+        (
+            [Parameter(Mandatory)][string]$prism_central_address,
+            [Parameter(Mandatory)][pscredential]$prism_central_credentials_object
+        )
+
+        begin 
+        {
+            $url = "https://{0}:9440/api/microseg/v4.0.a1/config/policies" -f $prism_central_address
+            $method = 'GET'
+        }
+
+        process 
+        {
+            $api_response = Invoke-PrismAPICall -method $method -url $url -credential $prism_central_credentials_object -check_certificates $check_ssl_certificates
+        }
+
+        end 
+        {
+            return $api_response
+        }
+    }
 #endregion
 
 
@@ -1242,6 +1290,11 @@ Date       By   Updates (newest updates at the top)
 10/18/2021 sb   Fixing an issue where a rule needed both adding and removing
                 but had different target groups.
 10/19/2021 sb   Fixing an issue where the wrong rule would sometime get removed.
+10/04/2023 sb   Adding -securedCalls parameter to enable checking SSL certs with
+                every API call. Modified Invoke-PrismAPICall function to handle
+                http errors correctly and show the exact error message.
+                Adding the ability to pass directly a credential object to
+                -prismCreds.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
@@ -1268,7 +1321,7 @@ Date       By   Updates (newest updates at the top)
 
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-    $length = 600
+    $length = 500
 #endregion
 
 
@@ -1279,23 +1332,37 @@ Date       By   Updates (newest updates at the top)
     } 
     else 
     {#we are using custom credentials, so let's grab the username and password from that
-        try 
-        {#retrieve credentials
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+        $myvar_type = $($prismCreds.GetType().Name)
+        if ($myvar_type -ne "PSCredential")
+        {
+            try 
+            {#retrieve credentials
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            }
+            catch 
+            {#could not retrieve credentials
+                Set-CustomCredentials -credname $prismCreds
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+            }
         }
-        catch 
-        {#could not retrieve credentials
-            Set-CustomCredentials -credname $prismCreds
-            $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+        else 
+        {
+            $prismCredentials = $prismCreds
         }
     }
-    $username = $prismCredentials.UserName
-    $PrismSecurePassword = $prismCredentials.Password
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+    if ($securedCalls) 
+    {#we want to check ssl certs with every API call
+        $check_ssl_certificates = $true
+    }
+    else 
+    {#we do not want to check ssl certs with every API call
+        $check_ssl_certificates = $false
+    }
 #endregion
 
 
 #todo: what about service and address groups in target group?
+#todo: complete scan section (does nothing at the moment)
 #todo: bug: dealing with multiple apps in target group
 #todo: improve: rule add/update/delete returns task uuid: check on task status: no task uuid is returned... check on status later?
 #todo: improve: add export action for rules from source to json (for backup purposes)
@@ -1305,6 +1372,9 @@ Date       By   Updates (newest updates at the top)
 
 #region main
 
+    #TODO: add code here to determine if we need to use API v4 or API v3 (based on FNS version)
+
+    #TODO: replace code in this region with v4 API calls
     #region GET Flow rules
         Write-Host ""
         Write-Host "$(get-date) [STEP] Getting Flow rules" -ForegroundColor Magenta
@@ -1549,6 +1619,7 @@ Date       By   Updates (newest updates at the top)
                         Sync-ServiceGroups -rule $rule
                         Sync-AddressGroups -rule $rule
 
+                        #TODO: replace code in this region with v4 API calls
                         #region add rule on target
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules"
                             $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
@@ -1565,7 +1636,7 @@ Date       By   Updates (newest updates at the top)
 
                             try 
                             {#create network policy
-                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                                 Write-Host "$(Get-Date) [SUCCESS] Added Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan
                                 if ($debugme) {$resp}
                                 #Get-PrismCentralTaskStatus -task $resp -credential $prismCredentials -cluster $targetPc 
@@ -1598,6 +1669,7 @@ Date       By   Updates (newest updates at the top)
                     foreach ($rule in $remove_rules_list)
                     {#process each rule to remove
                         #todo: for each category, figure out if it is used anywhere else in rules on source: if not, delete the category
+                        #todo: replace code in this region with v4 API calls
                         #? delete rule on target
                         $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $rule.metadata.uuid
                         $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
@@ -1606,7 +1678,7 @@ Date       By   Updates (newest updates at the top)
                         Write-Host "$(get-date) [STEP] Deleting Flow rule $($rule.spec.Name) on $($targetPc)" -ForegroundColor Green
                         try 
                         {#delete the rule
-                            $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                            $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                             Write-Host "$(Get-Date) [SUCCESS] Deleted Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan
                             
                         }
@@ -1646,6 +1718,7 @@ Date       By   Updates (newest updates at the top)
                                 }
                             }
 
+                            #TODO: replace code in this region with v4 API calls
                             $api_server_endpoint = "/api/nutanix/v3/network_security_rules/{0}" -f $target_rule.metadata.uuid
                             $url = "https://{0}:9440{1}" -f $targetPc,$api_server_endpoint
                             $method = "PUT"
@@ -1662,7 +1735,7 @@ Date       By   Updates (newest updates at the top)
 
                             try 
                             {#update the network policy
-                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                                $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload -check_certificates $check_ssl_certificates
                                 Write-Host "$(Get-Date) [SUCCESS] Updated Flow rule $($rule.spec.Name) to $targetPc" -ForegroundColor Cyan   
                             }
                             catch 

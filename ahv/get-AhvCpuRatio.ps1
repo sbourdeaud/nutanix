@@ -133,9 +133,6 @@ Date       By   Updates (newest updates at the top)
             $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
         }
     }
-    $username = $prismCredentials.UserName
-    $PrismSecurePassword = $prismCredentials.Password
-    $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 #endregion
 
 #region prepare api call (get vms)
@@ -174,6 +171,8 @@ Date       By   Updates (newest updates at the top)
             if ($entity.spec.resources.num_sockets) {
                 $myvarVmInfo = [ordered]@{
                     "num_sockets" = $entity.spec.resources.num_sockets;
+                    "num_vcpus_per_socket" = $entity.spec.resources.num_vcpus_per_socket;
+                    "num_vcpus" = $entity.spec.resources.num_sockets * $entity.spec.resources.num_vcpus_per_socket;
                     "power_state" = $entity.spec.resources.power_state;
                     "cluster" = $entity.spec.cluster_reference.name;
                     "hypervisor" = $entity.status.resources.hypervisor_type;
@@ -323,12 +322,12 @@ Date       By   Updates (newest updates at the top)
 #region process and print overall results
     ForEach ($cluster in $myvarClusterResults) {
         if ($ignorePoweredOff) {
-            $myvarAllocatedvCpus = ($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | where {$_.power_state -eq "ON"} | measure num_sockets -sum).Sum
-            $myvarAveragevCpuAllocation = [math]::Round(($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | where {$_.power_state -eq "ON"} | measure num_sockets -average).Average)
+            $myvarAllocatedvCpus = ($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | where {$_.power_state -eq "ON"} | measure num_vcpus -sum).Sum
+            $myvarAveragevCpuAllocation = [math]::Round(($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | where {$_.power_state -eq "ON"} | measure num_vcpus -average).Average)
         }
         else {
-            $myvarAllocatedvCpus = ($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | measure num_sockets -sum).Sum
-            $myvarAveragevCpuAllocation = [math]::Round(($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | measure num_sockets -average).Average)
+            $myvarAllocatedvCpus = ($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | measure num_vcpus -sum).Sum
+            $myvarAveragevCpuAllocation = [math]::Round(($myvarVmResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | measure num_vcpus -average).Average)
         }
         $myvarTotalCores = ($myvarHostResults | where {$_.cluster_uuid -eq $cluster.cluster_uuid} | measure num_cpu_cores -sum).Sum
         $myvarCpuRatio = [math]::Round($myvarAllocatedvCpus / $myvarTotalCores,2)
@@ -344,7 +343,7 @@ Date       By   Updates (newest updates at the top)
         #store the results for this entity in our overall result variable
         $myvarReport.Add((New-Object PSObject -Property $myvarClusterReport)) | Out-Null
     }
-    $myvarClusterReport | ft
+    $myvarReport | ft
 #endregion
 
 #region cleanup	
