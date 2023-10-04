@@ -21,6 +21,8 @@
   Can be either scan (to view changes only) or sync (to synchronize changes from source to target).
 .PARAMETER prefix
   Prefix of Flow rule names on source to consider (this prevents deleting rules that need to exist only on target).
+.PARAMETER securedCalls
+  Use if you want to check SSL certificates with every API call (default if to skip SSL certs checks).
 .EXAMPLE
 .\Invoke-FlowRuleSync.ps1 -sourcePc pc1.local -targetPc pc2.local -prismCreds myadcreds -action sync -prefix flowPc1
 Synchronize all rules starting with flowPc1 from pc1 to pc2:
