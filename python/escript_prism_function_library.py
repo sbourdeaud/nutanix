@@ -13,14 +13,17 @@
 #region base request function (required by all other functions)
 
 import requests,json,getpass
+from datetime import datetime, timedelta
 
-def process_request(url, method, user, password, headers, payload=None, secure=False):
+def process_request(url, method, user, password, headers, payload=None, params=None, secure=False):
     """
     Processes a web request and handles result appropriately with retries.
     Returns the content of the web request if successfull.
     """
     if payload is not None:
         payload = json.dumps(payload)
+    if params is not None:
+        print(params)
 
     #configuring web request behavior
     timeout=10
@@ -30,46 +33,51 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
     while retries > 0:
         try:
 
-            if method is 'GET':
+            if method == 'GET':
                 response = requests.get(
                     url,
                     headers=headers,
+                    params=params,
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
                 )
-            elif method is 'POST':
+            elif method == 'POST':
                 response = requests.post(
                     url,
                     headers=headers,
                     data=payload,
+                    params=params,
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
                 )
-            elif method is 'PUT':
+            elif method == 'PUT':
                 response = requests.put(
                     url,
                     headers=headers,
                     data=payload,
+                    params=params,
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
                 )
-            elif method is 'PATCH':
+            elif method == 'PATCH':
                 response = requests.patch(
                     url,
                     headers=headers,
                     data=payload,
+                    params=params,
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
                 )
-            elif method is 'DELETE':
+            elif method == 'DELETE':
                 response = requests.delete(
                     url,
                     headers=headers,
                     data=payload,
+                    params=params,
                     auth=(user, password),
                     verify=secure,
                     timeout=timeout
@@ -861,25 +869,95 @@ def prism_get_filer_shares(api_server,username,secret,uuid,secure=False):
         raise
 
 
+def prism_get_cluster_utilization_average(api_server,username,secret,average_period_days=30,secure=False):
+    """Returns from Prism Element the average resource utilization over the given time period (30 days by default).
+    This function retrieves CPU, Memory and Storage utilization metrics for the specified period and 
+    computes the average for each metric.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        average_period_days: Number of days over which to calculate the average resource utilization.
+                             Defaults to 30 days.
+        
+    Returns:
+        The following integers:
+            - For CPU utilization: cpu_utilization_average based on the metric hypervisor_cpu_usage_ppm
+            - For Memory utilization: memory_utilization_average based on the metric hypervisor_memory_usage_ppm
+            - For Storage utilization: storage_utilization_average based on the metric controller_num_iops
+    """
+    start_time_in_usecs = int(((datetime.now() + timedelta(days = -average_period_days)) - datetime(1970, 1, 1)).total_seconds() *1000000)
+    end_time_in_usecs = int(((datetime.now() + timedelta(days = -1)) - datetime(1970, 1, 1)).total_seconds() *1000000)
+    interval_in_secs = 60
+
+    params = {
+        "metrics" : "hypervisor_cpu_usage_ppm,hypervisor_memory_usage_ppm,controller_num_iops",
+        "start_time_in_usecs" : start_time_in_usecs,
+        "end_time_in_usecs" : end_time_in_usecs,
+        "interval_in_secs" : interval_in_secs
+    }
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/PrismGateway/services/rest/v2.0/cluster/stats/"
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    print("Making a {} API call to {}".format(method, url))
+    resp = process_request(url,method,username,secret,headers,params=params,secure=secure)
+    if resp.ok:
+        cluster_metrics_values = json.loads(resp.content)
+        cpu_metrics = [stat['values'] for stat in cluster_metrics_values['stats_specific_responses'] if stat['metric'] == "hypervisor_cpu_usage_ppm"]
+        memory_metrics = [stat['values'] for stat in cluster_metrics_values['stats_specific_responses'] if stat['metric'] == "hypervisor_memory_usage_ppm"]
+        storage_metrics = [stat['values'] for stat in cluster_metrics_values['stats_specific_responses'] if stat['metric'] == "controller_num_iops"]
+        cpu_utilization_average = sum(cpu_metrics[0]) / len(cpu_metrics[0]) /10000
+        memory_utilization_average = sum(memory_metrics[0]) / len(memory_metrics[0]) /10000
+        storage_utilization_average = int(sum(storage_metrics[0]) / len(storage_metrics[0]))
+        print("CPU Utilization Average for the last {} days is: {} %".format(average_period_days,round(cpu_utilization_average,2)))
+        print("Memory Utilization Average for the last {} days is: {} %".format(average_period_days,round(memory_utilization_average,2)))
+        print("Storage Utilization Average for the last {} days is: {} iops".format(average_period_days,storage_utilization_average))
+    else:
+        print("Request failed!")
+        print("status code: {}".format(resp.status_code))
+        print("reason: {}".format(resp.reason))
+        print("text: {}".format(resp.text))
+        print("raise_for_status: {}".format(resp.raise_for_status()))
+        print("elapsed: {}".format(resp.elapsed))
+        print("headers: {}".format(resp.headers))
+        print("payload: {}".format(payload))
+        print(json.dumps(
+            json.loads(resp.content),
+            indent=4
+        ))
+        raise
+
+    return cpu_utilization_average, memory_utilization_average, storage_utilization_average
 
 # endregion
 
-prism = raw_input(("Prism:"))
-user = raw_input(("User:"))
+prism = input(("Prism:"))
+user = input(("User:"))
 try:
     pwd = getpass.getpass()
 except Exception as error:
     print('ERROR', error)
 
+prism_get_cluster_utilization_average(api_server=prism,username=user,secret=pwd,average_period_days=7,secure=False)
 
-filers = prism_get_filers(prism,user,pwd)
+""" filers = prism_get_filers(prism,user,pwd)
 print(json.dumps(filers,indent=4))
 
 print("First File Server Name: {0}".format(filers[0]['name']))
 filer_uuid = filers[0]['uuid']
 
 filer = prism_get_filer(prism,user,pwd,filer_uuid)
-print(json.dumps(filer,indent=4))
+print(json.dumps(filer,indent=4)) 
 
 filer_shares = prism_get_filer_shares(prism,user,pwd,filer_uuid)
-print(json.dumps(filer_shares,indent=4))
+print(json.dumps(filer_shares,indent=4))"""
