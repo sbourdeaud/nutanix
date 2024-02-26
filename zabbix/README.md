@@ -2,11 +2,12 @@
 This document explains how to configure SNMP traps forwarding from Nutanix Prism to Zabbix v4 and above.  
 It specifically covers:  
 <a id="ToC"></a>
-1. [How to configure SNMPv3 in Prism](#PrismConfiguration)  
-2. [How to configure the Zabbix proxy or server for receiving SNMPv3 traps](#ZabbixServerConfiguration)  
-3. [How to test SNMP traps from Prism to Zabbix](#SNMPTest)  
-4. [How to configure a host object in Zabbix to match the Nutanix cluster and automate the creation of Zabbix items and triggers in a template for the SNMP traps you want](#ZabbixMonitoringConfiguration)
-5. [I have done all this already, I just want to add a new Nutanix cluster to my Zabbix monitoring: what do I need to do?](#NewNutanixCluster)  
+- [Configuration instructions for configuring SNMP traps from Prism to Zabbix](#configuration-instructions-for-configuring-snmp-traps-from-prism-to-zabbix)
+  - [How to configure Nutanix Prism to send SNMPv3 traps to Zabbix](#how-to-configure-nutanix-prism-to-send-snmpv3-traps-to-zabbix)
+  - [How to configure the Zabbix proxy or server for SNMPv3 traps](#how-to-configure-the-zabbix-proxy-or-server-for-snmpv3-traps)
+  - [How to test SNMPv3 traps from Nutanix to Zabbix](#how-to-test-snmpv3-traps-from-nutanix-to-zabbix)
+  - [Zabbix server monitoring configuration](#zabbix-server-monitoring-configuration)
+  - [How to add a new Nutanix cluster once SNMP traps are working?](#how-to-add-a-new-nutanix-cluster-once-snmp-traps-are-working)
 
 If you are more interested in doing **SNMP polling** (for collecting status and metrics), you can use the existing Nutanix community template available [here](https://github.com/aldevar/Zabbix_Nutanix_Template).  
 Alternatively, you can create your own based on the Nutanix MIB using the converter script described [here](https://sbcode.net/zabbix/mib-to-zabbix-template/).
@@ -76,7 +77,11 @@ For convenience, to retrieve the Zabbix source code and get a copy of the script
     ```perl
     if ($hostname ne 'unknown')
     {
-        $hostname = `nslookup $hostname | awk '{print substr(\$4, 1, length(\$4)-1)}'` || $hostname;
+        $nslookup_result = `nslookup $hostname`;
+        if ($? == 0)
+        {
+            $hostname = `nslookup $hostname | awk '{print substr(\$4, 1, length(\$4)-1)}'`;
+        }
     }
     ```
     This code will attempt to resolve the IP address to a hostname.
