@@ -1615,6 +1615,30 @@ Date       By   Updates (newest updates at the top)
                     foreach ($rule in $add_rules_list)
                     {#process each rule to add
                         
+                        #region GET service groups from target
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Getting service groups..." -ForegroundColor Magenta
+
+                            #region process target
+                                Write-Host "$(get-date) [INFO] Retrieving list of service groups from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
+                                $target_service_groups = Get-PrismCentralObjectList -pc $targetPc -object "service_groups" -kind "service_group"
+                                Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
+                                Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
+                            #endregion
+                        #endregion
+
+                        #region GET address groups from target
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Getting address groups..." -ForegroundColor Magenta
+
+                            #region process target
+                                Write-Host "$(get-date) [INFO] Retrieving list of address groups from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
+                                $target_address_groups = Get-PrismCentralObjectList -pc $targetPc -object "address_groups" -kind "address_group"
+                                Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of address groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
+                                Write-Host "$(get-date) [DATA] There are $($target_address_groups.count) address groups on target Prism Central $($targetPc)..." -ForegroundColor White
+                            #endregion
+                        #endregion
+
                         Sync-Categories -rule $rule
                         Sync-ServiceGroups -rule $rule
                         Sync-AddressGroups -rule $rule
@@ -1699,6 +1723,30 @@ Date       By   Updates (newest updates at the top)
                     foreach ($rule in $update_rules_list)
                     {#process each rule to update
                         
+                        #region GET service groups from target
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Getting service groups..." -ForegroundColor Magenta
+
+                            #region process target
+                                Write-Host "$(get-date) [INFO] Retrieving list of service groups from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
+                                $target_service_groups = Get-PrismCentralObjectList -pc $targetPc -object "service_groups" -kind "service_group"
+                                Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
+                                Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
+                            #endregion
+                        #endregion
+
+                        #region GET address groups from target
+                            Write-Host ""
+                            Write-Host "$(get-date) [STEP] Getting address groups..." -ForegroundColor Magenta
+
+                            #region process target
+                                Write-Host "$(get-date) [INFO] Retrieving list of address groups from the target Prism Central instance $($targetPc)..." -ForegroundColor Green
+                                $target_address_groups = Get-PrismCentralObjectList -pc $targetPc -object "address_groups" -kind "address_group"
+                                Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of address groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
+                                Write-Host "$(get-date) [DATA] There are $($target_address_groups.count) address groups on target Prism Central $($targetPc)..." -ForegroundColor White
+                            #endregion
+                        #endregion
+
                         Sync-Categories -rule $rule
                         Sync-ServiceGroups -rule $rule
                         Sync-AddressGroups -rule $rule
