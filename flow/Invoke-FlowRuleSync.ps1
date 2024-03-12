@@ -30,7 +30,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 4th 2023
+  Revision: March 12th 2024
 #>
 
 
@@ -1297,6 +1297,9 @@ Date       By   Updates (newest updates at the top)
                 http errors correctly and show the exact error message.
                 Adding the ability to pass directly a credential object to
                 -prismCreds.
+03/12/2024 sb   Retrieving target address groups and service groups before pro-
+                cessing each rule to avoid issue when trying to create groups 
+                that already exist.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
