@@ -30,7 +30,7 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: March 12th 2024
+  Revision: March 20th 2024
 #>
 
 
@@ -1059,7 +1059,7 @@ public static void Ignore()
                     }
                     else 
                     {#the address group already exists on target, let's update the uuid reference in that rule
-                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -eq $source_address_group.address_group.name}).uuid
+                        $target_address_group_uuid = ($target_address_groups | Where-Object {$_.address_group.Name -ceq $source_address_group.address_group.name}).uuid
                         if ($address_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.address_group_inclusion_list | Where-Object {$_.uuid -eq $source_address_group.uuid})
                         {#that address group is used in inbound allow list
                             ForEach ($address_group_item in $address_group_inbound)
@@ -1177,7 +1177,7 @@ public static void Ignore()
                     }
                     else 
                     {#the service group already exists on target, let's update the uuid reference in that rule
-                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -eq $source_service_group.service_group.name}).uuid
+                        $target_service_group_uuid = ($target_service_groups | Where-Object {$_.service_group.Name -ceq $source_service_group.service_group.name}).uuid
                         if ($service_group_inbound = $rule.spec.resources.app_rule.inbound_allow_list.service_group_list | Where-Object {$_.uuid -eq $source_service_group.uuid})
                         {#that service group is used in inbound allow list
                             ForEach ($service_group_item in $service_group_inbound)
@@ -1300,6 +1300,9 @@ Date       By   Updates (newest updates at the top)
 03/12/2024 sb   Retrieving target address groups and service groups before pro-
                 cessing each rule to avoid issue when trying to create groups 
                 that already exist.
+03/20/2024 sb   Making service groups and address groups name matches case
+                sensitive to avoid errors when groups have the same name but
+                use different case.
 ################################################################################
 '@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
