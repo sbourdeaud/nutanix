@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 import getpass
 import json
 import requests
+import keyring
 #endregion IMPORT
 
 
@@ -218,6 +219,7 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--prism", type=str, help="prism server.")
     parser.add_argument("-u", "--username", type=str, help="username for prism server.")
     parser.add_argument("-d", "--days", type=int, help="number of days to use when calculating the average utilization.")
+    parser.add_argument("-k", "--keyring_service_id", type=str, help="name of the service id to retrieve the password from that matches the username.")
     args = parser.parse_args()
     
     if not args.prism:
@@ -227,10 +229,19 @@ if __name__ == '__main__':
     if not args.days:
         args.days = 7
     
-    # * prompting user for the password
-    try:
-        pwd = getpass.getpass()
-    except Exception as error:
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+    # * figuring out the password
+    if args.keyring_service_id:
+        try:
+            pwd = keyring.get_password(args.keyring_service_id, args.username)
+        except:
+            try:
+                pwd = getpass.getpass()
+            except Exception as error:
+                print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+    else:
+        try:
+            pwd = getpass.getpass()
+        except Exception as error:
+            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
     
     main(args,secret=pwd)
