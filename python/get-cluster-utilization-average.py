@@ -231,9 +231,8 @@ if __name__ == '__main__':
     
     # * figuring out the password
     if args.keyring_service_id:
-        try:
-            pwd = keyring.get_password(args.keyring_service_id, args.username)
-        except:
+        pwd = keyring.get_password(args.keyring_service_id, args.username)
+        if not pwd:
             try:
                 pwd = getpass.getpass()
             except Exception as error:
