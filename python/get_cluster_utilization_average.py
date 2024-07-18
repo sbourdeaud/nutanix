@@ -4,11 +4,11 @@
         prism: The IP or FQDN of Prism.
         username: The Prism user name.
         days: number of days to use when calculating the average utilization.
+        keyring_service_id: name of the keyring service id to retrieve the username password from.
 
     Returns:
         Print to console ouput.
 """
-
 
 #region IMPORT
 from argparse import ArgumentParser
@@ -20,7 +20,6 @@ import json
 import requests
 import keyring
 #endregion IMPORT
-
 
 # region HEADERS
 """
@@ -244,3 +243,11 @@ if __name__ == '__main__':
             print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
     
     main(args,secret=pwd)
+
+   
+""" Keyring add example:
+import keyring
+# the service is just a namespace for your app
+service_id = 'IM_YOUR_APP!'
+keyring.set_password(service_id, 'dustin', 'my secret password')
+password = keyring.get_password(service_id, 'dustin') # retrieve password """
