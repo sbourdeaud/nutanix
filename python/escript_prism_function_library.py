@@ -11,10 +11,12 @@
 """
 # endregion
 
+
 #region base request function (required by all other functions)
 
 import requests,json,getpass
 from datetime import datetime, timedelta
+from time import sleep
 
 # For token-based authentication, omit user and password (so that they default to None), and add the following header to
 # the headers list: 'Authorization': 'Bearer <token value>'
@@ -4301,7 +4303,7 @@ try:
 except Exception as error:
     print('ERROR', error)
 
-prism_get_cluster_utilization_average(api_server=prism,username=user,secret=pwd,average_period_days=7,secure=False)
+prism_get_cluster_utilization_average(api_server=prism,username=user,passwd=pwd,average_period_days=7,secure=False)
 
 """ filers = prism_get_filers(prism,user,pwd)
 print(json.dumps(filers,indent=4))
