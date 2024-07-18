@@ -201,9 +201,9 @@ def prism_get_cluster_utilization_average(api_server,username,passwd,average_per
         cpu_utilization_average = sum(cpu_metrics[0]) / len(cpu_metrics[0]) /10000
         memory_utilization_average = sum(memory_metrics[0]) / len(memory_metrics[0]) /10000
         storage_utilization_average = int(sum(storage_metrics[0]) / len(storage_metrics[0]))
-        print(f"{PrintColors.DATA}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] CPU Utilization Average for the last {average_period_days} days is: {round(cpu_utilization_average,2)} %.{PrintColors.RESET}")
-        print(f"{PrintColors.DATA}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] Memory Utilization Average for the last {average_period_days} days is: {round(memory_utilization_average,2)} %.{PrintColors.RESET}")
-        print(f"{PrintColors.DATA}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] Storage Utilization Average for the last {average_period_days} days is: {round(storage_utilization_average,2)} iops.{PrintColors.RESET}")
+        print(f"{PrintColors.DATA}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] CPU Utilization Average on {api_server} for the last {average_period_days} days is: {round(cpu_utilization_average,2)} %.{PrintColors.RESET}")
+        print(f"{PrintColors.DATA}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] Memory Utilization Average on {api_server} for the last {average_period_days} days is: {round(memory_utilization_average,2)} %.{PrintColors.RESET}")
+        print(f"{PrintColors.DATA}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] Storage Utilization Average on {api_server} for the last {average_period_days} days is: {round(storage_utilization_average,2)} iops.{PrintColors.RESET}")
     else:
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed: {resp.status_code} {resp.reason} {resp.text}.{PrintColors.RESET}")
         raise
@@ -220,6 +220,10 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--days", type=int, help="number of days to use when calculating the average utilization.")
     args = parser.parse_args()
     
+    if not args.prism:
+        args.prism = input(("Prism:"))
+    if not args.username:
+        args.username = input(("Username:"))
     if not args.days:
         args.days = 7
     
