@@ -1,12 +1,12 @@
-""" describe what the script does
+""" Computes the CPU, RAM (%) and storage (iops) average utilization for the specified period of time (days)
 
     Args:
-        api_server: The IP or FQDN of Prism.
+        prism: The IP or FQDN of Prism.
         username: The Prism user name.
-        secret: The Prism user name password.
+        days: number of days to use when calculating the average utilization.
 
     Returns:
-        (json response).
+        Print to console ouput.
 """
 
 
