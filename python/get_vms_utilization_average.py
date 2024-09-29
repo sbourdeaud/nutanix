@@ -11,6 +11,7 @@
         Print to console ouput and csv if csv arg is specified.
 """
 
+
 #region IMPORT
 from argparse import ArgumentParser
 from time import sleep
@@ -22,13 +23,10 @@ import requests
 import keyring
 #endregion IMPORT
 
+
 # region HEADERS
-"""
 # * author:       stephane.bourdeaud@nutanix.com
 # * version:      2024/07/18
-
-# description:    
-"""
 # endregion HEADERS
 
 
@@ -50,15 +48,11 @@ class PrintColors:
 def main(args,secret,secure=False):
     '''description.
         Args:
-            api_server: URL string to snipe-it server instance.
-            api_key: String with the API token to use for
-                    authentication with the snipe-it server.
-            exclusion_file: path to the software exclusion json file.
         Returns:
     '''
 
     #* retrieving cluster stats
-    prism_get_vm_utilization_average(api_server=args.prism,username=args.username,passwd=secret,average_period_days=args.days,secure=secure)
+    prism_get_vm_utilization_average(api_server=args.prism,username=args.username,passwd=secret,average_period_days=args.days,timeout=args.timeout,secure=secure)
 
 
 def process_request(url, method, user=None, password=None, cert=None, files=None,headers=None, payload=None, params=None, secure=False, timeout=120, retries=5, exit_on_failure=True):
@@ -152,7 +146,7 @@ def process_request(url, method, user=None, password=None, cert=None, files=None
                 return response
 
 
-def prism_get_vm_utilization_average(api_server,username,passwd,average_period_days=30,secure=False):
+def prism_get_vm_utilization_average(api_server,username,passwd,average_period_days=30,timeout=120,secure=False):
     """Returns from Prism Central (2024.1 and above) the average resource utilization over the given time period (30 days by default).
     This function retrieves average CPU, Memory, Network and Storage utilization metrics for the specified period.
 
@@ -197,7 +191,7 @@ def prism_get_vm_utilization_average(api_server,username,passwd,average_period_d
     )
     method = "GET"
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url}.{PrintColors.RESET}")
-    resp = process_request(url,method,user=username,password=passwd,headers=headers,params=params,secure=secure)
+    resp = process_request(url,method,user=username,password=passwd,headers=headers,params=params,secure=secure,timeout=timeout)
     if resp.ok:
         vm_stats = json.loads(resp.content)
         for vm in vm_stats['data']:
@@ -242,6 +236,10 @@ if __name__ == '__main__':
         args.username = input(("Username:"))
     if not args.days:
         args.days = 7
+    if args.days > 1:
+        args.timeout = 300
+    else:
+        args.timeout = 120
     
     # * figuring out the password
     if args.keyring_service_id:

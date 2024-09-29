@@ -22,7 +22,7 @@ Collect VM inventory from prismcentral.local (and get prompted for credentials)
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 30th 2022
+  Revision: September 29th 2024
 #>
 
 #region parameters
@@ -33,6 +33,7 @@ Param
     [parameter(mandatory = $false)] [switch]$history,
     [parameter(mandatory = $false)] [switch]$log,
     [parameter(mandatory = $false)] [switch]$debugme,
+    [parameter(mandatory = $false)] [switch]$backup,
     [parameter(mandatory = $true)] [string]$prismcentral,
     [parameter(mandatory = $false)] $prismCreds
 )
@@ -581,6 +582,8 @@ Date       By   Updates (newest updates at the top)
 06/29/2022 sb   Initial release.
 06/30/2022 sb   Changed code to process correctly number of objects in groups 
                 response.  Moved that code to a function.
+09/29/2024 sb   Added the backup parameter to create sourcecsv file for
+                set-category.ps1 script.
 ################################################################################
 '@
 $myvarScriptName = ".\get-PcVmCategories.ps1"
@@ -597,8 +600,8 @@ Set-PoshTls
 
 #region variables
 $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-$api_server_port = 9440
 [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
+[System.Collections.ArrayList]$myvarBackupResults = New-Object System.Collections.ArrayList($null)
 #endregion
 
 
@@ -652,16 +655,33 @@ $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
             "protection_policy_name" = if (($entity.data | Where-Object {$_.name -eq "protection_policy_state"}).values.values) {(($entity.data | Where-Object {$_.name -eq "protection_policy_state"}).values.values | ConvertFrom-Json).policy_reference.name};
             "protection_domain_name" = ($entity.data | Where-Object {$_.name -eq "protection_domain_name"}).values.values;
         }
+        $myvarBackupInfo = [ordered]@{
+            "vm_name" = ($entity.data | Where-Object {$_.name -eq "vm_name"}).values.values;
+            "categories" = ($entity.data | Where-Object {$_.name -eq "categories"}).values.values;
+        }
         #store the results for this entity in our overall result variable
         if ($myvarVmInfo.name) {$myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null}
+        if ($backup) {
+            ForEach ($category in $myvarBackupInfo.categories) {
+                $myvarBackupEntry = [ordered]@{
+                    "vm_name" = $myvarBackupInfo.vm_name;
+                    "category_name" = $category.split(":")[0];
+                    "category_value" = $category.split(":")[1];
+                }
+                if ($myvarBackupInfo.vm_name) {$myvarBackupResults.Add((New-Object PSObject -Property $myvarBackupEntry)) | Out-Null}
+            }
+        }
     }
 #endregion
 
 
 #* step 4: export results
-Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")PcVmCategories.csv" -ForegroundColor Green
-$myvarVmResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+"PcVmCategories.csv")
-
+Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$($prismcentral)_PcVmCategories.csv" -ForegroundColor Green
+$myvarVmResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($prismcentral)+"_PcVmCategories.csv")
+if ($backup) {
+    Write-Host "$(Get-Date) [INFO] Also exporting backup results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$($prismcentral)_categories_backup.csv" -ForegroundColor Green
+    $myvarBackupResults | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($prismcentral)+"_categories_backup.csv")
+}
 #endregion
 
 #region cleanup

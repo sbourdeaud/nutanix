@@ -17,7 +17,7 @@
 .PARAMETER prismCreds
   Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
 .PARAMETER iso
-  Name of the ISO image you want to mount.
+  Name of the ISO image you want to mount (this ISO has to exist in the AHV image library).
 .PARAMETER vms
   Name of the virtual machine(s) you want to mount the iso image on.
 .EXAMPLE
