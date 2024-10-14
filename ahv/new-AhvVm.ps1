@@ -19,6 +19,8 @@
   Name of the AHV cluster you want to create the VM on.
 .PARAMETER vm
   Name of the virtual machine you want to create
+.PARAMETER bootype
+  Specifies the boot type as either legacy or uefi.
 .PARAMETER cpu
   Number of vCPUs to allocate to the VM.
 .PARAMETER ram
@@ -34,7 +36,7 @@
 .PARAMETER cust
   Name of the guest OS customization file you want to inject (optional; use cloud-init.yaml for linux and unattend.xml for windows).
 .PARAMETER ostype
-  Specify either linux or windows (required with -cust)
+  Specify either linux or windows (required with -cust). Defaults to uefi.
 .PARAMETER csv
   Specifies a csv file containing a list of vms to create. It must contain the following columns (fields marked with * must have a value defined): cluster*,vm*,cpu*,ram*,image,disk,net*,cust,ostype,storage_containers,mount_iso
   Note that you must specify a value for disk (which can be itself a comma separated list) if you do not specify an image, and that you must specify an ostype if you specify cust.  You can specify where each disk will be created with storage_containers, and if you wish to mount an iso image in the cdrom drive, you can specifiy the iso image name with mount_iso.
@@ -47,7 +49,7 @@ Connect to a Nutanix Prism Central VM of your choice and create all the VMs defi
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 26th 2021
+  Revision: October 14th 2024
 #>
 
 #todo: add ability to specify image to mount on cdrom
@@ -72,6 +74,7 @@ Connect to a Nutanix Prism Central VM of your choice and create all the VMs defi
         [parameter(mandatory = $false)] [array]$net,
         [parameter(mandatory = $false)] [string]$cust,
         [parameter(mandatory = $false)] [ValidateSet('linux','windows')] [string]$ostype,
+        [parameter(mandatory = $false)] [ValidateSet('legacy','uefi')] [string]$bootype,
         [parameter(mandatory = $false)] [int]$qty,
         [parameter(mandatory = $false)] [string]$csv
     )
@@ -777,7 +780,8 @@ Date       By   Updates (newest updates at the top)
 
     if (!$csv)
     {#no csv file was specified, so let's make sure we have what we need before we proceed
-        if (!$image -and !$disk) {Throw "$(Get-Date) [ERROR] You must specify either an image name (with -image) or a disk size (with -disk)!"}
+        if (!$image -and !$disk) {Throw "$(Get-Date) [ERROR] You must specify either an image name (with -image) with a disk size or a disk size (with -disk)!"}
+        if (!$disk) {Throw "$(Get-Date) [ERROR] You must specify a disk size (with -disk)!"}
         if (!$cluster) {$cluster = read-host "Enter the Prism Element cluster name as it appears in Prism Element where you want to create the vm(s)"}
         if (!$vm) {$vm = read-host "Enter the name of the virtual machine you want to create"}
         if (!$cpu) {$cpu = read-host "Enter the number of desired CPU sockets for the vm"}
@@ -811,6 +815,7 @@ Date       By   Updates (newest updates at the top)
 
     #defaults vm quantity to 1
     if (!$qty) {$qty=1}
+    if (!$bootype) {$bootype = "uefi"}
     $user_specified_qty = $qty
 #endregion
 
@@ -1316,60 +1321,64 @@ Date       By   Updates (newest updates at the top)
                             }
                             device_type = "DISK"
                         }
+                        disk_size_mib = ([int]($disk -Split ",")[0] * 1024)
                     }
                     $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
                     
                     ForEach ($drive in ($myvar_vm_spec.disk -Split ",")) 
                     {
-                        if ($myvar_vm_spec.storage_containers)
-                        {#we have specified storage containers
-                            if (($myvar_vm_spec.storage_containers -Split ",").count -ne ($myvar_vm_spec.disk -Split ",").count)
-                            {#the numbers of disks and specified storage containers don't match
-                                Throw "$(get-date) [ERROR] The number of disks ($(($myvar_vm_spec.disk -Split ",").count)) and specified storage containers ($(($myvar_vm_spec.storage_containers -Split ",").count)) do not match for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a storage container for each disk, or none at all."
-                            }
-                            else 
-                            {#specify the storage container name and uuid in the storage config for each disk
-                                #find the storage container uuid
-                                $storage_container_uuid = ($myvar_container_list | Where-Object {$_.container_name -eq (($myvar_vm_spec.storage_containers -Split ",")[$i])}).container_uuid
-                                if ($storage_container_uuid)
-                                {#we found the storage container uuid
-                                    $disk_device = @{
-                                        storage_config = @{
-                                            storage_container_reference = @{
-                                              uuid = $storage_container_uuid
-                                              kind = "storage_container"
-                                            }
-                                        }
-                                        device_properties = @{
-                                            disk_address = @{
-                                                device_index = (++$i)
-                                                adapter_type = "SCSI"
-                                            }
-                                            device_type = "DISK"
-                                        }
-                                        disk_size_mib = $([int]$drive * 1024)
-                                    }
-                                    $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                        if ($image -and ($disk.Length -gt 1))
+                        {#we have speficied multiple disks besides the image
+                            if ($myvar_vm_spec.storage_containers)
+                            {#we have specified storage containers
+                                if (($myvar_vm_spec.storage_containers -Split ",").count -ne ($myvar_vm_spec.disk -Split ",").count)
+                                {#the numbers of disks and specified storage containers don't match
+                                    Throw "$(get-date) [ERROR] The number of disks ($(($myvar_vm_spec.disk -Split ",").count)) and specified storage containers ($(($myvar_vm_spec.storage_containers -Split ",").count)) do not match for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a storage container for each disk, or none at all."
                                 }
                                 else 
-                                {#we couldn't find the storage container uuid
-                                    Throw "$(get-date) [ERROR] Could not find the container $(($myvar_vm_spec.storage_containers -Split ",")[$i]) for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a valid storage container, or none at all."
-                                }
-                            }
-                        }
-                        else 
-                        {#we don't have a storage container specified (disks will be provisioned in default container on the cluster)
-                            $disk_device = @{
-                                device_properties = @{
-                                    disk_address = @{
-                                        device_index = (++$i)
-                                        adapter_type = "SCSI"
+                                {#specify the storage container name and uuid in the storage config for each disk
+                                    #find the storage container uuid
+                                    $storage_container_uuid = ($myvar_container_list | Where-Object {$_.container_name -eq (($myvar_vm_spec.storage_containers -Split ",")[$i])}).container_uuid
+                                    if ($storage_container_uuid)
+                                    {#we found the storage container uuid
+                                        $disk_device = @{
+                                            storage_config = @{
+                                                storage_container_reference = @{
+                                                uuid = $storage_container_uuid
+                                                kind = "storage_container"
+                                                }
+                                            }
+                                            device_properties = @{
+                                                disk_address = @{
+                                                    device_index = (++$i)
+                                                    adapter_type = "SCSI"
+                                                }
+                                                device_type = "DISK"
+                                            }
+                                            disk_size_mib = $([int]$drive * 1024)
+                                        }
+                                        $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
                                     }
-                                    device_type = "DISK"
+                                    else 
+                                    {#we couldn't find the storage container uuid
+                                        Throw "$(get-date) [ERROR] Could not find the container $(($myvar_vm_spec.storage_containers -Split ",")[$i]) for VM $($myvar_vm_spec.vm). Please make sure that you specifiy a valid storage container, or none at all."
+                                    }
                                 }
-                                disk_size_mib = $([int]$drive * 1024)
                             }
-                            $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                            else 
+                            {#we don't have a storage container specified (disks will be provisioned in default container on the cluster)
+                                $disk_device = @{
+                                    device_properties = @{
+                                        disk_address = @{
+                                            device_index = (++$i)
+                                            adapter_type = "SCSI"
+                                        }
+                                        device_type = "DISK"
+                                    }
+                                    disk_size_mib = $([int]$drive * 1024)
+                                }
+                                $disk_device_list.Add((New-Object PSObject -Property $disk_device)) | Out-Null
+                            }
                         }
                     }
                 }
@@ -1479,6 +1488,7 @@ Date       By   Updates (newest updates at the top)
                                             adapter_type = "SCSI"
                                         }
                                     }
+                                    boot_type = $bootype.ToUpper()
                                 }
                                 disk_list = @(
                                     $myvar_cdrom_device
@@ -1541,6 +1551,7 @@ Date       By   Updates (newest updates at the top)
                                             adapter_type = "SCSI"
                                         }
                                     }
+                                    boot_type = $bootype.ToUpper()
                                 }
                                 disk_list = @(
                                     $myvar_cdrom_device

@@ -18,13 +18,13 @@
                   <Metric>30</Metric>
                </Ipv4Settings>
                <UnicastIpAddresses>
-                  <IpAddress wcm:action="add" wcm:keyValue="1">10.15.193.11/24</IpAddress>
+                  <IpAddress wcm:action="add" wcm:keyValue="1">@@{ipv4_address}@@</IpAddress>
                </UnicastIpAddresses>
                <Routes>
                   <Route wcm:action="add">
                      <Identifier>10</Identifier>
                      <Metric>20</Metric>
-                     <NextHopAddress>10.15.193.1</NextHopAddress>
+                     <NextHopAddress>@@{ipv4_gateway}@@</NextHopAddress>
                      <Prefix>0.0.0.0/0</Prefix>
                   </Route>
                </Routes>
@@ -52,9 +52,10 @@
          <Interfaces>
             <Interface wcm:action="add">
                <Identifier>Ethernet</Identifier>
-               <DNSDomain>nutanix.com</DNSDomain>
+               <DNSDomain>@@{dns_suffix}@@</DNSDomain>
                <DNSServerSearchOrder>
-                  <IpAddress wcm:action="add" wcm:keyValue="1">8.8.8.8</IpAddress>
+                  <IpAddress wcm:action="add" wcm:keyValue="1">@@{dns_server1}@@</IpAddress>
+                  <IpAddress wcm:action="add" wcm:keyValue="2">@@{dns_server2}@@</IpAddress>
                </DNSServerSearchOrder>
                <EnableAdapterDomainNameRegistration>true</EnableAdapterDomainNameRegistration>
                <DisableDynamicUpdate>true</DisableDynamicUpdate>
@@ -97,10 +98,10 @@
         </component>
         <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
             <InputLocale>@@{keyboard_layout}@@</InputLocale>
-            <SystemLocale>en-US</SystemLocale>
+            <SystemLocale>@@{system_locale}@@</SystemLocale>
             <UILanguageFallback>en-us</UILanguageFallback>
-            <UILanguage>en-US</UILanguage>
-            <UserLocale>en-US</UserLocale>
+            <UILanguage>@@{ui_language}@@</UILanguage>
+            <UserLocale>@@{user_locale}@@</UserLocale>
         </component>
     </settings>
 </unattend>
