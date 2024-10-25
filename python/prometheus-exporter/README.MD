@@ -21,18 +21,18 @@ From the **build** directory, run (if using podman, rename `dockerfile` to `Dock
  # Building a demo environment
 
  1. Build and run the container as documented above.
- 2. Now deploy an influxdb container:
-        `podman pull influxdb`
-        `podman volume create influxdb-volume`
-        `podman run --name influxdb -d -p 8086:8086 --volume influxdb-volume:/var/lib/influxdb2 influxdb:latest`
-        `podman exec influxdb influx setup --bucket MyPrism --org Nutanix --password PASSWORD --username USERNAME --force`
- 3. Deploy a grafana container:
-        `podman pull grafana/grafana`
-        `podman volume create grafana-volume`
-        `podman run --name grafana -d -p 3000:3000 --volume grafana-volume:/var/lib/grafana grafana:latest`
+ 2. Now deploy an influxdb container:  
+       &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman pull influxdb`  
+       &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman volume create influxdb-volume`  
+       &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman run --name influxdb -d -p 8086:8086 --volume influxdb-volume:/var/lib/influxdb2 influxdb:latest`  
+       &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman exec influxdb influx setup --bucket MyPrism --org Nutanix --password PASSWORD --username USERNAME --force`  
+ 3. Deploy a grafana container:  
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman pull grafana/grafana`  
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman volume create grafana-volume`  
+        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`podman run --name grafana -d -p 3000:3000 --volume grafana-volume:/var/lib/grafana grafana:latest`  
  4. Connect to influxdb [http://localhost:8086](http://localhost:8086) and add a scraper pointing to http://<your_ip_address>:8000 to feed data in the MyPrism bucket.  You can check after 10 seconds that your bucket is receving data.  Also create an API token called grafana and copy the API key to your clipboard.  Also grab the id of the MyPrism bucket from the influxdb UI.
  5. Connect to Grafana [http://localhost:3000](http://localhost:3000) and select your influxdb as a data source. Use your IP address in the target URL on port 8086, paste the database id in database, and paste the API token in password.  When you test the connection, if you do not get any measurements, try running the following commands in the influxdb container, then reconfigure the data source in grafana using Flux instead of InfluxQL as the query language:
         `influx v1 dbrp create --bucket-id <bucket_id_for_MyPrism> --org Nutanix --db MyPrism --rp 1week --default`
         `influx v1 auth create --description grafana --org-id <your_org_id> --password <some_password> --skip-verify --username grafana --read-bucket <MyPrism_bucket_id>`
   If you end up having to use the Flux query language, you can easily visualize data/metrics in the InfluxDB bucket explorer then look at the flux syntax in the script editor and copy/paste that code in Grafana.
- 6. Build your dashboard
+ 1. Build your dashboard
