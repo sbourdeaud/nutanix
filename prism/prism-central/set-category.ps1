@@ -21,6 +21,8 @@
   Removes the specified category:value to vm.
 .PARAMETER async
   Switch to specify that you don't want to wait for the update tasks to complete.  When categories are updated for vms in Prism Central, the API will return with success and a task uuid.  That task may still fail for whatever reason, but if you're doing mass updates, it may also cause significant processing delays to wait for each task to return status.
+.PARAMETER alwayscreate
+  Switch to specify that is the assigned category or value does not exist on the target Prism Central, it should be created.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
@@ -56,7 +58,8 @@ Adds the category mycategory:myvalue to myvm.
       [parameter(mandatory = $false)] [string]$value,
       [parameter(mandatory = $false)] [switch]$add,
       [parameter(mandatory = $false)] [switch]$remove,
-      [parameter(mandatory = $false)] [switch]$async
+      [parameter(mandatory = $false)] [switch]$async,
+      [parameter(mandatory = $false)] [switch]$alwayscreate
   )
 #endregion
 
@@ -145,8 +148,9 @@ process
     catch {
         $saved_error = $_.Exception.Message
         # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        Throw "$(get-date) [ERROR] $saved_error"
+        if ($payload) {Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green}
+        Write-Host "$(get-date) [ERROR] $saved_error" -ForegroundColor Red
+        throw
     }
     finally {
         #add any last words here; this gets processed no matter what
@@ -793,7 +797,6 @@ Date       By   Updates (newest updates at the top)
 
     #! step 1: check category value pairs exists
     #region check category:value pair exists
-
       #region prepare api call
         $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
         $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
@@ -809,9 +812,64 @@ Date       By   Updates (newest updates at the top)
         }
         catch {
           $saved_error = $_.Exception.Message
-          if ($_.Exception.Response.StatusCode.value__ -eq 404) {
+          if ($_.Exception.Response.StatusCode -contains "NotFound") {
               Write-Host "$(get-date) [WARNING] The category:value pair specified ($($category):$($value)) does not exist in Prism Central $prism" -ForegroundColor Yellow
-              Continue
+              if ($alwayscreate) {
+                #region check if category exists, if not create it
+                  #* retrieve categories
+                    $api_server_endpoint = "/api/nutanix/v3/categories/list"
+                    $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+                        $api_server_endpoint
+                    $method = "POST"
+                    $content = @{
+                      kind = "category";
+                      length = 500
+                    }
+                    $payload = (ConvertTo-Json $content -Depth 4)
+                    $response = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                    $categories = $response.entities
+                  #* create category if required
+                    if ($category -notin $categories.name) {
+                      $api_server_endpoint = "/api/nutanix/v3/categories/{0}" -f $category
+                      $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+                          $api_server_endpoint
+                      $method = "PUT"
+                      $content = @{
+                        name = $category
+                      }
+                      $payload = (ConvertTo-Json $content -Depth 4)
+                      try {
+                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        Write-Host "$(get-date) [SUCCESS] Created category key $($category)." -ForegroundColor Cyan
+                      }
+                      catch {
+                        Write-Host "$(get-date) [WARNING] Could not create category key $($category)!" -ForegroundColor Yellow
+                      }
+                    }
+                    else {Write-Host "$(get-date) [INFO] The category key $($category) already exists." -ForegroundColor Green}
+                #endregion check if category exists, if not create it
+
+                #region: create category:value
+                  $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
+                  $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+                      $api_server_endpoint
+                  $method = "PUT"
+                  $content = @{
+                    value = $value
+                  }
+                  $payload = (ConvertTo-Json $content -Depth 4)
+                  try {
+                    $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                    Write-Host "$(get-date) [SUCCESS] Created value $($value) in category key $($category)." -ForegroundColor Cyan
+                  }
+                  catch {
+                    Write-Host "$(get-date) [WARNING] Could not create value $($value) in category key $($category)!" -ForegroundColor Yellow
+                  }
+                #endregion create category:value
+              }
+              else {
+                continue
+              }
           }
           else {
               Write-Host "$(get-date) [WARNING] $saved_error" -ForegroundColor Yellow
