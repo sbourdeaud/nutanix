@@ -1,0 +1,9 @@
+getpass
+pandas
+datapane
+keyring
+ntnx_vmm_py_client
+ntnx_clustermgmt_py_client
+ntnx_networking_py_client
+ntnx_prism_py_client
+ntnx_iam_py_client
