@@ -9,7 +9,7 @@ COPY . .
 
 CMD [ "python", "./nutanix-prometheus-exporter.py" ]
 
-#used to specify Prism Element IP address or FQDN (assuming FADN can be resolved inside the container)
+#used to specify Prism Element IP address or FQDN (assuming FQDN can be resolved inside the container)
 ENV PRISM='127.0.0.1'
 #used to specify the username to access Prism (viewer is the least privilege required) 
 ENV PRISM_USERNAME='admin'
@@ -32,3 +32,5 @@ ENV VM_LIST=''
 ENV CLUSTER_METRICS='True'
 #used to determine if storage containers metrics will be generated; set it to null/empy value if you don't want to collect storage containers metrics.
 ENV STORAGE_CONTAINERS_METRICS='True'
+#used to determine if IPMI metrics will be generated; set it to null/empy value if you don't want to collect IPMI metrics.
+ENV IPMI_METRICS='True'

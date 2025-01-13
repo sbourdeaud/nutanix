@@ -131,6 +131,7 @@ dmypy.json
 .vscode
 *.html
 *.log
+build/.secrets*
 .secrets*
 *.xlsx
 .DS_Store

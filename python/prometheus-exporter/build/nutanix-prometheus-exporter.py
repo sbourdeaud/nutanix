@@ -8,6 +8,7 @@ class bcolors:
     FAIL = '\033[91m' #RED
     RESET = '\033[0m' #RESET COLOR   
 
+
 def process_request(url, method, user, password, headers, payload=None, secure=False):
     """
     Processes a web request and handles result appropriately with retries.
@@ -131,6 +132,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         ))
         exit(response.status_code)
 
+
 def prism_get_cluster(api_server,username,secret,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /clusters.
 
@@ -181,6 +183,7 @@ def prism_get_cluster(api_server,username,secret,secure=False):
             indent=4
         ))
         raise
+
 
 def prism_get_vm(vm_name,api_server,username,secret,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /vms using a vm name as a filter criteria.
@@ -233,6 +236,7 @@ def prism_get_vm(vm_name,api_server,username,secret,secure=False):
         ))
         raise
 
+
 def prism_get_storage_containers(api_server,username,secret,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /storage_containers.
 
@@ -251,7 +255,7 @@ def prism_get_storage_containers(api_server,username,secret,secure=False):
     'Accept': 'application/json'
     }
     api_server_port = int(os.getenv("APP_PORT", "9440"))
-    api_server_endpoint = f"/PrismGateway/services/rest/v2.0/storage_containers/"
+    api_server_endpoint = "/PrismGateway/services/rest/v2.0/storage_containers/"
     url = "https://{}:{}{}".format(
         api_server,
         api_server_port,
@@ -283,12 +287,113 @@ def prism_get_storage_containers(api_server,username,secret,secure=False):
         ))
         raise
 
+
+def prism_get_hosts(api_server,username,secret,secure=False):
+    """Retrieves data from the Prism Element v2 REST API endpoint /hosts.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        
+    Returns:
+        Hosts details as hosts_details
+    """
+    
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = int(os.getenv("APP_PORT", "9440"))
+    api_server_endpoint = "/PrismGateway/services/rest/v2.0/hosts/"
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    #endregion
+    
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
+    resp = process_request(url,method,username,secret,headers,secure=secure)
+
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        hosts_details = json_resp['entities']
+        return hosts_details
+    else:
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
+        print(json.dumps(
+            json.loads(response.content),
+            indent=4
+        ))
+        raise
+
+
+def ipmi_get_powercontrol(api_server,secret,username='ADMIN',secure=False):
+    """Retrieves data from the IPMI RedFisk REST API endpoint /PowerControl.
+
+    Args:
+        api_server: The IP or FQDN of the IPMI.
+        username: The IPMI user name (defaults to ADMIN).
+        secret: The IPMI user name password.
+        
+    Returns:
+        PowerControl metrics object as power_control
+    """
+    
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_endpoint = "/redfish/v1/Chassis/1/Power"
+    url = "https://{}{}".format(
+        api_server,
+        api_server_endpoint
+    )
+    method = "GET"
+    #endregion
+    
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
+    resp = process_request(url,method,username,secret,headers,secure=secure)
+
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        power_control = json_resp['PowerControl'][0]
+        return power_control
+    else:
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
+        print(json.dumps(
+            json.loads(response.content),
+            indent=4
+        ))
+        raise
+
+
 class NutanixMetrics:
     """
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
     """
-    def __init__(self, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True):
+    def __init__(self, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True):
         self.app_port = app_port
         self.polling_interval_seconds = polling_interval_seconds
         self.prism = prism
@@ -298,6 +403,7 @@ class NutanixMetrics:
         self.vm_list = vm_list
         self.cluster_metrics = cluster_metrics
         self.storage_containers_metrics = storage_containers_metrics
+        self.ipmi_metrics = ipmi_metrics
         
         if self.cluster_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for clusters...{bcolors.RESET}")
@@ -352,6 +458,20 @@ class NutanixMetrics:
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['storage_container']))
+        
+        if self.ipmi_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for IPMI adapters...{bcolors.RESET}")
+            key_string = "Nutanix_power_consumption_power_consumed_watts"
+            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+            key_string = "Nutanix_power_consumption_min_consumed_watts"
+            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+            key_string = "Nutanix_power_consumption_max_consumed_watts"
+            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+            key_string = "Nutanix_power_consumption_average_consumed_watts"
+            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+            key_string = "Nutanix_power_consumption_capacity_watts"
+            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+            
             
     def run_metrics_loop(self):
         """Metrics fetching loop"""
@@ -421,6 +541,26 @@ class NutanixMetrics:
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(storage_container=container['name']).set(value)
+                    
+        if self.ipmi_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{bcolors.RESET}")
+            hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+            for node in hosts_details:
+                node_name = node['name']
+                node_name = node_name.replace(".","_")
+                node_name = node_name.replace("-","_")
+                print(node_name)
+                power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=node['serial'],username='ADMIN',secure=self.prism_secure)
+                key_string = "Nutanix_power_consumption_power_consumed_watts"
+                self.__dict__[key_string].labels(node=node_name).set(power_control['PowerConsumedWatts'])
+                key_string = "Nutanix_power_consumption_min_consumed_watts"
+                self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MinConsumedWatts'])
+                key_string = "Nutanix_power_consumption_max_consumed_watts"
+                self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
+                key_string = "Nutanix_power_consumption_average_consumed_watts"
+                self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
+                key_string = "Nutanix_power_consumption_capacity_watts"
+                self.__dict__[key_string].labels(node=node_name).set(power_control['PowerCapacityWatts'])
 
 def main():
     """Main entry point"""
@@ -440,7 +580,8 @@ def main():
         prism_secure=bool(os.getenv("PRISM_SECURE", False)),
         vm_list=os.getenv('VM_LIST'),
         cluster_metrics=bool(os.getenv('CLUSTER_METRICS', True)),
-        storage_containers_metrics=bool(os.getenv('STORAGE_CONTAINERS_METRICS', True))
+        storage_containers_metrics=bool(os.getenv('STORAGE_CONTAINERS_METRICS', True)),
+        ipmi_metrics=bool(os.getenv('IPMI_METRICS', True))
     )
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{bcolors.RESET}")
