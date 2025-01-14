@@ -15,6 +15,10 @@ ENV PRISM='127.0.0.1'
 ENV PRISM_USERNAME='admin'
 #used to specify the password for username
 ENV PRISM_SECRET='secret'
+#used to specify the OOBM module (IPMI) username.  Will default to ADMIN is nothing is specified.
+ENV IPMI_USERNAME='admin'
+#used to specify the password for the IPMI user. Will default to using the node serial number if this is left blank.
+ENV IPMI_SECRET=''
 #leave this value to null if you don't want to verify SSL certificates. Set it to anything but null to check SSL certificates.
 ENV PRISM_SECURE=''
 #used to specify the port used by Prism Element API

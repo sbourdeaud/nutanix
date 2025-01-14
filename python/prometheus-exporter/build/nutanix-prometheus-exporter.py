@@ -393,7 +393,9 @@ class NutanixMetrics:
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
     """
-    def __init__(self, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True):
+    def __init__(self, ipmi_username='ADMIN', ipmi_secret=None, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True):
+        self.ipmi_username = ipmi_username
+        self.ipmi_secret = ipmi_secret
         self.app_port = app_port
         self.polling_interval_seconds = polling_interval_seconds
         self.prism = prism
@@ -546,11 +548,24 @@ class NutanixMetrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{bcolors.RESET}")
             hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
             for node in hosts_details:
+                if self.ipmi_username is not None:
+                    ipmi_username = self.ipmi_username
+                else:
+                    ipmi_username = 'ADMIN'
+                if self.ipmi_secret is not None:
+                    ipmi_secret = self.ipmi_secret
+                else:
+                    ipmi_secret = node['serial']
+                    
                 node_name = node['name']
                 node_name = node_name.replace(".","_")
                 node_name = node_name.replace("-","_")
+                
                 print(node_name)
-                power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=node['serial'],username='ADMIN',secure=self.prism_secure)
+                print(ipmi_username)
+                print(ipmi_secret)
+                
+                power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
                 key_string = "Nutanix_power_consumption_power_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerConsumedWatts'])
                 key_string = "Nutanix_power_consumption_min_consumed_watts"
@@ -578,6 +593,8 @@ def main():
         user = os.getenv('PRISM_USERNAME'),
         pwd = os.getenv('PRISM_SECRET'),
         prism_secure=bool(os.getenv("PRISM_SECURE", False)),
+        ipmi_username = os.getenv('IPMI_USERNAME', default='ADMIN'),
+        ipmi_secret = os.getenv('IPMI_SECRET', default=None),
         vm_list=os.getenv('VM_LIST'),
         cluster_metrics=bool(os.getenv('CLUSTER_METRICS', True)),
         storage_containers_metrics=bool(os.getenv('STORAGE_CONTAINERS_METRICS', True)),
