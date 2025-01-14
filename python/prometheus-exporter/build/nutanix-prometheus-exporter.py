@@ -471,8 +471,6 @@ class NutanixMetrics:
             setattr(self, key_string, Gauge(key_string, key_string, ['node']))
             key_string = "Nutanix_power_consumption_average_consumed_watts"
             setattr(self, key_string, Gauge(key_string, key_string, ['node']))
-            key_string = "Nutanix_power_consumption_capacity_watts"
-            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
             
             
     def run_metrics_loop(self):
@@ -574,8 +572,6 @@ class NutanixMetrics:
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
                 key_string = "Nutanix_power_consumption_average_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
-                key_string = "Nutanix_power_consumption_capacity_watts"
-                self.__dict__[key_string].labels(node=node_name).set(power_control['PowerCapacityWatts'])
 
 def main():
     """Main entry point"""
