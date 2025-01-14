@@ -561,9 +561,9 @@ class NutanixMetrics:
                 node_name = node_name.replace(".","_")
                 node_name = node_name.replace("-","_")
                 
-                print(node_name)
+                """ print(node_name)
                 print(ipmi_username)
-                print(ipmi_secret)
+                print(ipmi_secret) """
                 
                 power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
                 key_string = "Nutanix_power_consumption_power_consumed_watts"
