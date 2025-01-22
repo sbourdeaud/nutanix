@@ -26,6 +26,12 @@ ENV APP_PORT='9440'
 
 #defines the time to wait between each poll
 ENV POLLING_INTERVAL_SECONDS='30'
+#used to control timeout setting when making API calls
+ENV API_REQUESTS_TIMEOUT_SECONDS=30
+#used to control retry setting when making API calls
+ENV API_REQUESTS_RETRIES=5
+#used to control retry sleep setting when making API calls
+ENV API_SLEEP_SECONDS_BETWEEN_RETRIES=15
 #used to specify the container port where the node exporter will publish metrics
 ENV EXPORTER_PORT='8000'
 
@@ -38,3 +44,5 @@ ENV CLUSTER_METRICS='True'
 ENV STORAGE_CONTAINERS_METRICS='True'
 #used to determine if IPMI metrics will be generated; set it to null/empy value if you don't want to collect IPMI metrics.
 ENV IPMI_METRICS='True'
+
+

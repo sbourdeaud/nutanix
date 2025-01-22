@@ -9,7 +9,7 @@ class bcolors:
     RESET = '\033[0m' #RESET COLOR   
 
 
-def process_request(url, method, user, password, headers, payload=None, secure=False):
+def process_request(url, method, user, password, headers, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15, payload=None, secure=False):
     """
     Processes a web request and handles result appropriately with retries.
     Returns the content of the web request if successfull.
@@ -18,9 +18,9 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         payload = json.dumps(payload)
 
     #configuring web request behavior
-    timeout=10
-    retries = 5
-    sleep_between_retries = 5
+    timeout = api_requests_timeout_seconds
+    retries = api_requests_retries
+    sleep_between_retries = api_sleep_seconds_between_retries
 
     while retries > 0:
         try:
@@ -133,7 +133,7 @@ def process_request(url, method, user, password, headers, payload=None, secure=F
         exit(response.status_code)
 
 
-def prism_get_cluster(api_server,username,secret,secure=False):
+def prism_get_cluster(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /clusters.
 
     Args:
@@ -161,7 +161,7 @@ def prism_get_cluster(api_server,username,secret,secure=False):
     #endregion
 
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
-    resp = process_request(url,method,username,secret,headers,secure=secure)
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
     # deal with the result/response
     if resp.ok:
@@ -185,7 +185,7 @@ def prism_get_cluster(api_server,username,secret,secure=False):
         raise
 
 
-def prism_get_vm(vm_name,api_server,username,secret,secure=False):
+def prism_get_vm(vm_name,api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /vms using a vm name as a filter criteria.
 
     Args:
@@ -214,7 +214,7 @@ def prism_get_vm(vm_name,api_server,username,secret,secure=False):
     #endregion
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
-    resp = process_request(url,method,username,secret,headers,secure=secure)
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
     # deal with the result/response
     if resp.ok:
@@ -237,7 +237,7 @@ def prism_get_vm(vm_name,api_server,username,secret,secure=False):
         raise
 
 
-def prism_get_storage_containers(api_server,username,secret,secure=False):
+def prism_get_storage_containers(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /storage_containers.
 
     Args:
@@ -265,7 +265,7 @@ def prism_get_storage_containers(api_server,username,secret,secure=False):
     #endregion
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
-    resp = process_request(url,method,username,secret,headers,secure=secure)
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
     # deal with the result/response
     if resp.ok:
@@ -288,7 +288,7 @@ def prism_get_storage_containers(api_server,username,secret,secure=False):
         raise
 
 
-def prism_get_hosts(api_server,username,secret,secure=False):
+def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /hosts.
 
     Args:
@@ -316,7 +316,7 @@ def prism_get_hosts(api_server,username,secret,secure=False):
     #endregion
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
-    resp = process_request(url,method,username,secret,headers,secure=secure)
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
     # deal with the result/response
     if resp.ok:
@@ -339,7 +339,7 @@ def prism_get_hosts(api_server,username,secret,secure=False):
         raise
 
 
-def ipmi_get_powercontrol(api_server,secret,username='ADMIN',secure=False):
+def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
     """Retrieves data from the IPMI RedFisk REST API endpoint /PowerControl.
 
     Args:
@@ -365,7 +365,7 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',secure=False):
     #endregion
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
-    resp = process_request(url,method,username,secret,headers,secure=secure)
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
     # deal with the result/response
     if resp.ok:
@@ -393,11 +393,14 @@ class NutanixMetrics:
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
     """
-    def __init__(self, ipmi_username='ADMIN', ipmi_secret=None, app_port=9440, polling_interval_seconds=5, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True):
+    def __init__(self, ipmi_username='ADMIN', ipmi_secret=None, app_port=9440, polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True):
         self.ipmi_username = ipmi_username
         self.ipmi_secret = ipmi_secret
         self.app_port = app_port
         self.polling_interval_seconds = polling_interval_seconds
+        self.api_requests_timeout_seconds = api_requests_timeout_seconds
+        self.api_requests_retries = api_requests_retries
+        self.api_sleep_seconds_between_retries = api_sleep_seconds_between_retries,
         self.prism = prism
         self.user = user
         self.pwd = pwd
@@ -410,7 +413,7 @@ class NutanixMetrics:
         if self.cluster_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for clusters...{bcolors.RESET}")
             
-            cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
+            cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             
             for key,value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
@@ -431,7 +434,7 @@ class NutanixMetrics:
         if self.vm_list:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")
             vm_list_array = self.vm_list.split(',')
-            vm_details = prism_get_vm(vm_name=vm_list_array[0],api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
+            vm_details = prism_get_vm(vm_name=vm_list_array[0],api_server=prism,username=user,secret=pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             for key,value in vm_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
                 key_string = f"NutanixVms_stats_{key}"
@@ -447,7 +450,7 @@ class NutanixMetrics:
 
         if self.storage_containers_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for storage containers...{bcolors.RESET}")
-            storage_containers_details = prism_get_storage_containers(api_server=prism,username=user,secret=pwd,secure=self.prism_secure)
+            storage_containers_details = prism_get_storage_containers(api_server=prism,username=user,secret=pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             for key,value in storage_containers_details[0]['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
                 key_string = f"NutanixStorageContainers_stats_{key}"
@@ -481,6 +484,7 @@ class NutanixMetrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Waiting for {self.polling_interval_seconds} seconds...{bcolors.RESET}")
             time.sleep(self.polling_interval_seconds)
 
+
     def fetch(self):
         """
         Get metrics from application and refresh Prometheus metrics with
@@ -489,7 +493,7 @@ class NutanixMetrics:
         
         if self.cluster_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting clusters metrics{bcolors.RESET}")
-            cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+            cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
         
             for key, value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
@@ -511,7 +515,7 @@ class NutanixMetrics:
             vm_list_array = self.vm_list.split(',')
             for vm in vm_list_array:
                 print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting vm metrics for {vm}{bcolors.RESET}")
-                vm_details = prism_get_vm(vm_name=vm,api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+                vm_details = prism_get_vm(vm_name=vm,api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
                 for key, value in vm_details['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
                     key_string = f"NutanixVms_stats_{key}"
@@ -527,7 +531,7 @@ class NutanixMetrics:
                     
         if self.storage_containers_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting storage containers metrics{bcolors.RESET}")
-            storage_containers_details = prism_get_storage_containers(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+            storage_containers_details = prism_get_storage_containers(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             for container in storage_containers_details:
                 for key, value in container['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
@@ -544,7 +548,7 @@ class NutanixMetrics:
                     
         if self.ipmi_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{bcolors.RESET}")
-            hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure)
+            hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             for node in hosts_details:
                 if self.ipmi_username is not None:
                     ipmi_username = self.ipmi_username
@@ -558,11 +562,7 @@ class NutanixMetrics:
                 node_name = node['name']
                 node_name = node_name.replace(".","_")
                 node_name = node_name.replace("-","_")
-                
-                """ print(node_name)
-                print(ipmi_username)
-                print(ipmi_secret) """
-                
+                                
                 power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
                 key_string = "Nutanix_power_consumption_power_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerConsumedWatts'])
@@ -573,11 +573,15 @@ class NutanixMetrics:
                 key_string = "Nutanix_power_consumption_average_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
 
+
 def main():
     """Main entry point"""
 
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Getting environment variables...{bcolors.RESET}")
     polling_interval_seconds = int(os.getenv("POLLING_INTERVAL_SECONDS", "30"))
+    api_requests_timeout_seconds = int(os.getenv("API_REQUESTS_TIMEOUT_SECONDS", "30"))
+    api_requests_retries = int(os.getenv("API_REQUESTS_RETRIES", "5"))
+    api_sleep_seconds_between_retries = int(os.getenv("API_SLEEP_SECONDS_BETWEEN_RETRIES", "15"))
     app_port = int(os.getenv("APP_PORT", "9440"))
     exporter_port = int(os.getenv("EXPORTER_PORT", "8000"))
 
@@ -585,6 +589,9 @@ def main():
     nutanix_metrics = NutanixMetrics(
         app_port=app_port,
         polling_interval_seconds=polling_interval_seconds,
+        api_requests_timeout_seconds=api_requests_timeout_seconds,
+        api_requests_retries=api_requests_retries,
+        api_sleep_seconds_between_retries=api_sleep_seconds_between_retries,
         prism=os.getenv('PRISM'),
         user = os.getenv('PRISM_USERNAME'),
         pwd = os.getenv('PRISM_SECRET'),
