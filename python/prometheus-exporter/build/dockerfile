@@ -45,6 +45,6 @@ ENV STORAGE_CONTAINERS_METRICS='True'
 #used to determine if IPMI metrics will be generated; set it to False value if you don't want to collect IPMI metrics.
 ENV IPMI_METRICS='True'
 #used to determine if Prism Central metrics will be generated; set it to False value if you don't want to collect Prism Central metrics.
-ENV IPMI_METRICS='True'
+ENV PRISM_CENTRAL_METRICS='False'
 
 
