@@ -1,4 +1,4 @@
-import os,requests,json,time
+import os,requests,json,time,urllib3,socket,ipaddress
 from prometheus_client import start_http_server, Gauge, Enum, Info
 from datetime import datetime
 
@@ -388,12 +388,97 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
         raise
 
 
+def prism_get_entities(api_server,secret,entity_type,entity_api_root,username='ADMIN',secure=False,print_f=True,filter=None,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
+
+    """Retrieve the list of entities from Prism Central.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        entity_type: kind (type) of entity as referenced in the entity json object (exp: project)
+        entity_api_root: v3 apis root for this entity type. for example. for projects the list api is ".../api/nutanix/v3/projects/list".
+                         the entity api root here is "projects"
+        secure: boolean to verify or not the api server's certificate (True/False) 
+        print_f: True/False. if False the function does not print traces to the stdout, as long as there are no errors
+        filter: filter to be applied to the search
+        
+    Returns:
+        An array of entities (entities part of the json response).
+    """
+
+    entities = []
+    #region prepare the api call
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/api/nutanix/v3/{}/list".format(entity_api_root)
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "POST"
+    length = 500
+
+    # Compose the json payload
+    payload = {
+        "kind": entity_type,
+        "offset": 0,
+        "length": length
+    }
+    if filter:
+        payload["filter"] = filter
+    #endregion
+    while True:
+        if print_f:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
+        resp = process_request(url,method,user=username,password=secret,headers=headers,payload=payload,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
+        # deal with the result/response
+        if resp.ok:
+            json_resp = json.loads(resp.content)
+            #json_resp = resp
+            entities.extend(json_resp['entities'])
+            key = 'length'
+            if key in json_resp['metadata']:
+                if json_resp['metadata']['length'] == length:
+                    if print_f:
+                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                    payload = {
+                        "kind": entity_type,
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
+                        "length": length
+                    }
+                else:
+                    if print_f:
+                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                    return entities
+            else:
+                return entities
+        else:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+            if payload is not None:
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
+            print(json.dumps(
+                json.loads(resp.content),
+                indent=4
+            ))
+            raise
+        
+        
 class NutanixMetrics:
     """
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
     """
-    def __init__(self, ipmi_username='ADMIN', ipmi_secret=None, app_port=9440, polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True):
+    def __init__(self, ipmi_username='ADMIN', ipmi_secret=None, app_port=9440, polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True, prism_central_metrics=False):
         self.ipmi_username = ipmi_username
         self.ipmi_secret = ipmi_secret
         self.app_port = app_port
@@ -409,6 +494,7 @@ class NutanixMetrics:
         self.cluster_metrics = cluster_metrics
         self.storage_containers_metrics = storage_containers_metrics
         self.ipmi_metrics = ipmi_metrics
+        self.prism_central_metrics = prism_central_metrics
         
         if self.cluster_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for clusters...{bcolors.RESET}")
@@ -466,14 +552,33 @@ class NutanixMetrics:
         
         if self.ipmi_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for IPMI adapters...{bcolors.RESET}")
-            key_string = "Nutanix_power_consumption_power_consumed_watts"
-            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
-            key_string = "Nutanix_power_consumption_min_consumed_watts"
-            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
-            key_string = "Nutanix_power_consumption_max_consumed_watts"
-            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
-            key_string = "Nutanix_power_consumption_average_consumed_watts"
-            setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+            key_strings = [
+                "Nutanix_power_consumption_power_consumed_watts",
+                "Nutanix_power_consumption_min_consumed_watts",
+                "Nutanix_power_consumption_max_consumed_watts",
+                "Nutanix_power_consumption_average_consumed_watts"
+            ]
+            for key_string in key_strings:
+                setattr(self, key_string, Gauge(key_string, key_string, ['node']))
+        
+        if self.prism_central_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for Prism Central...{bcolors.RESET}")
+            key_strings = [
+                "Nutanix_count_vm",
+                "Nutanix_count_vm_on",
+                "Nutanix_count_vm_off",
+                "Nutanix_count_vcpu",
+                "Nutanix_count_cpu_oversubscription_ratio",
+                "Nutanix_count_vram_mib",
+                "Nutanix_count_vdisk",
+                "Nutanix_count_vdisk_ide",
+                "Nutanix_count_vdisk_sata",
+                "Nutanix_count_vdisk_scsi",
+                "Nutanix_count_vnic",
+                "Nutanix_count_category"
+            ]
+            for key_string in key_strings:
+                setattr(self, key_string, Gauge(key_string, key_string, ['prism_central']))
             
             
     def run_metrics_loop(self):
@@ -573,6 +678,42 @@ class NutanixMetrics:
                 key_string = "Nutanix_power_consumption_average_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
 
+        if self.prism_central_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting Prism Central metrics{bcolors.RESET}")
+            
+            if ipaddress.ip_address(self.prism):
+                try:
+                    prism_central_hostname = socket.gethostbyaddr(self.prism)[0]
+                except:
+                    prism_central_hostname = self.prism
+            else:
+                prism_central_hostname = self.prism
+            
+            vm_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="vm",entity_api_root="vms",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            
+            key_string = "Nutanix_count_vm"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len(vm_details))
+            key_string = "Nutanix_count_vm_on"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['power_state'] == "ON"]))
+            key_string = "Nutanix_count_vm_off"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['power_state'] == "OFF"]))
+            key_string = "Nutanix_count_vcpu"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([(vm['status']['resources']['num_sockets'] * vm['status']['resources']['num_threads_per_core']) for vm in vm_details]))
+            key_string = "Nutanix_count_vram_mib"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([vm['status']['resources']['memory_size_mib'] for vm in vm_details]))
+            key_string = "Nutanix_count_vdisk"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if vdisk['device_properties']['device_type'] == 'DISK']) for vm in vm_details]))
+            key_string = "Nutanix_count_vdisk_ide"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'IDE')]) for vm in vm_details]))
+            key_string = "Nutanix_count_vdisk_sata"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'SATA')]) for vm in vm_details]))
+            key_string = "Nutanix_count_vdisk_scsi"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'SCSI')]) for vm in vm_details]))
+            key_string = "Nutanix_count_vnic"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vnic for vnic in vm['status']['resources']['nic_list']]) for vm in vm_details]))
+            key_string = "Nutanix_count_category"
+            key_string = "Nutanix_count_cpu_oversubscription_ratio"
+            
 
 def main():
     """Main entry point"""
@@ -584,6 +725,38 @@ def main():
     api_sleep_seconds_between_retries = int(os.getenv("API_SLEEP_SECONDS_BETWEEN_RETRIES", "15"))
     app_port = int(os.getenv("APP_PORT", "9440"))
     exporter_port = int(os.getenv("EXPORTER_PORT", "8000"))
+    
+    cluster_metrics_env = os.getenv('CLUSTER_METRICS',default='True')
+    if cluster_metrics_env is not None:
+        cluster_metrics = cluster_metrics_env.lower() in ("true", "1", "t", "y", "yes")
+    else:
+        cluster_metrics = False
+    storage_containers_metrics_env = os.getenv('STORAGE_CONTAINERS_METRICS',default='True')
+    if storage_containers_metrics_env is not None:
+        storage_containers_metrics = storage_containers_metrics_env.lower() in ("true", "1", "t", "y", "yes")
+    else:
+        storage_containers_metrics = False
+    ipmi_metrics_env = os.getenv('IPMI_METRICS',default='True')
+    if ipmi_metrics_env is not None:
+        ipmi_metrics = ipmi_metrics_env.lower() in ("true", "1", "t", "y", "yes")
+    else:
+        ipmi_metrics = False
+    prism_central_metrics_env = os.getenv('PRISM_CENTRAL_METRICS',default='False')
+    if prism_central_metrics_env is not None:
+        prism_central_metrics = prism_central_metrics_env.lower() in ("true", "1", "t", "y", "yes")
+    else:
+        prism_central_metrics = False
+        
+    prism_secure_env = os.getenv('PRISM_SECURE',default='False')
+    if prism_secure_env is not None:
+        prism_secure = prism_secure_env.lower() in ("true", "1", "t", "y", "yes")
+        if prism_secure is False:
+            #! suppress warnings about insecure connections
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    else:
+        prism_secure = False
+        #! suppress warnings about insecure connections
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{bcolors.RESET}")
     nutanix_metrics = NutanixMetrics(
@@ -595,13 +768,14 @@ def main():
         prism=os.getenv('PRISM'),
         user = os.getenv('PRISM_USERNAME'),
         pwd = os.getenv('PRISM_SECRET'),
-        prism_secure=bool(os.getenv("PRISM_SECURE", False)),
+        prism_secure=prism_secure,
         ipmi_username = os.getenv('IPMI_USERNAME', default='ADMIN'),
         ipmi_secret = os.getenv('IPMI_SECRET', default=None),
         vm_list=os.getenv('VM_LIST'),
-        cluster_metrics=bool(os.getenv('CLUSTER_METRICS', True)),
-        storage_containers_metrics=bool(os.getenv('STORAGE_CONTAINERS_METRICS', True)),
-        ipmi_metrics=bool(os.getenv('IPMI_METRICS', True))
+        cluster_metrics=cluster_metrics,
+        storage_containers_metrics=storage_containers_metrics,
+        ipmi_metrics=ipmi_metrics,
+        prism_central_metrics=prism_central_metrics
     )
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{bcolors.RESET}")

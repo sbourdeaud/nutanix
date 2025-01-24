@@ -1222,7 +1222,7 @@ def prism_get_entities(api_server,username,passwd,entity_type,entity_api_root,se
                             json_resp['metadata']['total_matches']))
                     payload = {
                         "kind": entity_type,
-                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'] + 1,
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
                         "length": length
                     }
                 else:
