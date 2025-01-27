@@ -439,7 +439,11 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
         raise
 
 
-def prism_get_entities(api_server,secret,entity_type,entity_api_root,username='ADMIN',secure=False,print_f=True,filter=None,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
+def prism_get_entities(api_server,secret,
+                       entity_type,entity_api_root,
+                       username='ADMIN',secure=False,
+                       print_f=True,filter=None,
+                       api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
 
     """Retrieve the list of entities from Prism Central.
 
@@ -483,6 +487,10 @@ def prism_get_entities(api_server,secret,entity_type,entity_api_root,username='A
     if filter:
         payload["filter"] = filter
     #endregion
+    if entity_type == "app":
+        offset = 0
+        entity_count = 0
+        entity_first_group = True
     while True:
         if print_f:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
@@ -492,22 +500,51 @@ def prism_get_entities(api_server,secret,entity_type,entity_api_root,username='A
             json_resp = json.loads(resp.content)
             #json_resp = resp
             entities.extend(json_resp['entities'])
-            key = 'length'
-            if key in json_resp['metadata']:
-                if json_resp['metadata']['length'] == length:
+            
+            if entity_type == "app":
+                print("processing app pagination logic")
+                print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
+                if entity_first_group is True:
+                    entity_count = json_resp['metadata']['total_matches']
+                if length + offset > json_resp['metadata']['total_matches']:
+                    current_entity_count = json_resp['metadata']['total_matches']
+                else:
+                    current_entity_count = length + offset
+                if entity_count > 0:
                     if print_f:
-                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {offset} to {current_entity_count} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                    if length + offset > json_resp['metadata']['total_matches']:
+                        return entities
                     payload = {
                         "kind": entity_type,
-                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
+                        "offset": length + offset,
                         "length": length
                     }
+                    entity_count = entity_count - length
+                    offset = offset + length
+                    entity_first_group = False
                 else:
                     if print_f:
-                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {offset} to {length+offset} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
                     return entities
+                print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
             else:
-                return entities
+                key = 'length'
+                if key in json_resp['metadata']:
+                    if json_resp['metadata']['length'] == length:
+                        if print_f:
+                            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                        payload = {
+                            "kind": entity_type,
+                            "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
+                            "length": length
+                        }
+                    else:
+                        if print_f:
+                            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                        return entities
+                else:
+                    return entities
         else:
             print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
             print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
