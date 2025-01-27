@@ -478,7 +478,12 @@ class NutanixMetrics:
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
     """
-    def __init__(self, ipmi_username='ADMIN', ipmi_secret=None, app_port=9440, polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15, prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, vm_list='', cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True, prism_central_metrics=False):
+    def __init__(self, 
+                 ipmi_username='ADMIN', ipmi_secret=None, 
+                 app_port=9440, polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15, 
+                 prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False, 
+                 vm_list='', 
+                 cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True, prism_central_metrics=False, ncm_ssp_metrics=False):
         self.ipmi_username = ipmi_username
         self.ipmi_secret = ipmi_secret
         self.app_port = app_port
@@ -495,6 +500,7 @@ class NutanixMetrics:
         self.storage_containers_metrics = storage_containers_metrics
         self.ipmi_metrics = ipmi_metrics
         self.prism_central_metrics = prism_central_metrics
+        self.ncm_ssp_metrics = ncm_ssp_metrics
         
         if self.cluster_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for clusters...{bcolors.RESET}")
@@ -580,7 +586,22 @@ class NutanixMetrics:
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['prism_central']))
             
-            
+        if self.ncm_ssp_metrics:        
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for NCM SSP...{bcolors.RESET}")
+            key_strings = [
+                "Nutanix_ncm_count_applications",
+                "Nutanix_ncm_count_applications_provisioning",
+                "Nutanix_ncm_count_applications_running",
+                "Nutanix_ncm_count_applications_error",
+                "Nutanix_ncm_count_applications_deleting",
+                "Nutanix_ncm_count_blueprints",
+                "Nutanix_ncm_count_runbooks",
+                "Nutanix_ncm_count_projects",
+                "Nutanix_ncm_count_marketplace_items"
+            ]
+            for key_string in key_strings:
+                setattr(self, key_string, Gauge(key_string, key_string, ['ncm_ssp']))
+                
     def run_metrics_loop(self):
         """Metrics fetching loop"""
         print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting metrics loop {bcolors.RESET}")
@@ -714,7 +735,52 @@ class NutanixMetrics:
             key_string = "Nutanix_count_category"
             key_string = "Nutanix_count_cpu_oversubscription_ratio"
             
-
+        if self.ncm_ssp_metrics:
+            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP metrics{bcolors.RESET}")
+            
+            if ipaddress.ip_address(self.prism):
+                try:
+                    ncm_ssp_hostname = socket.gethostbyaddr(self.prism)[0]
+                except:
+                    ncm_ssp_hostname = self.prism
+            else:
+                ncm_ssp_hostname = self.prism
+            
+            ncm_applications_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
+                                                          entity_type="app",entity_api_root="apps",
+                                                          api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_projects_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
+                                                      entity_type="project",entity_api_root="projects",
+                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_marketplace_items_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
+                                                      entity_type="marketplace_item",entity_api_root="marketplace_items",
+                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_blueprints_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
+                                                      entity_type="blueprint",entity_api_root="blueprints",
+                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_runbooks_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
+                                                      entity_type="runbook",entity_api_root="runbooks",
+                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            
+            key_string = "Nutanix_ncm_count_applications"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_applications_details))
+            key_string = "Nutanix_ncm_count_applications_provisioning"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "provisioning"]))
+            key_string = "Nutanix_ncm_count_applications_running"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "running"]))
+            key_string = "Nutanix_ncm_count_applications_error"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "error"]))
+            key_string = "Nutanix_ncm_count_applications_deleting"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "deleteing"]))
+            key_string = "Nutanix_ncm_count_blueprints"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_blueprints_details))
+            key_string = "Nutanix_ncm_count_runbooks"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_runbooks_details))
+            key_string = "Nutanix_ncm_count_marketplace_items"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_marketplace_items_details))
+            key_string = "Nutanix_ncm_count_projects"
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_projects_details))
+        
 def main():
     """Main entry point"""
 
@@ -731,21 +797,30 @@ def main():
         cluster_metrics = cluster_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         cluster_metrics = False
+    
     storage_containers_metrics_env = os.getenv('STORAGE_CONTAINERS_METRICS',default='True')
     if storage_containers_metrics_env is not None:
         storage_containers_metrics = storage_containers_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         storage_containers_metrics = False
+    
     ipmi_metrics_env = os.getenv('IPMI_METRICS',default='True')
     if ipmi_metrics_env is not None:
         ipmi_metrics = ipmi_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         ipmi_metrics = False
+    
     prism_central_metrics_env = os.getenv('PRISM_CENTRAL_METRICS',default='False')
     if prism_central_metrics_env is not None:
         prism_central_metrics = prism_central_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         prism_central_metrics = False
+    
+    ncm_ssp_metrics_env = os.getenv('NCM_SSP_METRICS',default='False')
+    if ncm_ssp_metrics_env is not None:
+        ncm_ssp_metrics = ncm_ssp_metrics_env.lower() in ("true", "1", "t", "y", "yes")
+    else:
+        ncm_ssp_metrics = False
         
     prism_secure_env = os.getenv('PRISM_SECURE',default='False')
     if prism_secure_env is not None:
@@ -775,7 +850,8 @@ def main():
         cluster_metrics=cluster_metrics,
         storage_containers_metrics=storage_containers_metrics,
         ipmi_metrics=ipmi_metrics,
-        prism_central_metrics=prism_central_metrics
+        prism_central_metrics=prism_central_metrics,
+        ncm_ssp_metrics=ncm_ssp_metrics
     )
     
     print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{bcolors.RESET}")

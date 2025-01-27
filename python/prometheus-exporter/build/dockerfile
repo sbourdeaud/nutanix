@@ -46,5 +46,7 @@ ENV STORAGE_CONTAINERS_METRICS='True'
 ENV IPMI_METRICS='True'
 #used to determine if Prism Central metrics will be generated; set it to False value if you don't want to collect Prism Central metrics.
 ENV PRISM_CENTRAL_METRICS='False'
+#used to determine if NCM SSP metrics will be generated; set it to False value if you don't want to collect NCM SSP metrics.
+ENV NCM_SSP_METRICS='False'
 
 
