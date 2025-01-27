@@ -337,6 +337,57 @@ def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, 
             indent=4
         ))
         raise
+    
+
+def prism_get_vms(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
+    """Retrieves data from the Prism Element v2 REST API endpoint /hosts.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        
+    Returns:
+        Hosts details as vms_details
+    """
+    
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = int(os.getenv("APP_PORT", "9440"))
+    api_server_endpoint = "/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    #endregion
+    
+    print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
+
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        vms_details = json_resp['entities']
+        return vms_details
+    else:
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
+        print(json.dumps(
+            json.loads(response.content),
+            indent=4
+        ))
+        raise
 
 
 def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
@@ -519,6 +570,20 @@ class NutanixMetrics:
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
+            key_strings = [
+                "NutanixClusters_count_vm",
+                "NutanixClusters_count_vm_on",
+                "NutanixClusters_count_vm_off",
+                "NutanixClusters_count_vcpu",
+                "NutanixClusters_count_vram_mib",
+                "NutanixClusters_count_vdisk",
+                "NutanixClusters_count_vdisk_ide",
+                "NutanixClusters_count_vdisk_sata",
+                "NutanixClusters_count_vdisk_scsi",
+                "NutanixClusters_count_vnic"
+            ]
+            for key_string in key_strings:
+                setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
             
             #self.lts = Enum("is_lts", "AOS Long Term Support", ['cluster'], states=['True', 'False'])
             setattr(self, 'NutanixClusters_info', Info('is_lts', 'Long Term Support AOS true/false', ['cluster']))
@@ -620,6 +685,7 @@ class NutanixMetrics:
         if self.cluster_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting clusters metrics{bcolors.RESET}")
             cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            vm_details = prism_get_vms(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
         
             for key, value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
@@ -634,8 +700,30 @@ class NutanixMetrics:
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
             
+            key_string = "NutanixClusters_count_vm"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vm_details))
+            key_string = "NutanixClusters_count_vm_on"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "on"]))
+            key_string = "NutanixClusters_count_vm_off"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "off"]))
+            key_string = "NutanixClusters_count_vcpu"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in vm_details]))
+            key_string = "NutanixClusters_count_vram_mib"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([vm['memory_mb'] for vm in vm_details]))
+            key_string = "NutanixClusters_count_vdisk"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in vm_details]))
+            key_string = "NutanixClusters_count_vdisk_ide"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in vm_details]))
+            key_string = "NutanixClusters_count_vdisk_sata"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in vm_details]))
+            key_string = "NutanixClusters_count_vdisk_scsi"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in vm_details]))
+            key_string = "NutanixClusters_count_vnic"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len(vm['vm_nics']) for vm in vm_details]))
+            
             #self.lts.labels(cluster=cluster_details['name']).state(str(cluster_details['is_lts']))
-            self.NutanixClusters_info.labels(cluster=cluster_details['name']).info({'is_lts': str(cluster_details['is_lts'])})
+            key_string = "NutanixClusters_info"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).info({'is_lts': str(cluster_details['is_lts'])})
         
         if self.vm_list:
             vm_list_array = self.vm_list.split(',')
