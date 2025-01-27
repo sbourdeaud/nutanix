@@ -421,7 +421,7 @@ def prism_get_entities(api_server,secret,entity_type,entity_api_root,username='A
         api_server_endpoint
     )
     method = "POST"
-    length = 500
+    length = 250
 
     # Compose the json payload
     payload = {
