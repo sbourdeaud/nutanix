@@ -594,7 +594,23 @@ class NutanixMetrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for clusters...{bcolors.RESET}")
             
             cluster_uuid, cluster_details = prism_get_cluster(api_server=prism,username=user,secret=pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             
+            #creating host stats metrics
+            for key,value in hosts_details[0]['stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"NutanixHosts_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                setattr(self, key_string, Gauge(key_string, key_string, ['host']))
+            for key,value in hosts_details[0]['usage_stats'].items():
+                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                key_string = f"NutanixHosts_usage_stats_{key}"
+                key_string = key_string.replace(".","_")
+                key_string = key_string.replace("-","_")
+                setattr(self, key_string, Gauge(key_string, key_string, ['host']))
+            
+            #creating cluster stats metrics
             for key,value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
                 key_string = f"NutanixClusters_stats_{key}"
@@ -607,6 +623,8 @@ class NutanixMetrics:
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
+            
+            #creating cluster counts metrics
             key_strings = [
                 "NutanixClusters_count_vm",
                 "NutanixClusters_count_vm_on",
@@ -622,6 +640,23 @@ class NutanixMetrics:
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
             
+            #creating host counts metrics
+            key_strings = [                
+                "NutanixHosts_count_vm",
+                "NutanixHosts_count_vm_on",
+                "NutanixHosts_count_vm_off",
+                "NutanixHosts_count_vcpu",
+                "NutanixHosts_count_vram_mib",
+                "NutanixHosts_count_vdisk",
+                "NutanixHosts_count_vdisk_ide",
+                "NutanixHosts_count_vdisk_sata",
+                "NutanixHosts_count_vdisk_scsi",
+                "NutanixHosts_count_vnic"
+            ]
+            for key_string in key_strings:
+                setattr(self, key_string, Gauge(key_string, key_string, ['host']))
+            
+            #other misc info based metrics
             #self.lts = Enum("is_lts", "AOS Long Term Support", ['cluster'], states=['True', 'False'])
             setattr(self, 'NutanixClusters_info', Info('is_lts', 'Long Term Support AOS true/false', ['cluster']))
 
@@ -723,7 +758,47 @@ class NutanixMetrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting clusters metrics{bcolors.RESET}")
             cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             vm_details = prism_get_vms(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
-        
+            hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            
+            
+            for host in hosts_details:
+                #populating values for host stats metrics
+                for key, value in host['stats'].items():
+                    #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                    key_string = f"NutanixHosts_stats_{key}"
+                    key_string = key_string.replace(".","_")
+                    key_string = key_string.replace("-","_")
+                    self.__dict__[key_string].labels(host=host['name']).set(value)
+                for key, value in host['usage_stats'].items():
+                    #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                    key_string = f"NutanixHosts_usage_stats_{key}"
+                    key_string = key_string.replace(".","_")
+                    key_string = key_string.replace("-","_")
+                    self.__dict__[key_string].labels(host=host['name']).set(value)
+                #populating values for host count metrics
+                host_vms_list = [vm for vm in vm_details if vm['host_uuid'] == host['uuid']]
+                key_string = "NutanixHosts_count_vm"
+                self.__dict__[key_string].labels(host=host['name']).set(len(host_vms_list))
+                key_string = "NutanixHosts_count_vm_on"
+                self.__dict__[key_string].labels(host=host['name']).set(len([vm for vm in host_vms_list if vm['power_state'] == "on"]))
+                key_string = "NutanixHosts_count_vm_off"
+                self.__dict__[key_string].labels(host=host['name']).set(len([vm for vm in host_vms_list if vm['power_state'] == "off"]))
+                key_string = "NutanixHosts_count_vcpu"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in host_vms_list]))
+                key_string = "NutanixHosts_count_vram_mib"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([vm['memory_mb'] for vm in host_vms_list]))
+                key_string = "NutanixHosts_count_vdisk"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in host_vms_list]))
+                key_string = "NutanixHosts_count_vdisk_ide"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in host_vms_list]))
+                key_string = "NutanixHosts_count_vdisk_sata"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in host_vms_list]))
+                key_string = "NutanixHosts_count_vdisk_scsi"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in host_vms_list]))
+                key_string = "NutanixHosts_count_vnic"
+                self.__dict__[key_string].labels(host=host['name']).set(sum([len(vm['vm_nics']) for vm in host_vms_list]))
+                
+            #populating values for cluster stats metrics
             for key, value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
                 key_string = f"NutanixClusters_stats_{key}"
@@ -737,6 +812,7 @@ class NutanixMetrics:
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
             
+            #populating values for cluster count metrics
             key_string = "NutanixClusters_count_vm"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vm_details))
             key_string = "NutanixClusters_count_vm_on"
@@ -758,6 +834,7 @@ class NutanixMetrics:
             key_string = "NutanixClusters_count_vnic"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len(vm['vm_nics']) for vm in vm_details]))
             
+            #populating values for other misc info based metrics
             #self.lts.labels(cluster=cluster_details['name']).state(str(cluster_details['is_lts']))
             key_string = "NutanixClusters_info"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).info({'is_lts': str(cluster_details['is_lts'])})
@@ -799,7 +876,8 @@ class NutanixMetrics:
                     
         if self.ipmi_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{bcolors.RESET}")
-            hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            if not self.cluster_metrics:
+                hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             for node in hosts_details:
                 if self.ipmi_username is not None:
                     ipmi_username = self.ipmi_username
