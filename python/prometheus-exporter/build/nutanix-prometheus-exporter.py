@@ -491,6 +491,7 @@ def prism_get_entities(api_server,secret,
         offset = 0
         entity_count = 0
         entity_first_group = True
+        api_requests_timeout_seconds = 60
     while True:
         if print_f:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
@@ -502,8 +503,8 @@ def prism_get_entities(api_server,secret,
             entities.extend(json_resp['entities'])
             
             if entity_type == "app":
-                print("processing app pagination logic")
-                print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
+                #print("processing app pagination logic")
+                #print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
                 if entity_first_group is True:
                     entity_count = json_resp['metadata']['total_matches']
                 if length + offset > json_resp['metadata']['total_matches']:
@@ -527,7 +528,7 @@ def prism_get_entities(api_server,secret,
                     if print_f:
                         print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {offset} to {length+offset} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
                     return entities
-                print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
+                #print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
             else:
                 key = 'length'
                 if key in json_resp['metadata']:
