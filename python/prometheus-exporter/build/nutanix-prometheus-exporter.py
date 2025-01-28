@@ -644,8 +644,6 @@ class NutanixMetrics:
             #creating host counts metrics
             key_strings = [                
                 "NutanixHosts_count_vm",
-                "NutanixHosts_count_vm_on",
-                "NutanixHosts_count_vm_off",
                 "NutanixHosts_count_vcpu",
                 "NutanixHosts_count_vram_mib",
                 "NutanixHosts_count_vdisk",
@@ -761,6 +759,7 @@ class NutanixMetrics:
             vm_details = prism_get_vms(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             
+            vms_powered_on = [vm for vm in vm_details if vm['power_state'] == "on"]
             
             for host in hosts_details:
                 #populating values for host stats metrics
@@ -777,13 +776,9 @@ class NutanixMetrics:
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(host=host['name']).set(value)
                 #populating values for host count metrics
-                host_vms_list = [vm for vm in vm_details if vm['host_uuid'] == host['uuid']]
+                host_vms_list = [vm for vm in vms_powered_on if vm['host_uuid'] == host['uuid']]
                 key_string = "NutanixHosts_count_vm"
                 self.__dict__[key_string].labels(host=host['name']).set(len(host_vms_list))
-                key_string = "NutanixHosts_count_vm_on"
-                self.__dict__[key_string].labels(host=host['name']).set(len([vm for vm in host_vms_list if vm['power_state'] == "on"]))
-                key_string = "NutanixHosts_count_vm_off"
-                self.__dict__[key_string].labels(host=host['name']).set(len([vm for vm in host_vms_list if vm['power_state'] == "off"]))
                 key_string = "NutanixHosts_count_vcpu"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in host_vms_list]))
                 key_string = "NutanixHosts_count_vram_mib"
