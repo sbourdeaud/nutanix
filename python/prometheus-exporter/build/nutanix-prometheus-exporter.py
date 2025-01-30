@@ -692,6 +692,19 @@ class NutanixMetrics:
             #other misc info based metrics
             #self.lts = Enum("is_lts", "AOS Long Term Support", ['cluster'], states=['True', 'False'])
             setattr(self, 'NutanixClusters_info', Info('is_lts', 'Long Term Support AOS true/false', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('num_nodes', 'Quantity of hardware nodes', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('model_name', 'Hardware model', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('storage_type', 'Mixed or full flash', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('aos_version', 'AOS version', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('is_nsenabled', 'Status of network segmentation', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('encrypted', 'Status of encryption', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('timezone', 'Timezone', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('operation_mode', 'Status of operations', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('enable_shadow_clones', 'Status of shadow clones', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('rf', 'Replication factor', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('enable_rebuild_reservation', 'Status of rebuild reservation', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('fault_tolerance_domain_type', 'Fault tolerance type', ['cluster']))
+            setattr(self, 'NutanixClusters_info', Info('data_in_transit_encryption_dto', 'In transit encryption status', ['cluster']))
 
         if self.vm_list:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")
@@ -867,7 +880,22 @@ class NutanixMetrics:
             #populating values for other misc info based metrics
             #self.lts.labels(cluster=cluster_details['name']).state(str(cluster_details['is_lts']))
             key_string = "NutanixClusters_info"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).info({'is_lts': str(cluster_details['is_lts'])})
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).info({
+                'is_lts': str(cluster_details['is_lts']),
+                'num_nodes': str(cluster_details['num_nodes']),
+                'model_name': str(cluster_details['rackable_units'][0]['model_name']),
+                'storage_type': str(cluster_details['storage_type']),
+                'aos_version': str(cluster_details['version']),
+                'is_nsenabled': str(cluster_details['is_nsenabled']),
+                'encrypted': str(cluster_details['encrypted']),
+                'timezone': str(cluster_details['timezone']),
+                'operation_mode': str(cluster_details['operation_mode']),
+                'enable_shadow_clones': str(cluster_details['enable_shadow_clones']),
+                'rf': str(cluster_details['cluster_redundancy_state']['desired_redundancy_factor']),
+                'enable_rebuild_reservation': str(cluster_details['enable_rebuild_reservation']),
+                'fault_tolerance_domain_type': str(cluster_details['fault_tolerance_domain_type']),
+                'data_in_transit_encryption_dto': str(cluster_details['data_in_transit_encryption_dto']['enabled'])
+            })
         
         if self.vm_list:
             vm_list_array = self.vm_list.split(',')
