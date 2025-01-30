@@ -487,11 +487,7 @@ def prism_get_entities(api_server,secret,
     if filter:
         payload["filter"] = filter
     #endregion
-    if entity_type == "app":
-        offset = 0
-        entity_count = 0
-        entity_first_group = True
-        api_requests_timeout_seconds = 60
+    
     while True:
         if print_f:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{bcolors.RESET}")
@@ -501,51 +497,22 @@ def prism_get_entities(api_server,secret,
             json_resp = json.loads(resp.content)
             #json_resp = resp
             entities.extend(json_resp['entities'])
-            
-            if entity_type == "app":
-                #print("processing app pagination logic")
-                #print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
-                if entity_first_group is True:
-                    entity_count = json_resp['metadata']['total_matches']
-                if length + offset > json_resp['metadata']['total_matches']:
-                    current_entity_count = json_resp['metadata']['total_matches']
-                else:
-                    current_entity_count = length + offset
-                if entity_count > 0:
+            key = 'length'
+            if key in json_resp['metadata']:
+                if json_resp['metadata']['length'] == length:
                     if print_f:
-                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {offset} to {current_entity_count} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
-                    if length + offset > json_resp['metadata']['total_matches']:
-                        return entities
+                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
                     payload = {
                         "kind": entity_type,
-                        "offset": length + offset,
+                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
                         "length": length
                     }
-                    entity_count = entity_count - length
-                    offset = offset + length
-                    entity_first_group = False
                 else:
                     if print_f:
-                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {offset} to {length+offset} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
+                        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
                     return entities
-                #print(f"entity_first_group:{entity_first_group}, entity_count:{entity_count}, length:{length}, offset:{offset}")
             else:
-                key = 'length'
-                if key in json_resp['metadata']:
-                    if json_resp['metadata']['length'] == length:
-                        if print_f:
-                            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
-                        payload = {
-                            "kind": entity_type,
-                            "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
-                            "length": length
-                        }
-                    else:
-                        if print_f:
-                            print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{bcolors.RESET}")
-                        return entities
-                else:
-                    return entities
+                return entities
         else:
             print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
             print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
@@ -560,6 +527,73 @@ def prism_get_entities(api_server,secret,
                 indent=4
             ))
             raise
+        
+
+def prism_get_apps(api_server,secret,
+                       username='ADMIN',secure=False,
+                       print_f=True,filter=None,
+                       api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
+
+    """Retrieve the list of apps from Prism Central/NCM.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        secure: boolean to verify or not the api server's certificate (True/False) 
+        print_f: True/False. if False the function does not print traces to the stdout, as long as there are no errors
+        filter: filter to be applied to the search
+        
+    Returns:
+        json response from groups endpoint.
+    """
+
+    #region prepare the api call
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+    api_server_port = "9440"
+    api_server_endpoint = "/dm/v3/groups"
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "POST"
+
+    # Compose the json payload
+    payload = {
+        "fields":[
+            "app_name","project_name","state","created_on","updated_on"
+        ]
+    }
+    if filter:
+        payload["filter"] = filter
+    #endregion
+    
+    
+    if print_f:
+        print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure} to retrieve NCM Apps with the following filter: {filter}{bcolors.RESET}")
+    resp = process_request(url,method,user=username,password=secret,headers=headers,payload=payload,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        return json_resp
+    else:
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{bcolors.RESET}")
+        print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{bcolors.RESET}")
+        if payload is not None:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{bcolors.RESET}")
+        print(json.dumps(
+            json.loads(resp.content),
+            indent=4
+        ))
+        raise
         
         
 class NutanixMetrics:
@@ -945,9 +979,20 @@ class NutanixMetrics:
             else:
                 ncm_ssp_hostname = self.prism
             
-            ncm_applications_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
-                                                          entity_type="app",entity_api_root="apps",
-                                                          api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_applications = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
+                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_applications_running = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
+                       filter="state==running",
+                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_applications_provisioning = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
+                       filter="state==provisioning",
+                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_applications_error = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
+                       filter="state==error",
+                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_applications_deleting = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
+                       filter="state==deleting",
+                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             ncm_projects_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
                                                       entity_type="project",entity_api_root="projects",
                                                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
@@ -962,15 +1007,15 @@ class NutanixMetrics:
                                                       api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             
             key_string = "Nutanix_ncm_count_applications"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_applications_details))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications['total_filtered_entity_count'])
             key_string = "Nutanix_ncm_count_applications_provisioning"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "provisioning"]))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_provisioning['total_filtered_entity_count'])
             key_string = "Nutanix_ncm_count_applications_running"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "running"]))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_running['total_filtered_entity_count'])
             key_string = "Nutanix_ncm_count_applications_error"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "error"]))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_error['total_filtered_entity_count'])
             key_string = "Nutanix_ncm_count_applications_deleting"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "deleting"]))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_deleting['total_filtered_entity_count'])
             key_string = "Nutanix_ncm_count_blueprints"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_blueprints_details))
             key_string = "Nutanix_ncm_count_runbooks"
