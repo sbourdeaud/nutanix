@@ -970,7 +970,7 @@ class NutanixMetrics:
             key_string = "Nutanix_ncm_count_applications_error"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "error"]))
             key_string = "Nutanix_ncm_count_applications_deleting"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "deleteing"]))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len([app for app in ncm_applications_details if app['status']['state'] == "deleting"]))
             key_string = "Nutanix_ncm_count_blueprints"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_blueprints_details))
             key_string = "Nutanix_ncm_count_runbooks"
