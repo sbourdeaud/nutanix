@@ -220,7 +220,11 @@ def prism_get_vm(vm_name,api_server,username,secret,api_requests_timeout_seconds
     if resp.ok:
         json_resp = json.loads(resp.content)
         vm_details = json_resp['entities']
-        return vm_details[0]
+        if len(vm_details) > 0:
+            return vm_details[0]
+        else:
+            print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] Specified VM {vm_name} does not exist on Prism Element {api_server}...{bcolors.RESET}")
+            exit(1)
     else:
         print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{bcolors.RESET}")
         print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{bcolors.RESET}")
@@ -710,18 +714,22 @@ class NutanixMetrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{bcolors.RESET}")
             vm_list_array = self.vm_list.split(',')
             vm_details = prism_get_vm(vm_name=vm_list_array[0],api_server=prism,username=user,secret=pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
-            for key,value in vm_details['stats'].items():
-                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixVms_stats_{key}"
-                key_string = key_string.replace(".","_")
-                key_string = key_string.replace("-","_")
-                setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
-            for key,value in vm_details['usageStats'].items():
-                #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixVms_usage_stats_{key}"
-                key_string = key_string.replace(".","_")
-                key_string = key_string.replace("-","_")
-                setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
+            if len(vm_details) > 0:
+                for key,value in vm_details['stats'].items():
+                    #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                    key_string = f"NutanixVms_stats_{key}"
+                    key_string = key_string.replace(".","_")
+                    key_string = key_string.replace("-","_")
+                    setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
+                for key,value in vm_details['usageStats'].items():
+                    #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
+                    key_string = f"NutanixVms_usage_stats_{key}"
+                    key_string = key_string.replace(".","_")
+                    key_string = key_string.replace("-","_")
+                    setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
+            else:
+                print(f"{bcolors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] Specified VM {vm_list_array[0]} does not exist on Prism Element {prism}...{bcolors.RESET}")
+                exit(1)
 
         if self.storage_containers_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for storage containers...{bcolors.RESET}")
