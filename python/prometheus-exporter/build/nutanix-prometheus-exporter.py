@@ -1016,6 +1016,7 @@ class NutanixMetrics:
                 ncm_ssp_hostname = self.prism
             
             ncm_applications = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
+                       filter="state==deleting,state==running,state==error,state==provisioning",
                        api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             ncm_applications_running = prism_get_apps(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,print_f=True,
                        filter="state==running",
