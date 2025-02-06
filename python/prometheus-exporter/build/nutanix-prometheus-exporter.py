@@ -444,7 +444,7 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
 
 
 def prism_get_entities(api_server,secret,
-                       entity_type,entity_api_root,
+                       entity_type,entity_api_root,length = 250,
                        username='ADMIN',secure=False,
                        print_f=True,filter=None,
                        api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
@@ -480,7 +480,6 @@ def prism_get_entities(api_server,secret,
         api_server_endpoint
     )
     method = "POST"
-    length = 250
 
     # Compose the json payload
     payload = {
@@ -765,14 +764,18 @@ class NutanixMetrics:
                 "Nutanix_count_vm_on",
                 "Nutanix_count_vm_off",
                 "Nutanix_count_vcpu",
-                "Nutanix_count_cpu_oversubscription_ratio",
                 "Nutanix_count_vram_mib",
                 "Nutanix_count_vdisk",
                 "Nutanix_count_vdisk_ide",
                 "Nutanix_count_vdisk_sata",
                 "Nutanix_count_vdisk_scsi",
                 "Nutanix_count_vnic",
-                "Nutanix_count_category"
+                "Nutanix_count_category",
+                "Nutanix_count_vm_protected",
+                "Nutanix_count_vm_protected_compliant",
+                "Nutanix_count_vm_protected_synced",
+                "Nutanix_count_ngt_installed",
+                "Nutanix_count_ngt_enabled"
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['prism_central']))
@@ -979,7 +982,7 @@ class NutanixMetrics:
             else:
                 prism_central_hostname = self.prism
             
-            vm_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="vm",entity_api_root="vms",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            vm_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="vm",entity_api_root="vms",length=500,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             
             key_string = "Nutanix_count_vm"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len(vm_details))
@@ -1001,8 +1004,23 @@ class NutanixMetrics:
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'SCSI')]) for vm in vm_details]))
             key_string = "Nutanix_count_vnic"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vnic for vnic in vm['status']['resources']['nic_list']]) for vm in vm_details]))
+            
             key_string = "Nutanix_count_category"
-            key_string = "Nutanix_count_cpu_oversubscription_ratio"
+            
+            key_string = "Nutanix_count_vm_protected"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['protection_type'] == "RULE_PROTECTED"]))
+            key_string = "Nutanix_count_vm_protected_synced"
+            protected_vms_list = [vm for vm in vm_details if vm.get('status', {}).get('resources', {}).get('protection_policy_state') is not None]
+            protected_vms_with_status_list = [vm for vm in protected_vms_list if vm.get('status', {}).get('resources', {}).get('protection_policy_state').get('policy_info').get('replication_status') is not None]
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([protected_vm for protected_vm in protected_vms_with_status_list if protected_vm['status']['resources']['protection_policy_state']['policy_info']['replication_status'] == "SYNCED"]))
+            key_string = "Nutanix_count_vm_protected_compliant"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([protected_vm for protected_vm in protected_vms_list if protected_vm['status']['resources']['protection_policy_state']['compliance_status'] == "COMPLIANT"]))
+            
+            ngt_vms_list = [vm for vm in vm_details if vm.get('status', {}).get('resources', {}).get('guest_tools') is not None]
+            key_string = "Nutanix_count_ngt_installed"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([ngt_vm for ngt_vm in ngt_vms_list if ngt_vm['status']['resources']['guest_tools']['nutanix_guest_tools']['ngt_state'] == "INSTALLED"]))
+            key_string = "Nutanix_count_ngt_enabled"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([ngt_vm for ngt_vm in ngt_vms_list if ngt_vm['status']['resources']['guest_tools']['nutanix_guest_tools']['is_reachable'] is True]))
             
         if self.ncm_ssp_metrics:
             print(f"{bcolors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP metrics{bcolors.RESET}")
