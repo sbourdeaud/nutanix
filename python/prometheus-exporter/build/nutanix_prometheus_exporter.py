@@ -501,7 +501,7 @@ class NutanixMetrics:
                 password=self.pwd,
                 entity_type='app',
                 entity_api_root='apps',
-                fiql_filter="_state==running,_state==deleting,_state==error,_state==provisioning;(name!=Infrastructure;name!=Self%20Service)",
+                fiql_filter="(name!=Infrastructure;name!=Self%20Service);_state==running,_state==deleting,_state==error,_state==provisioning",
                 secure=self.prism_secure
             )
 
