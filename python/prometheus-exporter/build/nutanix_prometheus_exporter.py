@@ -546,22 +546,46 @@ class NutanixMetrics:
             )
             
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP projects metrics{PrintColors.RESET}")
-            ncm_projects_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
-                                                      entity_type="project",entity_api_root="projects",
-                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            #ncm_projects_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="project",entity_api_root="projects",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_projects_count = get_total_entities(
+                api_server=self.prism,
+                username=self.user,
+                password=self.pwd,
+                entity_type='project',
+                entity_api_root='projects',
+                secure=self.prism_secure
+            )
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP marketplace metrics{PrintColors.RESET}")
-            ncm_marketplace_items_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
-                                                      entity_type="marketplace_item",entity_api_root="marketplace_items",
-                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            #ncm_marketplace_items_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="marketplace_item",entity_api_root="marketplace_items",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_marketplace_items_count = get_total_entities(
+                api_server=self.prism,
+                username=self.user,
+                password=self.pwd,
+                entity_type='marketplace_item',
+                entity_api_root='marketplace_items',
+                secure=self.prism_secure
+            )
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP blueprints metrics{PrintColors.RESET}")
-            ncm_blueprints_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
-                                                      entity_type="blueprint",entity_api_root="blueprints",
-                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            #ncm_blueprints_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="blueprint",entity_api_root="blueprints",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_blueprints_count = get_total_entities(
+                api_server=self.prism,
+                username=self.user,
+                password=self.pwd,
+                entity_type='blueprint',
+                entity_api_root='blueprints',
+                secure=self.prism_secure
+            )
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP runbooks metrics{PrintColors.RESET}")
-            ncm_runbooks_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,
-                                                      entity_type="runbook",entity_api_root="runbooks",
-                                                      api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
-
+            #ncm_runbooks_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="runbook",entity_api_root="runbooks",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            ncm_runbooks_count = get_total_entities(
+                api_server=self.prism,
+                username=self.user,
+                password=self.pwd,
+                entity_type='runbook',
+                entity_api_root='runbooks',
+                secure=self.prism_secure
+            )
+            
             key_string = "Nutanix_ncm_count_applications"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications)
             key_string = "Nutanix_ncm_count_applications_provisioning"
@@ -573,13 +597,13 @@ class NutanixMetrics:
             key_string = "Nutanix_ncm_count_applications_deleting"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_deleting)
             key_string = "Nutanix_ncm_count_blueprints"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_blueprints_details))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_blueprints_count)
             key_string = "Nutanix_ncm_count_runbooks"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_runbooks_details))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_runbooks_count)
             key_string = "Nutanix_ncm_count_marketplace_items"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_marketplace_items_details))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_marketplace_items_count)
             key_string = "Nutanix_ncm_count_projects"
-            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(len(ncm_projects_details))
+            self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_projects_count)
 #endregion #*CLASS
 
 
