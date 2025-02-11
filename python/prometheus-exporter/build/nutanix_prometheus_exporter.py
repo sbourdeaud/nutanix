@@ -546,7 +546,6 @@ class NutanixMetrics:
             )
             
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP projects metrics{PrintColors.RESET}")
-            #ncm_projects_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="project",entity_api_root="projects",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             ncm_projects_count = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -556,7 +555,6 @@ class NutanixMetrics:
                 secure=self.prism_secure
             )
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP marketplace metrics{PrintColors.RESET}")
-            #ncm_marketplace_items_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="marketplace_item",entity_api_root="marketplace_items",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             ncm_marketplace_items_count = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -566,7 +564,6 @@ class NutanixMetrics:
                 secure=self.prism_secure
             )
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP blueprints metrics{PrintColors.RESET}")
-            #ncm_blueprints_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="blueprint",entity_api_root="blueprints",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             ncm_blueprints_count = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -576,7 +573,6 @@ class NutanixMetrics:
                 secure=self.prism_secure
             )
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP runbooks metrics{PrintColors.RESET}")
-            #ncm_runbooks_details = prism_get_entities(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,entity_type="runbook",entity_api_root="runbooks",api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             ncm_runbooks_count = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -1037,162 +1033,6 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
             print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
             json.loads(response.content),
-            indent=4
-        ))
-        raise
-
-
-def prism_get_entities(api_server,secret,
-                       entity_type,entity_api_root,length = 250,
-                       username='ADMIN',secure=False,
-                       print_f=True,filter=None,
-                       api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
-
-    """Retrieve the list of entities from Prism Central.
-
-    Args:
-        api_server: The IP or FQDN of Prism.
-        username: The Prism user name.
-        secret: The Prism user name password.
-        entity_type: kind (type) of entity as referenced in the entity json object (exp: project)
-        entity_api_root: v3 apis root for this entity type. for example. for projects the list api is ".../api/nutanix/v3/projects/list".
-                         the entity api root here is "projects"
-        secure: boolean to verify or not the api server's certificate (True/False) 
-        print_f: True/False. if False the function does not print traces to the stdout, as long as there are no errors
-        filter: filter to be applied to the search
-        
-    Returns:
-        An array of entities (entities part of the json response).
-    """
-
-    entities = []
-    #region prepare the api call
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
-    api_server_port = "9440"
-    api_server_endpoint = "/api/nutanix/v3/{}/list".format(entity_api_root)
-    url = "https://{}:{}{}".format(
-        api_server,
-        api_server_port,
-        api_server_endpoint
-    )
-    method = "POST"
-
-    # Compose the json payload
-    payload = {
-        "kind": entity_type,
-        "offset": 0,
-        "length": length
-    }
-    if filter:
-        payload["filter"] = filter
-    #endregion
-    
-    while True:
-        if print_f:
-            print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
-        resp = process_request(url,method,user=username,password=secret,headers=headers,payload=payload,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
-        # deal with the result/response
-        if resp.ok:
-            json_resp = json.loads(resp.content)
-            #json_resp = resp
-            entities.extend(json_resp['entities'])
-            key = 'length'
-            if key in json_resp['metadata']:
-                if json_resp['metadata']['length'] == length:
-                    if print_f:
-                        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{PrintColors.RESET}")
-                    payload = {
-                        "kind": entity_type,
-                        "offset": json_resp['metadata']['length'] + json_resp['metadata']['offset'],
-                        "length": length
-                    }
-                else:
-                    if print_f:
-                        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing results from {json_resp['metadata']['offset']} to {json_resp['metadata']['length']+json_resp['metadata']['offset']} out of {json_resp['metadata']['total_matches']}{PrintColors.RESET}")
-                    return entities
-            else:
-                return entities
-        else:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{PrintColors.RESET}")
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{PrintColors.RESET}")
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{PrintColors.RESET}")
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-            if payload is not None:
-                print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
-            print(json.dumps(
-                json.loads(resp.content),
-                indent=4
-            ))
-            raise
-
-
-def prism_get_apps(api_server,secret,
-                       username='ADMIN',secure=False,
-                       print_f=True,filter=None,
-                       api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15):
-
-    """Retrieve the list of apps from Prism Central/NCM.
-
-    Args:
-        api_server: The IP or FQDN of Prism.
-        username: The Prism user name.
-        secret: The Prism user name password.
-        secure: boolean to verify or not the api server's certificate (True/False) 
-        print_f: True/False. if False the function does not print traces to the stdout, as long as there are no errors
-        filter: filter to be applied to the search
-        
-    Returns:
-        json response from groups endpoint.
-    """
-
-    #region prepare the api call
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
-    api_server_port = "9440"
-    api_server_endpoint = "/dm/v3/groups"
-    url = "https://{}:{}{}".format(
-        api_server,
-        api_server_port,
-        api_server_endpoint
-    )
-    method = "POST"
-
-    # Compose the json payload
-    payload = {
-        "fields":[
-            "app_name","project_name","state","created_on","updated_on"
-        ]
-    }
-    if filter:
-        payload["filter"] = filter
-    #endregion
-    
-    
-    if print_f:
-        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure} to retrieve NCM Apps with the following filter: {filter}{PrintColors.RESET}")
-    resp = process_request(url,method,user=username,password=secret,headers=headers,payload=payload,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
-    # deal with the result/response
-    if resp.ok:
-        json_resp = json.loads(resp.content)
-        return json_resp
-    else:
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{PrintColors.RESET}")
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{PrintColors.RESET}")
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{PrintColors.RESET}")
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
-        print(json.dumps(
-            json.loads(resp.content),
             indent=4
         ))
         raise
