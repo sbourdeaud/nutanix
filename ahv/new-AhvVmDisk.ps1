@@ -555,6 +555,7 @@ function Invoke-PrismAPICall
         }
         catch {
             $saved_error = $_.Exception
+            Write-Host "$(Get-Date) [ERROR] $saved_error" -ForegroundColor Red
             $saved_error_message = ($_.ErrorDetails.Message | ConvertFrom-Json).message_list.message
             $resp_return_code = $_.Exception.Response.StatusCode.value__
             # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"

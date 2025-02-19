@@ -1,22 +1,27 @@
-""" gets vm to category list from Prism Central
+""" sets vm(s) to desired power state in Prism Central
 
     Args:
         prism: The IP or FQDN of Prism.
         username: The Prism user name.
+        vm: comma separated list of vm names.
+        csv: csv file with vm names.
+        power_state: desired power state (on, off, guest_shutdown, guest_restart, reset, acpi_shutdown).
         secure: boolean to indicate if certs should be verified.
 
     Returns:
-        csv file.
+        results in console output.
 """
 
 #region #*IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 import getpass
 import argparse
 import datetime
 import requests
 import keyring
 import urllib3
+import pandas
 #endregion #*IMPORT
 
 #region #*FUNCTIONS
@@ -94,13 +99,10 @@ def get_entities_batch(api_server, username, password, offset, entity_type, enti
         return []
 
 
-def main(api_server,username,secret,secure=False):
+def main(api_server,username,secret,target_vms,power_state,secure=False):
     '''description.
         Args:
             api_server: URL string to snipe-it server instance.
-            api_key: String with the API token to use for
-                    authentication with the snipe-it server.
-            exclusion_file: path to the software exclusion json file.
         Returns:
     '''
 
@@ -111,7 +113,7 @@ def main(api_server,username,secret,secure=False):
     length=500
     vm_list=[]
     
-    #* what we're about to do
+    #* fetching number of entities
     print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Getting VMs from {api_server}.{PrintColors.RESET}")
     vm_count = get_total_entities(
         api_server=api_server,
@@ -122,6 +124,7 @@ def main(api_server,username,secret,secure=False):
         secure=secure
     )
 
+    #* fetching entities
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(
             get_entities_batch,
@@ -137,15 +140,39 @@ def main(api_server,username,secret,secure=False):
             vms = future.result()
             vm_list.extend(vms)
 
-    with open(f"{api_server}_vm_categories.csv", "w", encoding='utf-8') as file:
-        file.write("vm_name,category_name,category_value\n")
-    for vm in vm_list:
-        for category in vm['metadata']['categories_mapping'].keys():
-            for value in vm['metadata']['categories_mapping'][category]:
-                #print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] vm_name:{vm['spec']['name']}, category_name:{category}, category_value:{value}.{PrintColors.RESET}")
-                with open(f"{api_server}_vm_categories.csv", "a", encoding='utf-8') as file:
-                    file.write(f"{vm['spec']['name']},{category},{value}\n")
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Wrote results to {api_server}_vm_categories.csv.{PrintColors.RESET}")
+    #* filter list of VMs to process (keeping url and payload)
+    #vms_to_process = [[vm_entity for vm_entity in vm_list if vm_entity['status']['name'] == entity] for entity in target_vms]
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Figuring out which VMs will need processing...{PrintColors.RESET}")
+    vms_to_process=[]
+    for entity in target_vms:
+        for vm_entity in vm_list:
+            if vm_entity['status']['name'] == entity:
+                vms_to_process.append(vm_entity)
+    vm_uuids = [vm_entity['metadata']['uuid'] for vm_entity in vms_to_process]
+    
+    """ batch_list = []
+    for vm_to_process in vms_to_process:
+        vm_uuid = vm_to_process['metadata']['uuid']
+        #vm_url = f'https://{api_server}:9440/api/nutanix/v3/vms/{vm_uuid}/set_power_state'
+        vm_url = f'https://{api_server}:9440/api/nutanix/v3/vms/{vm_uuid}'
+        vm_payload = vm_to_process
+        del vm_payload['status']
+        vm_payload['spec']['resources']['power_state'] = power_state """
+    
+    #* loop to process vms in a batch
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Processing NGT status for {len(vms_to_process)} VMs: {target_vms} with uuids: {vm_uuids}...{PrintColors.RESET}")
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(
+            set_vm_power_state,
+            api_server=api_server,
+            username=username,
+            password=secret,
+            vm_uuid=vm_uuid,
+            cluster_uuid=cluster_uuid,
+            ) for vm_uuid in vm_uuids]
+        for future in as_completed(futures):
+            ngt_actions = future.result()
+    
 #endregion #*FUNCTIONS
 
 #region #*CLASS
@@ -184,8 +211,34 @@ if __name__ == '__main__':
         default=False, 
         help="True of False to control SSL certs verification."
     )
+    parser.add_argument(
+        "-v", 
+        "--vm", 
+        type=str,
+        help="Comma separated list of VM names you want to process."
+    )
+    parser.add_argument(
+        "-ps", 
+        "--power_state", 
+        choices=["on","off","guest_shutdown","guest_restart","reset","acpi_shutdown"],
+        help="Desired power state."
+    )
+    parser.add_argument(
+        "-c", 
+        "--csv", 
+        type=str,
+        help="Path and name of csv file with vm names (header: vm_name and then one vm name per line)."
+    )
     args = parser.parse_args()
 
+    if args.vm:
+        vms = args.vm.split(',')
+    elif args.csv:
+        data=pandas.read_csv(args.csv)
+        vms = data['vm_name'].tolist()
+    else:
+        print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] You must specify at least one vm name or csv file!{PrintColors.RESET}")
+    
     # * check for password (we use keyring python module to access the workstation operating system 
     # * password store in an "ntnx" section)
     print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
@@ -197,4 +250,4 @@ if __name__ == '__main__':
         except Exception as error:
             print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
 
-    main(api_server=args.prism,username=args.username,secret=pwd)
+    main(api_server=args.prism,username=args.username,secret=pwd,target_vms=vms,power_state=args.power_state)

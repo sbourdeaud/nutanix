@@ -22,7 +22,7 @@
 .PARAMETER prefix
   Prefix of Flow rule names on source to consider (this prevents deleting rules that need to exist only on target).
 .PARAMETER securedCalls
-  Use if you want to check SSL certificates with every API call (default if to skip SSL certs checks).
+  Use if you want to check SSL certificates with every API call (default is to skip SSL certs checks).
 .EXAMPLE
 .\Invoke-FlowRuleSync.ps1 -sourcePc pc1.local -targetPc pc2.local -prismCreds myadcreds -action sync -prefix flowPc1
 Synchronize all rules starting with flowPc1 from pc1 to pc2:
@@ -1322,8 +1322,8 @@ Date       By   Updates (newest updates at the top)
     #check if we have all the required PoSH modules
     Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
 
-    Set-PoSHSSLCerts
-    Set-PoshTls
+    #Set-PoSHSSLCerts
+    #Set-PoshTls
 #endregion
 
 

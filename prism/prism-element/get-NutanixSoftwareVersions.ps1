@@ -522,7 +522,7 @@ Date       By   Updates (newest updates at the top)
   #check if we have all the required PoSH modules
   Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
 
-  Set-PoSHSSLCerts
+  #Set-PoSHSSLCerts
   Set-PoshTls
 #endregion
 

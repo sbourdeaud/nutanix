@@ -113,6 +113,8 @@ process
 }
 
 }#end function Write-LogOutput
+
+
 function Invoke-PrismAPICall
 {
 <#
@@ -206,6 +208,7 @@ return $resp
 }    
 }
 
+
 #this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
 function Set-PoshTls
 {
@@ -250,6 +253,7 @@ end
 
 }
 }
+
 
 #this function is used to configure posh to ignore invalid ssl certificates
 function Set-PoSHSSLCerts
@@ -303,6 +307,7 @@ end
 
 }#endend
 }#end function Set-PoSHSSLCerts
+
 
 #this function is used to create saved credentials for the current user
 function Set-CustomCredentials 
@@ -407,6 +412,7 @@ end
 {}
 }
 
+
 #this function is used to retrieve saved credentials for the current user
 function Get-CustomCredentials 
 {
@@ -475,18 +481,20 @@ end
 }
 }
 
+
 function Get-GroupsObjectList
 {#retrieves multiple pages of Prism REST objects using the (undocumented) v3 groups endpoint with the specified attributes
     [CmdletBinding()]
     param 
     (
         [Parameter(mandatory = $true)][string] $prism,
-        [Parameter(mandatory = $true)][string] $attributes
+        [Parameter(mandatory = $true)][string] $attributes,
+        [Parameter(mandatory = $false)][int] $length
     )
 
     begin 
     {
-        if (!$length) {$length = 100} #we may not inherit the $length variable; if that is the case, set it to 100 objects per page
+        if (!$length) {$length = 250} #we may not inherit the $length variable; if that is the case, set it to 250 objects per page
         $total = 0
         $cumulated = 0
         $page_offset = 0 #those are used to keep track of how many objects we have processed
@@ -509,7 +517,8 @@ function Get-GroupsObjectList
                 {
                     @{attribute="$($attribute)"}
                 } 
-            )
+            );
+            filter_criteria="is_cvm==0"
         }
         $payload = (ConvertTo-Json $content -Depth 4) #this is the initial payload at offset 0
     }
@@ -532,6 +541,7 @@ function Get-GroupsObjectList
                 ForEach ($entity in $resp.group_results.entity_results) {                
                     $myvarResults.Add($entity) | Out-Null
                 }
+                #$myvarResults.Add($resp.group_results.entity_results)
                 
                 $page_offset += $length #let's increment our offset
                 #prepare the json payload for the next batch of entities/response
@@ -551,7 +561,8 @@ function Get-GroupsObjectList
                         {
                             @{attribute="$($attribute)"}
                         } 
-                    )
+                    );
+                    filter_criteria="is_cvm==0"
                 }
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
@@ -595,8 +606,8 @@ if ($History) {$HistoryText; exit}
 
 #check PoSH version
 if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
-Set-PoSHSSLCerts
-Set-PoshTls
+#Set-PoSHSSLCerts
+#Set-PoshTls
 #endregion
 
 
@@ -635,7 +646,7 @@ $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 #* step 1: Retrieve list of vms with the attributes we want
 #region get vms
     Write-Host "$(get-date) [INFO] Retrieving list of vms for $($prismcentral)..." -ForegroundColor Green
-    $vm_list = Get-GroupsObjectList -prism $prismcentral -attributes "vm_name,cluster_name,hypervisor_type,node_name,categories,ip_addresses,num_vcpus,num_threads_per_core,memory_size_bytes,capacity_bytes,gpus_in_use,power_state,protection_type,protection_policy_state,protection_domain_name"
+    $vm_list = Get-GroupsObjectList -prism $prismcentral -attributes "vm_name,cluster_name,hypervisor_type,node_name,categories,ip_addresses,num_vcpus,num_threads_per_core,memory_size_bytes,capacity_bytes,gpus_in_use,power_state,protection_type,protection_policy_state,protection_domain_name" -length 500
     
     Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of $($vm_list.count) vms for $($prismcentral)!" -ForegroundColor Cyan
     ForEach ($entity in $vm_list) {
@@ -673,6 +684,7 @@ $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
                 if ($myvarBackupInfo.vm_name) {$myvarBackupResults.Add((New-Object PSObject -Property $myvarBackupEntry)) | Out-Null}
             }
         }
+        Remove-Variable $myvarBackupInfo -ErrorAction SilentlyContinue
     }
 #endregion
 

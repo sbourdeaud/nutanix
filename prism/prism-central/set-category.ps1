@@ -115,7 +115,7 @@ begin
 }
 process
 {
-    if (!$checking_task_status) {Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green}
+    if (!$checking_task_status -and $debugme) {Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green}
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
         if ($PSVersionTable.PSVersion.Major -gt 5) {
@@ -142,7 +142,7 @@ process
                 $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
             }
         }
-        if (!$checking_task_status) {Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan} 
+        if (!$checking_task_status -and $debugme) {Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan} 
         if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
     }
     catch {
@@ -661,8 +661,9 @@ https://github.com/sbourdeaud
         {
             Do 
             {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
-                $Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
+                #New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
+                #$Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
+                Write-Host "$(Get-Date) [INFO] Task $($taskDetails.operation_type) is still running: $($taskDetails.percentage_complete) completed" -ForegroundColor Green
                 Sleep 5
                 $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -checking_task_status
                 
@@ -685,8 +686,8 @@ https://github.com/sbourdeaud
             if ($taskDetails.status -ine "succeeded") {
                 Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.operation_type) status is $($taskDetails.status): $($taskDetails.progress_message) $($taskDetails.error_detail)" -ForegroundColor Yellow
             } else {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
-                Write-Host ""
+                #New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
+                #Write-Host ""
                 Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
             }
         }
@@ -723,8 +724,8 @@ Date       By   Updates (newest updates at the top)
   if ($help) {get-help $myvarScriptName; exit}
   if ($History) {$HistoryText; exit}
 
-  Set-PoSHSSLCerts
-  Set-PoshTls
+  #Set-PoSHSSLCerts
+  #Set-PoshTls
 
 #endregion
 
