@@ -8,6 +8,9 @@ set-EsxPortGroup.ps1
 ahv/github.code-workspace
 .DS_Store
 prism/.DS_Store
-.DS_Store
+*.DS_Store
 *.tfvars
-
+.terraform
+*.tfstate
+*.tfstate.backup
+*.lock.hcl
