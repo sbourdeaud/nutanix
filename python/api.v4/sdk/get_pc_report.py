@@ -14,7 +14,9 @@ from time import sleep
 from humanfriendly import format_timespan
 from urllib.parse import urlparse
 from urllib.parse import parse_qs
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import math
 import datetime
 import argparse
 import getpass
@@ -22,6 +24,7 @@ import urllib3
 import pandas
 import datapane
 import keyring
+import tqdm
 
 import ntnx_vmm_py_client
 import ntnx_clustermgmt_py_client
@@ -56,58 +59,12 @@ class PrintColors:
 
 
 #region FUNCTIONS
-def ntnx_api_pagination_get_page_links(response):
-    '''retrieves self, next and last page links from metadata section of a response.
-        Args:
-            response: response payload.
-        Returns:
-            response_self_page_link,response_next_page_link,response_last_page_link (python sets)
-    '''
-    response_self_page_link ={ link.href for link in response.metadata.links if link.rel == "self" }
-    response_next_page_link ={ link.href for link in response.metadata.links if link.rel == "next" }
-    response_last_page_link ={ link.href for link in response.metadata.links if link.rel == "last" }
-    return response_self_page_link,response_next_page_link,response_last_page_link
-
-
-def ntnx_api_pagination_get_next_page_number(response_next_page_link):
-    '''extracts the $page parameter value from a url.
-        Args:
-            response_next_page_link: python set containing the url to parse.
-        Returns:
-            next_page_number (integer)
-    '''
-    next_page_link = next(iter(response_next_page_link))
-    parsed_url_next_page_link = urlparse(next_page_link)
-    next_page_number = parse_qs(parsed_url_next_page_link.query)['$page'][0]
-    return next_page_number
-
-
-def ntnx_api_pagination(api_instance,function):
-    '''gets all available objects of a specific type.
-        api_instance:
-            api instance object
-        function:
-            name of function to run on the api instance (exp: list_clusters)
-        Returns:
-            entity_list (cumulated data section from all pages)
-    ''' 
-    
-    #get the name of the list function for this specific api instance    
-    list_function = getattr(api_instance, function)
-    
-    #* paginate thru all response pages
-    entity_list=[]
-    response_self_page_link = 'a'
-    response_last_page_link = 'b'
-    next_page_number = 0
-    while response_self_page_link != response_last_page_link:
-        response = list_function(_page=next_page_number)
-        entity_list = entity_list + response.data
-        response_self_page_link,response_next_page_link,response_last_page_link = ntnx_api_pagination_get_page_links(response)
-        if response_next_page_link:
-            next_page_number = ntnx_api_pagination_get_next_page_number(response_next_page_link)
-    return entity_list
-
+def fetch_entities(client,module,entity_api,function,page,limit):
+    entity_api_module = getattr(module, entity_api)
+    entity_api = entity_api_module(api_client=client)
+    list_function = getattr(entity_api, function)
+    response = list_function(_page=page,_limit=limit)
+    return response
 
 def main(api_server,username,secret,secure=False):
     '''main function.
@@ -119,27 +76,50 @@ def main(api_server,username,secret,secure=False):
         Returns:
     '''
 
+    LENGTH=100
+    
     #region clusters
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_clustermgmt_py_client.Configuration()
     api_client_configuration.host = api_server
     api_client_configuration.username = username
     api_client_configuration.password = secret
-    
-    if secure == False:
+
+    if secure is False:
         #! suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         #! suppress ssl certs verification
         api_client_configuration.verify_ssl = False
-    
-    api_client = ntnx_clustermgmt_py_client.ApiClient(configuration=api_client_configuration)
-    
+   
     #* getting list of clusters
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all clusters from {api_server}.{PrintColors.RESET}")
-    
-    api_instance_cluster = ntnx_clustermgmt_py_client.api.ClustersApi(api_client=api_client)
-    
-    cluster_list = ntnx_api_pagination(api_instance=api_instance_cluster,function='list_clusters')
+    client = ntnx_clustermgmt_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_clustermgmt_py_client.ClustersApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Clusters...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_clusters(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_clustermgmt_py_client,
+                    entity_api='ClustersApi',
+                    client=client,
+                    function='list_clusters',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    cluster_list = entity_list
     
     #* format output
     cluster_list_output = []
@@ -175,17 +155,47 @@ def main(api_server,username,secret,secure=False):
             'external_data_service_ipv4': entity.network.external_data_service_ip.ipv4.value,
             'external_subnet': entity.network.external_subnet,
             'name_server_ipv4_list': list({ name_server.ipv4.value for name_server in entity.network.name_server_ip_list}),
-            'ntp_server_fqdn_list': list({ ntp_server.fqdn.value for ntp_server in entity.network.ntp_server_ip_list}),
+            'ntp_server_list': "",
             'number_of_nodes': entity.nodes.number_of_nodes,
         }
+        if "fqdn" in entity.network.ntp_server_ip_list:
+            entity_output['ntp_server_list'] = list({ ntp_server.fqdn.value for ntp_server in entity.network.ntp_server_ip_list})
+        elif "ipv4" in entity.network.ntp_server_ip_list:
+            entity_output['ntp_server_list'] = list({ ntp_server.ipv4.value for ntp_server in entity.network.ntp_server_ip_list})
         
         cluster_list_output.append(entity_output)
     #endregion clusters
     
     #region hosts
     #* getting list of hosts
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all hosts from {api_server}.{PrintColors.RESET}")
-    host_list = ntnx_api_pagination(api_instance=api_instance_cluster,function='list_hosts')
+    client = ntnx_clustermgmt_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_clustermgmt_py_client.ClustersApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Hosts...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_hosts(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_clustermgmt_py_client,
+                    entity_api='ClustersApi',
+                    client=client,
+                    function='list_hosts',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    host_list = entity_list
     
     #* format output
     host_list_output = []
@@ -227,9 +237,34 @@ def main(api_server,username,secret,secure=False):
     
     #region storage containers
     #* getting list of storage containers
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all storage containers from {api_server}.{PrintColors.RESET}")
-    api_instance_storage_containers = ntnx_clustermgmt_py_client.api.StorageContainersApi(api_client=api_client)
-    storage_container_list = ntnx_api_pagination(api_instance=api_instance_storage_containers,function='list_storage_containers')
+    client = ntnx_clustermgmt_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_clustermgmt_py_client.StorageContainersApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Hosts...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_storage_containers(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_clustermgmt_py_client,
+                    entity_api='StorageContainersApi',
+                    client=client,
+                    function='list_storage_containers',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    storage_container_list = entity_list
     
     #* format output
     storage_container_list_output = []
@@ -269,11 +304,34 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_networking_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of subnets
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all subnets from {api_server}.{PrintColors.RESET}")
-    
-    api_instance_networking = ntnx_networking_py_client.api.SubnetsApi(api_client=api_client)
-    
-    subnet_list = ntnx_api_pagination(api_instance=api_instance_networking,function='list_subnets')
+    client = ntnx_networking_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_networking_py_client.SubnetsApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Subnets...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_subnets(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_networking_py_client,
+                    entity_api='SubnetsApi',
+                    client=client,
+                    function='list_subnets',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    subnet_list = entity_list
     
     #* format output
     subnet_list_output = []
@@ -310,11 +368,34 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_prism_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of categories
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all categories from {api_server}.{PrintColors.RESET}")
-    
-    api_instance_categories = ntnx_prism_py_client.api.CategoriesApi(api_client=api_client)
-    
-    category_list = ntnx_api_pagination(api_instance=api_instance_categories,function='list_categories')
+    client = ntnx_prism_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_prism_py_client.CategoriesApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Categories...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_categories(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_prism_py_client,
+                    entity_api='CategoriesApi',
+                    client=client,
+                    function='list_categories',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    category_list = entity_list
     
     #* format output
     category_list_output = []
@@ -347,11 +428,34 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_iam_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of users
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all users from {api_server}.{PrintColors.RESET}")
-    
-    api_instance_users = ntnx_iam_py_client.api.UsersApi(api_client=api_client)
-    
-    user_list = ntnx_api_pagination(api_instance=api_instance_users,function='list_users')
+    client = ntnx_iam_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_iam_py_client.UsersApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Users...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_users(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_iam_py_client,
+                    entity_api='UsersApi',
+                    client=client,
+                    function='list_users',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    user_list = entity_list
     
     #* format output
     user_list_output = []
@@ -391,10 +495,36 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_vmm_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of virtual machines
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all virtual machines from {api_server}.{PrintColors.RESET}")
-    api_instance_vm = ntnx_vmm_py_client.api.VmApi(api_client=api_client)
-    vm_list = ntnx_api_pagination(api_instance=api_instance_vm,function='list_vms')
-
+    client = ntnx_vmm_py_client.ApiClient(configuration=api_client_configuration)
+    entity_api = ntnx_vmm_py_client.VmApi(api_client=client)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching VMs...{PrintColors.RESET}")
+    entity_list=[]
+    response = entity_api.list_vms(_page=0,_limit=1)
+    total_available_results=response.metadata.total_available_results
+    page_count = math.ceil(total_available_results/LENGTH)
+    with tqdm.tqdm(total=page_count, desc="Fetching entity pages") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                    fetch_entities,
+                    module=ntnx_vmm_py_client,
+                    entity_api='VmApi',
+                    client=client,
+                    function='list_vms',
+                    page=page_number,
+                    limit=LENGTH
+                ) for page_number in range(0, page_count, 1)]
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    entity_list.extend(entities.data)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
+    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    vm_list = entity_list
+    
+    
     #* format output
     vm_list_output = []
     boot_config = ''
@@ -464,7 +594,7 @@ def main(api_server,username,secret,secure=False):
         #getting ip_addresses and subnets
         if entity.nics:
             for vnic in entity.nics:
-                if vnic.network_info.ipv4_info.learned_ip_addresses:
+                if hasattr(vnic.network_info.ipv4_info, "learned_ip_addresses"):
                     for ip_address in vnic.network_info.ipv4_info.learned_ip_addresses:
                         entity_output['learned_ip_addresses'].append(ip_address.value)
                 entity_output['subnets'].append(next(iter({ subnet['name'] for subnet in subnet_list_output if subnet['ext_id'] == vnic.network_info.subnet.ext_id })))
@@ -474,7 +604,7 @@ def main(api_server,username,secret,secure=False):
     
     #region html report
     #* exporting to html
-    html_file_name = "get_pc_report.html"
+    html_file_name = f"{api_server}_get_pc_report.html"
     
     vm_df = pandas.DataFrame(vm_list_output)
     cluster_df = pandas.DataFrame(cluster_list_output)

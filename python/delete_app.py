@@ -13,7 +13,6 @@
 
 #region #*IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
 import getpass
 import argparse
 import datetime
@@ -21,6 +20,7 @@ import requests
 import keyring
 import urllib3
 import pandas
+import tqdm
 #endregion #*IMPORT
 
 #region #*FUNCTIONS
@@ -185,18 +185,26 @@ def main(api_server,username,secret,target_apps,soft_delete=False,secure=False):
     app_uuids = [app_entity['metadata']['uuid'] for app_entity in apps_to_process]
     
     print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Deleting {len(app_uuids)} Apps...{PrintColors.RESET}")
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(
-            delete_app,
-            api_server=api_server,
-            username=username,
-            password=secret,
-            app_uuid=app_uuid,
-            soft_delete=soft_delete,
-            secure=secure
-            ) for app_uuid in app_uuids]
-        for future in as_completed(futures):
-            deleted_apps = future.result()
+    with tqdm.tqdm(total=len(app_uuids), desc="Processing tasks") as progress_bar:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                delete_app,
+                api_server=api_server,
+                username=username,
+                password=secret,
+                app_uuid=app_uuid,
+                soft_delete=soft_delete,
+                secure=secure
+                ) for app_uuid in app_uuids]
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    # Process the result if needed
+                    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
     
 #endregion #*FUNCTIONS
 

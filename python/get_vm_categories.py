@@ -17,6 +17,7 @@ import datetime
 import requests
 import keyring
 import urllib3
+import tqdm
 #endregion #*IMPORT
 
 #region #*FUNCTIONS
@@ -121,21 +122,27 @@ def main(api_server,username,secret,secure=False):
         entity_api_root='vms',
         secure=secure
     )
-
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(
-            get_entities_batch,
-            api_server=api_server,
-            username=username,
-            password=secret,
-            entity_type='vm',
-            entity_api_root='vms',
-            offset= offset,
-            length=length
-            ) for offset in range(0, vm_count, length)]
-        for future in as_completed(futures):
-            vms = future.result()
-            vm_list.extend(vms)
+    
+    with tqdm.tqdm(total=int(vm_count/length), desc="Processing tasks") as progress_bar:    
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(
+                get_entities_batch,
+                api_server=api_server,
+                username=username,
+                password=secret,
+                entity_type='vm',
+                entity_api_root='vms',
+                offset= offset,
+                length=length
+                ) for offset in range(0, vm_count, length)]
+            for future in as_completed(futures):
+                try:
+                    vms = future.result()
+                    vm_list.extend(vms)
+                except Exception as e:
+                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                finally:
+                    progress_bar.update(1)
 
     with open(f"{api_server}_vm_categories.csv", "w", encoding='utf-8') as file:
         file.write("vm_name,category_name,category_value\n")
@@ -164,24 +171,21 @@ class PrintColors:
 if __name__ == '__main__':
     # * parsing script arguments
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument(
-        "-p", 
-        "--prism", 
-        type=str, 
+    parser.add_argument("--prism",
+        "-p",
+        type=str,
         help="prism server."
     )
-    parser.add_argument(
-        "-u", 
-        "--username", 
-        type=str, 
-        default='admin', 
+    parser.add_argument("--username",
+        "-u",
+        type=str,
+        default='admin',
         help="username for prism server."
     )
-    parser.add_argument(
-        "-s", 
-        "--secure", 
-        type=bool, 
-        default=False, 
+    parser.add_argument("--secure",
+        "-s",
+        type=bool,
+        default=False,
         help="True of False to control SSL certs verification."
     )
     args = parser.parse_args()
