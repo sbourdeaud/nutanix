@@ -117,7 +117,7 @@ def delete_app(api_server, username, password, app_uuid, soft_delete=False, secu
         url = f'https://{api_server}:9440/api/nutanix/v3/apps/{app_uuid}'
     headers = {'Content-Type': 'application/json'}
 
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Deleting App {app_uuid} with soft delete {soft_delete}{PrintColors.RESET}")
+    #print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Deleting App {app_uuid} with soft delete {soft_delete}{PrintColors.RESET}")
     
     try:
         response = requests.delete(
@@ -128,7 +128,7 @@ def delete_app(api_server, username, password, app_uuid, soft_delete=False, secu
             timeout=30
         )
         response.raise_for_status()
-        print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Deleted App {app_uuid} with soft delete {soft_delete}{PrintColors.RESET}")
+        #print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Deleted App {app_uuid} with soft delete {soft_delete}{PrintColors.RESET}")
         return response.json().get('entities', {})
     except requests.exceptions.RequestException:
         print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Could not delete App {app_uuid} with soft delete {soft_delete}{PrintColors.RESET}")
@@ -200,7 +200,7 @@ def main(api_server,username,secret,target_apps,soft_delete=False,secure=False):
                 try:
                     result = future.result()
                     # Process the result if needed
-                    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
+                    #print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
                 except Exception as e:
                     print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                 finally:

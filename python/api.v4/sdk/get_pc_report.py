@@ -639,6 +639,22 @@ def main(api_server,username,secret,secure=False):
     )
     datapane_app.save(html_file_name)
     #endregion html report
+
+    #region excel spreadsheet
+    excel_file_name = f"{api_server}_get_pc_report.xlsx"
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting results to file {excel_file_name}.{PrintColors.RESET}")
+    list_of_dicts = [vm_list_output, cluster_list_output, host_list_output, storage_container_list_output, subnet_list_output, category_list_output, user_list_output]
+    data = {'vms': vm_list_output, 'clusters': cluster_list_output, 'hosts': host_list_output, 'storage_containers': storage_container_list_output, 'subnets': subnet_list_output, 'categories': category_list_output, 'users': user_list_output}
+    writer = pandas.ExcelWriter(excel_file_name, engine='xlsxwriter')
+    for sheet_name, df_data in data.items():
+        df = pandas.DataFrame(df_data)  # Create a DataFrame for each dictionary
+        if sheet_name == 'users':
+            df['created_time'] = df['created_time'].dt.tz_localize(None)
+            df['last_updated_time'] = df['last_updated_time'].dt.tz_localize(None)
+            df['last_login_time'] = df['last_login_time'].dt.tz_localize(None)
+        df.to_excel(writer, sheet_name=sheet_name, index=False)  # index=False to avoid row numbers
+    writer.close()
+    #end region excel spreadsheet
 #endregion FUNCTIONS
 
 

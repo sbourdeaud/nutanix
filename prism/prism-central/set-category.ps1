@@ -64,7 +64,7 @@ Adds the category mycategory:myvalue to myvm.
 #endregion
 
 #region functions
-function Invoke-PrismAPICall
+function InvokePrismAPICall
 {
 <#
 .SYNOPSIS
@@ -82,7 +82,7 @@ PARAMETER url
 PARAMETER payload
   JSON payload to send.
 .EXAMPLE
-.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+.\InvokePrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
 Makes a POST api call to the specified endpoint with the specified payload.
 #>
 param
@@ -115,7 +115,6 @@ begin
 }
 process
 {
-    if (!$checking_task_status -and $debugme) {Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green}
     try {
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
         if ($PSVersionTable.PSVersion.Major -gt 5) {
@@ -142,8 +141,6 @@ process
                 $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
             }
         }
-        if (!$checking_task_status -and $debugme) {Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan} 
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
     }
     catch {
         $saved_error = $_.Exception.Message
@@ -653,8 +650,7 @@ https://github.com/sbourdeaud
     {
         #region get initial task details
             Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
-            $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -checking_task_status
-            Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
+            $taskDetails = InvokePrismAPICall -method $method -url $url -credential $credential -checking_task_status
         #endregion
 
         if ($taskDetails.percentage_complete -ne "100") 
@@ -665,7 +661,7 @@ https://github.com/sbourdeaud
                 #$Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
                 Write-Host "$(Get-Date) [INFO] Task $($taskDetails.operation_type) is still running: $($taskDetails.percentage_complete) completed" -ForegroundColor Green
                 Sleep 5
-                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential -checking_task_status
+                $taskDetails = InvokePrismAPICall -method $method -url $url -credential $credential -checking_task_status
                 
                 if ($taskDetails.status -ne "running") 
                 {
@@ -679,7 +675,6 @@ https://github.com/sbourdeaud
             
             New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
             Write-Host ""
-            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
         } 
         else 
         {
@@ -688,7 +683,6 @@ https://github.com/sbourdeaud
             } else {
                 #New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
                 #Write-Host ""
-                Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
             }
         }
     }
@@ -790,26 +784,70 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region processing
-  ForEach ($item in $myvarListToProcess) {
-    $myvar_already_tagged = $false
-    $vm = $item.vm_name
-    $category = $item.category_name
-    $value = $item.category_value
+  
+  #! step 0: get all vms
+  #region get total number of entities
+    $url = "https://{0}:9440/api/nutanix/v3/vms/list" -f $prism
+    $method = "POST"
+    $content = @{
+        kind= "vm";
+        length = 1;
+    }
+    $payload = (ConvertTo-Json $content -Depth 4)
+    Write-Host "$(Get-Date) [INFO] Retrieving total number of VMs available from $prism..." -ForegroundColor Green
+    $total_entities = (InvokePrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials).metadata.total_matches
+  #endregion get total number of entities
+  #region retrieve all entities
+    $page_size = 250
+    $total_pages = [Math]::Ceiling($total_entities / $page_size)
+    $offsets = 0..($total_pages - 1) | ForEach-Object { $_ * $page_size }
+    $headers = @{
+        "Content-Type"="application/json";
+        "Accept"="application/json"
+    }
+    Write-Host "$(Get-Date) [INFO] Retrieving $total_entities entities from $prism..." -ForegroundColor Green
+    $results = $offsets | ForEach-Object -ThrottleLimit 10 -Parallel {
+        $offset = $_
+        $url = "https://{0}:9440/api/nutanix/v3/vms/list" -f $($using:prism)
+        $method = "POST"
+        $content = @{
+            kind= "vm";
+            length = $($using:page_size);
+            offset = $offset;
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        
+        try {
+            $response = Invoke-RestMethod -Method $method -Uri $url -Headers $($using:headers) -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+            $response.entities
+        }
+        catch {
+            $saved_error = $_.Exception
+            Write-Host "$(Get-Date) [ERROR] $saved_error" -ForegroundColor Red
+        }
+    }
+    $vm_list = $results
+  #endregion retrieve all entities
 
-    #! step 1: check category value pairs exists
-    #region check category:value pair exists
+  #! step 1: check category value pairs exist
+  #region check category:value pair exist
+  ForEach ($category_name in $myvarListToProcess.category_name | Select-Object -Unique) {
+    ForEach ($category_value in $myvarListToProcess | Where-Object {$_.category_name -eq $category_name} | Select-Object -ExpandProperty category_value | Select-Object -Unique) {
+      $category = $category_name
+      $value = $category_value
+    
       #region prepare api call
         $api_server_endpoint = "/api/nutanix/v3/categories/{0}/{1}" -f $category,$value
         $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
             $api_server_endpoint
         $method = "GET"
-      #endregion
+      #endregion prepare api call
 
       #region make the api call
         Write-Host "$(Get-Date) [INFO] Checking $($category):$($value) exists in $prism..." -ForegroundColor Green
         try {
-          $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-          Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $prism" -ForegroundColor Cyan
+          $resp = InvokePrismAPICall -method $method -url $url -credential $prismCredentials
+          if ($debugme) {Write-Host "$(Get-Date) [SUCCESS] Found the category:value pair $($category):$($value) in $prism" -ForegroundColor Cyan}
         }
         catch {
           $saved_error = $_.Exception.Message
@@ -827,7 +865,7 @@ Date       By   Updates (newest updates at the top)
                       length = 500
                     }
                     $payload = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                    $response = InvokePrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
                     $categories = $response.entities
                   #* create category if required
                     if ($category -notin $categories.name) {
@@ -840,8 +878,8 @@ Date       By   Updates (newest updates at the top)
                       }
                       $payload = (ConvertTo-Json $content -Depth 4)
                       try {
-                        $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                        Write-Host "$(get-date) [SUCCESS] Created category key $($category)." -ForegroundColor Cyan
+                        $resp = InvokePrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                        if ($debugme) {Write-Host "$(get-date) [SUCCESS] Created category key $($category)." -ForegroundColor Cyan}
                       }
                       catch {
                         Write-Host "$(get-date) [WARNING] Could not create category key $($category)!" -ForegroundColor Yellow
@@ -860,8 +898,8 @@ Date       By   Updates (newest updates at the top)
                   }
                   $payload = (ConvertTo-Json $content -Depth 4)
                   try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                    Write-Host "$(get-date) [SUCCESS] Created value $($value) in category key $($category)." -ForegroundColor Cyan
+                    $resp = InvokePrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
+                    if($debugme) {Write-Host "$(get-date) [SUCCESS] Created value $($value) in category key $($category)." -ForegroundColor Cyan}
                   }
                   catch {
                     Write-Host "$(get-date) [WARNING] Could not create value $($value) in category key $($category)!" -ForegroundColor Yellow
@@ -879,44 +917,44 @@ Date       By   Updates (newest updates at the top)
         }
         finally {
         }
-      #endregion
+      #endregion make the api call
+    }
+  }
+  #endregion check category:value pair exist
 
-    #endregion
+#todo: need to turn this into // processing
+  Write-Host "$(Get-Date) [INFO] Updating the configuration of $(($myvarListToProcess | Measure-Object).Count) vms in $($prism)..." -ForegroundColor Green
+  $results = $myvarListToProcess | ForEach-Object -ThrottleLimit 10 -Parallel {
+    $myvar_already_tagged = $false
+    $vm = $_.vm_name
+    $category = $_.category_name
+    $value = $_.category_value
+    $vm_uuid = ($($using:vm_list) | Where-Object {$_.spec.name -eq $vm}).metadata.uuid
+
+    $headers = @{
+      "Content-Type"="application/json";
+      "Accept"="application/json"
+    }
 
     #! step 2: retrieve vm details
     #region retrieve the vm details
 
       #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/vms/list"
-        $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+        $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
+        $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port), `
             $api_server_endpoint
-        $method = "POST"
-        $content = @{
-            filter= "vm_name==$($vm)";
-            kind= "vm"
-        }
-        $payload = (ConvertTo-Json $content -Depth 4)
+        $method = "GET"
       #endregion
 
       #region make the api call
-        Write-Host "$(Get-Date) [INFO] Retrieving the configuration of vm $vm from $prism..." -ForegroundColor Green
+        #Write-Host "$(Get-Date) [INFO] Retrieving the configuration of vm $vm from $($using:prism)..." -ForegroundColor Green
         try {
-          $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-          if ($resp.metadata.total_matches -eq 0) {
-              Write-Host "$(get-date) [WARNING] VM $vm was not found on $prism" -ForegroundColor Yellow
-              Continue
-          }
-          elseif ($resp.metadata.total_matches -gt 1) {
-            Write-Host "$(get-date) [WARNING] There are multiple VMs matching name $vm on $prism" -ForegroundColor Yellow
-            Continue
-          }
-          $vm_config = $resp.entities[0]
-          $vm_uuid = $vm_config.metadata.uuid
-          Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved the configuration of vm $vm from $prism" -ForegroundColor Cyan
+          $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+          $vm_config = $resp
         }
         catch {
           $saved_error = $_.Exception.Message
-          Write-Host "$(get-date) [WARNING] $saved_error" -ForegroundColor Yellow
+          Write-Host "$(get-date) [WARNING] While retrieving details of $($vm): $saved_error" -ForegroundColor Yellow
           Continue
         }
         finally {
@@ -932,13 +970,12 @@ Date       By   Updates (newest updates at the top)
 
     #! step 4.1: process -add
     #region process add
-      if ($add) {
+      if ($($using:add)) {
         try {
-          #$myvarNull = $vm_config.metadata.categories | Add-Member -MemberType NoteProperty -Name $category -Value $value -PassThru -ErrorAction Stop
           $myvarNull = $vm_config.metadata.categories_mapping | Add-Member -MemberType NoteProperty -Name $category -Value @($value) -PassThru -ErrorAction Stop
         }
         catch {
-          Write-Host "$(Get-Date) [WARNING] Could not add category:value pair ($($category):$($value)). It may already be assigned to the vm $vm in $prism" -ForegroundColor Yellow
+          Write-Host "$(Get-Date) [WARNING] Could not add category:value pair ($($category):$($value)). It may already be assigned to the vm $vm in $($using:prism)" -ForegroundColor Yellow
           $myvar_already_tagged = $true
           continue
         }
@@ -947,7 +984,7 @@ Date       By   Updates (newest updates at the top)
 
     #! step 4.2: process -remove
     #region process remove
-      if ($remove) {
+      if ($($using:remove)) {
         #todo match the exact value pair here as a category could have multiple values assigned
         #Write-Host "$(Get-Date) [WARNING] Remove hasn't been implemented yet (still working on it)" -ForegroundColor Yellow
         #$myvarNull = $vm_config.metadata.categories.PSObject.Properties.Remove($category)
@@ -961,36 +998,38 @@ Date       By   Updates (newest updates at the top)
       {
         #region prepare api call
           $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
-          $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
+          $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port), `
               $api_server_endpoint
           $method = "PUT"
 
           #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
           #$vm_config.metadata.spec_version += 1
           #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
-          $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
-          $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
-
+          if (!$vm_config.api_version) {
+            $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
+          }
+          if (!$vm_config.metadata.use_categories_mapping) {
+            $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
+          }
           $payload = (ConvertTo-Json $vm_config -Depth 6)
         #endregion
 
         #region make the api call
-          Write-Host "$(Get-Date) [INFO] Updating the configuration of vm $vm in $prism..." -ForegroundColor Green
+          #Write-Host "$(Get-Date) [INFO] Updating the configuration of vm $vm in $($using:prism)..." -ForegroundColor Green
           do {
             try {
-              $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-              if (!$async)
+              $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+              if (!$($using:async))
               {#user does want to wait for each vm update task to complete
-                $task_status = Get-PrismCentralTaskStatus -Task $resp.status.execution_context.task_uuid -cluster $prism -credential $prismCredentials
+                $task_status = Get-PrismCentralTaskStatus -Task $resp.status.execution_context.task_uuid -cluster $($using:prism) -credential $($using:prismCredentials)
                 if ($task_status -ine "failed") 
                 {
-                  Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
+                  if ($($using:debugme)) {Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $($using:prism)" -ForegroundColor Cyan}
                   $resp_return_code = 200
                 }
               }
               else 
               {#user does not care about waiting for update task status
-                Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $prism" -ForegroundColor Cyan
                 $resp_return_code = 200
               }
             }
@@ -1002,8 +1041,8 @@ Date       By   Updates (newest updates at the top)
                 sleep 5
               }
               else {
-                Write-Host $payload -ForegroundColor White
-                Write-Host "$(get-date) [WARNING] $($saved_error.Message)" -ForegroundColor Yellow
+                #Write-Host $payload -ForegroundColor White
+                Write-Host "$(get-date) [WARNING] While trying to update $($vm): $($_)" -ForegroundColor Yellow
                 Break
               }
             }
