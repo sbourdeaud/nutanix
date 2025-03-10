@@ -1,4 +1,4 @@
-""" extracts metrics from Nutanix API and published them in 
+""" extracts metrics from Nutanix API and publishes them in 
     prometheus format on a web service.
 
     Args:

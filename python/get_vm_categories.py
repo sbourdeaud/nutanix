@@ -9,6 +9,8 @@
         csv file.
 """
 
+
+
 #region #*IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import getpass
@@ -20,7 +22,11 @@ import urllib3
 import tqdm
 #endregion #*IMPORT
 
+
+
 #region #*FUNCTIONS
+
+
 def get_total_entities(api_server, username, password, entity_type, entity_api_root, secure=False):
 
     """Retrieve the total number of entities from Prism Central.
@@ -79,7 +85,7 @@ def get_entities_batch(api_server, username, password, offset, entity_type, enti
     url = f'https://{api_server}:9440/api/nutanix/v3/{entity_api_root}/list'
     headers = {'Content-Type': 'application/json'}
     payload = {'kind': entity_type, 'length': length, 'offset': offset}
-    
+
     try:
         response = requests.post(
             url=url,
@@ -108,10 +114,10 @@ def main(api_server,username,secret,secure=False):
     if secure is False:
         #! suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    
+
     length=500
     vm_list=[]
-    
+
     #* what we're about to do
     print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Getting VMs from {api_server}.{PrintColors.RESET}")
     vm_count = get_total_entities(
@@ -122,8 +128,8 @@ def main(api_server,username,secret,secure=False):
         entity_api_root='vms',
         secure=secure
     )
-    
-    with tqdm.tqdm(total=int(vm_count/length), desc="Processing tasks") as progress_bar:    
+
+    with tqdm.tqdm(total=int(vm_count/length), desc="Processing tasks") as progress_bar:
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(
                 get_entities_batch,
@@ -153,7 +159,11 @@ def main(api_server,username,secret,secure=False):
                 with open(f"{api_server}_vm_categories.csv", "a", encoding='utf-8') as file:
                     file.write(f"{vm['spec']['name']},{category},{value}\n")
     print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Wrote results to {api_server}_vm_categories.csv.{PrintColors.RESET}")
+
+
 #endregion #*FUNCTIONS
+
+
 
 #region #*CLASS
 class PrintColors:
@@ -167,6 +177,8 @@ class PrintColors:
     STEP = '\033[95m' #PURPLE
     RESET = '\033[0m' #RESET COLOR
 #endregion #*CLASS
+
+
 
 if __name__ == '__main__':
     # * parsing script arguments
@@ -190,7 +202,7 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    # * check for password (we use keyring python module to access the workstation operating system 
+    # * check for password (we use keyring python module to access the workstation operating system
     # * password store in an "ntnx" section)
     print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
     pwd = keyring.get_password("ntnx",args.username)

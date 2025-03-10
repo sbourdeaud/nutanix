@@ -802,8 +802,8 @@ public class ServerCertificateValidationCallback
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-    Set-PoSHSSLCerts
-    Set-PoshTls
+    #Set-PoSHSSLCerts
+    #Set-PoshTls
 
     #region module Influx
     if ($influxdb)
