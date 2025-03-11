@@ -23,11 +23,15 @@ from humanfriendly import format_timespan
 
 import urllib3
 import pandas as pd
-import datapane
 import keyring
 import tqdm
 
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
 import ntnx_aiops_py_client
+import ntnx_vmm_py_client
 #endregion #*IMPORT
 
 
@@ -80,6 +84,71 @@ def fetch_entity_descriptors(client,source_ext_id,page,limit=50):
     entity_api = ntnx_aiops_py_client.StatsApi(api_client=client)
     response = entity_api.get_entity_descriptors_v4(sourceExtId=source_ext_id,_page=page,_limit=limit)
     return response
+
+
+def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type):
+    #* fetch vm object to figure out extId
+    entity_api = ntnx_vmm_py_client.VmApi(api_client=client)
+    query_filter = f"name eq '{vm}'"
+    response = entity_api.list_vms(_filter=query_filter)
+    vm_uuid = response.data[0].ext_id
+    #print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching metrics for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
+    
+    #* fetch metrics for vm
+    entity_api = ntnx_vmm_py_client.StatsApi(api_client=client)
+    start_time = (datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=minutes_ago)).isoformat()
+    end_time = (datetime.datetime.now(datetime.timezone.utc)).isoformat()
+    response = entity_api.get_vm_stats_by_id(vm_uuid, _startTime=start_time, _endTime=end_time, _samplingInterval=sampling_interval, _statType=stat_type, _select='*')
+    vm_stats = [stat for stat in response.data.stats if stat.cluster is None]
+    #print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found {len(vm_stats)} data points for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
+    
+    #* building pandas dataframe from the retrieved data
+    data_points = []
+    for data_point in vm_stats:
+        data_points.append(data_point.to_dict())
+    df = pd.DataFrame(data_points)
+    df = df.set_index('timestamp')
+    df.drop('_reserved', axis=1, inplace=True)
+    df.drop('_object_type', axis=1, inplace=True)
+    df.drop('_unknown_fields', axis=1, inplace=True)
+    df.drop('cluster', axis=1, inplace=True)
+    df.drop('hypervisor_type', axis=1, inplace=True)
+
+    #* building graphs
+    df = df.dropna(subset=['disk_usage_ppm'])
+    df['disk_usage'] = (df['disk_usage_ppm'] / 10000).round(2)
+    df = df.dropna(subset=['memory_usage_ppm'])
+    df['memory_usage'] = (df['memory_usage_ppm'] / 10000).round(2)
+    df = df.dropna(subset=['hypervisor_cpu_usage_ppm'])
+    df['hypervisor_cpu_usage'] = (df['hypervisor_cpu_usage_ppm'] / 10000).round(2)
+    df = df.dropna(subset=['hypervisor_cpu_ready_time_ppm'])
+    df['hypervisor_cpu_ready_time'] = (df['hypervisor_cpu_ready_time_ppm'] / 10000).round(2)
+
+    fig = make_subplots(rows=2, cols=2,
+            subplot_titles=(f"{vm} Overview", f"{vm} Storage IOPS", f"{vm} Storage Bandwidth", f"{vm} Storage Latency"),
+            x_title="Time")  # Shared x-axis title
+    # Subplot 1: Overview
+    y_cols1 = ["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]
+    for y_col in y_cols1:
+        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%%{y}", name=y_col, mode='lines', legendgroup='group1'), row=1, col=1)
+    fig.update_yaxes(title_text="% Utilized", range=[0, 100], row=1, col=1)
+    # Subplot 2: Storage IOPS
+    y_cols2 = ["controller_num_iops", "controller_num_read_iops", "controller_num_write_iops"]
+    for y_col in y_cols2:
+        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} iops", name=y_col, mode='lines', legendgroup='group2'), row=1, col=2)
+    fig.update_yaxes(title_text="IOPS", row=1, col=2)
+    # Subplot 3: Storage Bandwidth
+    y_cols3 = ["controller_io_bandwidth_kbps", "controller_read_io_bandwidth_kbps", "controller_write_io_bandwidth_kbps"]
+    for y_col in y_cols3:
+        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} kbps", name=y_col, mode='lines', legendgroup='group3'), row=2, col=1)
+    fig.update_yaxes(title_text="Kbps", row=2, col=1)
+    # Subplot 4: Storage Latency
+    y_cols4 = ["controller_avg_io_latency_micros", "controller_avg_read_io_latency_micros", "controller_avg_write_io_latency_micros"]
+    for y_col in y_cols4:
+        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} usec", name=y_col, mode='lines', legendgroup='group4'), row=2, col=2)
+    fig.update_yaxes(title_text="Microseconds", row=2, col=2)
+    fig.update_layout(height=800, legend_title_text="Metric") # Shared legend title
+    fig.show()
 
 
 def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_type="AVG",secure=False,show=False):
@@ -159,88 +228,37 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
             for metric in sorted(descriptors[entity_type]):
                 print(f"    {descriptors[entity_type][metric]['name']},{descriptors[entity_type][metric]['value_type']},{descriptors[entity_type][metric]['description']}")
     elif vms:
-        import ntnx_vmm_py_client
-        import plotly.express as px
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-        
         #* initialize variable for API client configuration
         api_client_configuration = ntnx_vmm_py_client.Configuration()
         api_client_configuration.host = api_server
         api_client_configuration.username = username
         api_client_configuration.password = secret
-        
+
         if secure is False:
             #! suppress warnings about insecure connections
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             #! suppress ssl certs verification
             api_client_configuration.verify_ssl = False
-        
+
         client = ntnx_vmm_py_client.ApiClient(configuration=api_client_configuration)
-        entity_api = ntnx_vmm_py_client.VmApi(api_client=client)
-        
-        for vm in vms:
-            #* fetch vm object to figure out extId
-            query_filter = f"name eq '{vm}'"
-            response = entity_api.list_vms(_filter=query_filter)
-            vm_uuid = response.data[0].ext_id
-            print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching metrics for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
-            
-            #* fetch metrics for vm
-            entity_api = ntnx_vmm_py_client.StatsApi(api_client=client)
-            start_time = (datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=minutes_ago)).isoformat()
-            end_time = (datetime.datetime.now(datetime.timezone.utc)).isoformat()
-            response = entity_api.get_vm_stats_by_id(vm_uuid, _startTime=start_time, _endTime=end_time, _samplingInterval=sampling_interval, _statType=stat_type, _select='*')
-            vm_stats = [stat for stat in response.data.stats if stat.cluster is None]
-            print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found {len(vm_stats)} data points for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
-            
-            #* building pandas dataframe from the retrieved data
-            data_points = []
-            for data_point in vm_stats:
-                data_points.append(data_point.to_dict())
-            df = pd.DataFrame(data_points)
-            df = df.set_index('timestamp')
-            df.drop('_reserved', axis=1, inplace=True)
-            df.drop('_object_type', axis=1, inplace=True)
-            df.drop('_unknown_fields', axis=1, inplace=True)
-            df.drop('cluster', axis=1, inplace=True)
-            df.drop('hypervisor_type', axis=1, inplace=True)
 
-            #* building graphs
-            df = df.dropna(subset=['disk_usage_ppm'])
-            df['disk_usage'] = (df['disk_usage_ppm'] / 10000).round(2)
-            df = df.dropna(subset=['memory_usage_ppm'])
-            df['memory_usage'] = (df['memory_usage_ppm'] / 10000).round(2)
-            df = df.dropna(subset=['hypervisor_cpu_usage_ppm'])
-            df['hypervisor_cpu_usage'] = (df['hypervisor_cpu_usage_ppm'] / 10000).round(2)
-            df = df.dropna(subset=['hypervisor_cpu_ready_time_ppm'])
-            df['hypervisor_cpu_ready_time'] = (df['hypervisor_cpu_ready_time_ppm'] / 10000).round(2)
-
-            fig = make_subplots(rows=2, cols=2,
-                    subplot_titles=(f"{vm} Overview", f"{vm} Storage IOPS", f"{vm} Storage Bandwidth", f"{vm} Storage Latency"),
-                    x_title="Time")  # Shared x-axis title
-            # Subplot 1: Overview
-            y_cols1 = ["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]
-            for y_col in y_cols1:
-                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%%{y}", name=y_col, mode='lines', legendgroup='group1'), row=1, col=1)
-            fig.update_yaxes(title_text="% Utilized", range=[0, 100], row=1, col=1)
-            # Subplot 2: Storage IOPS
-            y_cols2 = ["controller_num_iops", "controller_num_read_iops", "controller_num_write_iops"]
-            for y_col in y_cols2:
-                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} iops", name=y_col, mode='lines', legendgroup='group2'), row=1, col=2)
-            fig.update_yaxes(title_text="IOPS", row=1, col=2)
-            # Subplot 3: Storage Bandwidth
-            y_cols3 = ["controller_io_bandwidth_kbps", "controller_read_io_bandwidth_kbps", "controller_write_io_bandwidth_kbps"]
-            for y_col in y_cols3:
-                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} kbps", name=y_col, mode='lines', legendgroup='group3'), row=2, col=1)
-            fig.update_yaxes(title_text="Kbps", row=2, col=1)
-            # Subplot 4: Storage Latency
-            y_cols4 = ["controller_avg_io_latency_micros", "controller_avg_read_io_latency_micros", "controller_avg_write_io_latency_micros"]
-            for y_col in y_cols4:
-                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} usec", name=y_col, mode='lines', legendgroup='group4'), row=2, col=2)
-            fig.update_yaxes(title_text="Microseconds", row=2, col=2)
-            fig.update_layout(height=800, legend_title_text="Metric") # Shared legend title
-            fig.show()
+        with tqdm.tqdm(total=len(vms), desc="Processing VMs") as progress_bar:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [executor.submit(
+                        get_vm_metrics,
+                        client=client,
+                        vm=vm,
+                        minutes_ago=minutes_ago,
+                        sampling_interval=sampling_interval,
+                        stat_type=stat_type
+                    ) for vm in vms]
+                for future in as_completed(futures):
+                    try:
+                        entities = future.result()
+                    except Exception as e:
+                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                    finally:
+                        progress_bar.update(1)
 
 
             #! if you wanted to show 4 graphs on separate pages, use this instead:
