@@ -144,16 +144,12 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
         descriptors={}
         for item in entity_descriptors_list:
             entity_type = item.entity_type
-            #metrics = [metric.name for metric in item.metrics]
-            #descriptors[entity_type]=metrics
             descriptors[entity_type] = {}
             for metric in item.metrics:
                 metric_name = metric.name
                 descriptors[entity_type][metric_name] = {}
                 descriptors[entity_type][metric_name]['name'] = metric.name
                 descriptors[entity_type][metric_name]['value_type'] = metric.value_type
-                #additional_properties = metric.get("additional_properties")
-                #if additional_properties:
                 if metric.additional_properties is not None:
                     descriptors[entity_type][metric_name]['description'] = next(iter([metric_property.value for metric_property in metric.additional_properties if metric_property.name == 'description']),None)
                 else:
@@ -165,6 +161,8 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
     elif vms:
         import ntnx_vmm_py_client
         import plotly.express as px
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
         
         #* initialize variable for API client configuration
         api_client_configuration = ntnx_vmm_py_client.Configuration()
@@ -207,23 +205,61 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
             df.drop('_unknown_fields', axis=1, inplace=True)
             df.drop('cluster', axis=1, inplace=True)
             df.drop('hypervisor_type', axis=1, inplace=True)
-            
+
             #* building graphs
             df = df.dropna(subset=['disk_usage_ppm'])
             df['disk_usage'] = (df['disk_usage_ppm'] / 10000).round(2)
-            df = df.dropna(subset=['guest_memory_usage_ppm'])
-            df['guest_memory_usage'] = (df['guest_memory_usage_ppm'] / 10000).round(2)
             df = df.dropna(subset=['memory_usage_ppm'])
             df['memory_usage'] = (df['memory_usage_ppm'] / 10000).round(2)
-            df = df.dropna(subset=['hypervisor_memory_usage_ppm'])
-            df['hypervisor_memory_usage'] = (df['hypervisor_memory_usage_ppm'] / 10000).round(2)
             df = df.dropna(subset=['hypervisor_cpu_usage_ppm'])
             df['hypervisor_cpu_usage'] = (df['hypervisor_cpu_usage_ppm'] / 10000).round(2)
             df = df.dropna(subset=['hypervisor_cpu_ready_time_ppm'])
             df['hypervisor_cpu_ready_time'] = (df['hypervisor_cpu_ready_time_ppm'] / 10000).round(2)
-            fig=px.line(df,y=["hypervisor_cpu_usage","hypervisor_cpu_ready_time","guest_memory_usage","memory_usage", "hypervisor_memory_usage", "disk_usage"],range_y=[0, 100],title=f"{vm} Overview")
-            fig.update_layout(xaxis_title="Time",yaxis_title="% Utilized",legend_title_text="Metric")
+
+            fig = make_subplots(rows=2, cols=2,
+                    subplot_titles=(f"{vm} Overview", f"{vm} Storage IOPS", f"{vm} Storage Bandwidth", f"{vm} Storage Latency"),
+                    x_title="Time")  # Shared x-axis title
+            # Subplot 1: Overview
+            y_cols1 = ["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]
+            for y_col in y_cols1:
+                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%%{y}", name=y_col, mode='lines', legendgroup='group1'), row=1, col=1)
+            fig.update_yaxes(title_text="% Utilized", range=[0, 100], row=1, col=1)
+            # Subplot 2: Storage IOPS
+            y_cols2 = ["controller_num_iops", "controller_num_read_iops", "controller_num_write_iops"]
+            for y_col in y_cols2:
+                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} iops", name=y_col, mode='lines', legendgroup='group2'), row=1, col=2)
+            fig.update_yaxes(title_text="IOPS", row=1, col=2)
+            # Subplot 3: Storage Bandwidth
+            y_cols3 = ["controller_io_bandwidth_kbps", "controller_read_io_bandwidth_kbps", "controller_write_io_bandwidth_kbps"]
+            for y_col in y_cols3:
+                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} kbps", name=y_col, mode='lines', legendgroup='group3'), row=2, col=1)
+            fig.update_yaxes(title_text="Kbps", row=2, col=1)
+            # Subplot 4: Storage Latency
+            y_cols4 = ["controller_avg_io_latency_micros", "controller_avg_read_io_latency_micros", "controller_avg_write_io_latency_micros"]
+            for y_col in y_cols4:
+                fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} usec", name=y_col, mode='lines', legendgroup='group4'), row=2, col=2)
+            fig.update_yaxes(title_text="Microseconds", row=2, col=2)
+            fig.update_layout(height=800, legend_title_text="Metric") # Shared legend title
             fig.show()
+
+
+            #! if you wanted to show 4 graphs on separate pages, use this instead:
+            """ fig = make_subplots(rows=2, cols=2, subplot_titles=(f"{vm} Overview", f"{vm} Storage IOPS", f"{vm} Storage Bandwidth", f"{vm} Storage Latency"))
+            fig.add_trace(go.Line(y=df["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]), row=1, col=1)
+            fig.add_trace(go.Line(y=df["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]), row=1, col=2)
+            fig.add_trace(go.Line(y=df["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]), row=2, col=1)
+            fig.add_trace(go.Line(y=df["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]), row=2, col=2)
+            fig.update_yaxes(range=[0, 100], row=1, col=1)
+            fig.update_yaxes(range=[0, 100], row=1, col=2)
+            fig.update_yaxes(range=[0, 100], row=2, col=1)
+            fig.update_yaxes(range=[0, 100], row=2, col=2)
+            fig.update_layout(xaxis_title="Time",  # For shared x-axis title
+                  yaxis_title="% Utilized", # For the first subplot's y-axis
+                  yaxis2_title="% Utilized", # For the first subplot's y-axis
+                  yaxis3_title="% Utilized", # For the first subplot's y-axis
+                  yaxis4_title="% Utilized",
+                  legend_title_text="Metric")
+            fig.show() """
 
 
     processing_end_time = time.time()
