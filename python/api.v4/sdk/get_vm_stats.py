@@ -71,12 +71,10 @@ def fetch_entities(client,module,entity_api,function,page,limit=50):
 
 
 def fetch_entity_descriptors(client,source_ext_id,page,limit=50):
-    '''fetch_entities function.
+    '''fetch_entity_descriptors function.
         Args:
             client: a v4 Python SDK client object.
-            module: name of the v4 Python SDK module to use.
-            entity_api: name of the entity API to use.
-            function: name of the function to use.
+            source_ext_id: uuid of a valid source.
             page: page number to fetch.
             limit: number of entities to fetch.
         Returns:
@@ -87,6 +85,16 @@ def fetch_entity_descriptors(client,source_ext_id,page,limit=50):
 
 
 def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type):
+    '''get_vm_metrics function.
+       Fetches metrics for a specified vm and generates graphs for that entity.
+        Args:
+            client: a v4 Python SDK client object.
+            vm: a virtual machine name
+            minutes_ago: integer indicating the number of minutes to get metrics for (exp: 60 would mean get the metrics for the last hour).
+            sampling_interval: integer used to specify in seconds the sampling interval.
+            stat_type: The operator to use while performing down-sampling on stats data. Allowed values are SUM, MIN, MAX, AVG, COUNT and LAST.
+        Returns:
+    '''
     #* fetch vm object to figure out extId
     entity_api = ntnx_vmm_py_client.VmApi(api_client=client)
     query_filter = f"name eq '{vm}'"
@@ -283,6 +291,8 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
     processing_end_time = time.time()
     elapsed_time = processing_end_time - processing_start_time
     print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
+
+
 #endregion #*FUNCTIONS
 
 
@@ -310,7 +320,7 @@ if __name__ == '__main__':
         except Exception as error:
             print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
             exit(1)
-    
+
     if args.vm:
         target_vms = args.vm.split(',')
     elif args.csv:
@@ -318,5 +328,5 @@ if __name__ == '__main__':
         target_vms = data['vm_name'].tolist()
     elif args.show is True:
         target_vms = None
-    
+
     main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,show=args.show,vms=target_vms,minutes_ago=args.time,sampling_interval=args.interval,stat_type=args.stat_type)
