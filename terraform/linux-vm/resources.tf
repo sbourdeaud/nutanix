@@ -3,7 +3,7 @@
     required_providers {
         nutanix = {
             source  = "nutanix/nutanix"
-            #version = "1.6.0"
+            version = "1.9.5"
         }
     }
     }
@@ -30,19 +30,18 @@
     data "nutanix_cluster" "cluster" {
         cluster_id = "${local.cluster}"
     }
-    data "template_file" "cloud" {
-        count = "${var.qty}"
-        template = "${file("cloud-init.tpl")}"
-        vars = {
-            ip = "${var.ips[count.index]}"
-            name = "${var.vmName}-${count.index + 1}"
-            domain = "${var.domain}"
-            subnetMask = "${var.subnetMask}"
-            gw = "${var.gw}"
-            dns1 = "${var.dns1}"
-            dns2 = "${var.dns2}"
-            publicKey = "${var.publicKey}"
-        }
+    locals {
+        # Generate a list of maps, each containing the variables for a single VM
+        cloud_init_configs = [for i in range(var.qty) : {
+            ip          = var.ips[i]
+            name        = "${var.vmName}-${i + 1}" # Use local variables instead of interpolating within the string.
+            domain      = var.domain
+            subnetMask = var.subnetMask
+            gw          = var.gw
+            dns1        = var.dns1
+            dns2        = var.dns2
+            publicKey  = var.publicKey
+        }]
     }
 #endregion
 
@@ -79,6 +78,6 @@
         num_vcpus_per_socket = 1
         num_sockets          = "${var.cpu}"
         memory_size_mib      = "${var.ram}"
-        guest_customization_cloud_init_user_data = "${base64encode("${element(data.template_file.cloud.*.rendered,count.index)}")}"
+        guest_customization_cloud_init_user_data = "${base64encode(templatefile("cloud-init.tpl", local.cloud_init_configs[count.index]))}"
     }
 #endregion

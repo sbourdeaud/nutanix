@@ -1,31 +1,25 @@
 #cloud-config
-cloud_config_modules: 
-  - resolv_conf
+cloud_config_modules:
   - runcmd
 hostname: ${name}
 fqdn: ${name}.${domain}
 users:
-  - name: centos
+  - name: nutanix
     ssh-authorized-keys:
       - ${publicKey}
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
-write_files:
-  - path: /etc/sysconfig/network-scripts/ifcfg-eth0
-    content: |
-      IPADDR="${ip}"
-      NETMASK="${subnetMask}"
-      GATEWAY="${gw}"
-      BOOTPROTO=none
-      ONBOOT=yes
-      DEVICE=eth0
+growpart:
+  mode: auto
+  devices: ['/']
+  ignore_growroot_disabled: false
 runcmd:
-  - [ifdown, eth0]
-  - [ifup, eth0]
+  - nmcli connection migrate
+  - nmcli con down "System eth0"
+  - nmcli con del "System eth0"
+  - nmcli con add con-name "System eth0" ifname eth0 type ethernet ip4 ${ip}/${subnetMask} gw4 ${gw} ipv4.dns "${dns1} ${dns2}"
+  - nmcli con up "System eth0"
+  - nmcli general reload
+  - nmcli connection reload
   - [eject]
-manage_resolv_conf: true
-resolv_conf:
-  nameservers: ['${dns1}', '${dns2}']
-  domain: ${domain}
-  options:
-    rotate: true
-    timeout: 1
+
+package_upgrade: false

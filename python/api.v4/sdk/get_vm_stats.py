@@ -84,7 +84,7 @@ def fetch_entity_descriptors(client,source_ext_id,page,limit=50):
     return response
 
 
-def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type):
+def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_export):
     '''get_vm_metrics function.
        Fetches metrics for a specified vm and generates graphs for that entity.
         Args:
@@ -95,6 +95,10 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type):
             stat_type: The operator to use while performing down-sampling on stats data. Allowed values are SUM, MIN, MAX, AVG, COUNT and LAST.
         Returns:
     '''
+    
+    """ print(f"(get_vm_metrics) show graphs: {graph}")
+    print(f"(get_vm_metrics) csv exports: {csv_export}") """
+    
     #* fetch vm object to figure out extId
     entity_api = ntnx_vmm_py_client.VmApi(api_client=client)
     query_filter = f"name eq '{vm}'"
@@ -121,45 +125,52 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type):
     df.drop('_unknown_fields', axis=1, inplace=True)
     df.drop('cluster', axis=1, inplace=True)
     df.drop('hypervisor_type', axis=1, inplace=True)
+    df.drop('check_score', axis=1, inplace=True)
 
     #* building graphs
-    df = df.dropna(subset=['disk_usage_ppm'])
-    df['disk_usage'] = (df['disk_usage_ppm'] / 10000).round(2)
-    df = df.dropna(subset=['memory_usage_ppm'])
-    df['memory_usage'] = (df['memory_usage_ppm'] / 10000).round(2)
-    df = df.dropna(subset=['hypervisor_cpu_usage_ppm'])
-    df['hypervisor_cpu_usage'] = (df['hypervisor_cpu_usage_ppm'] / 10000).round(2)
-    df = df.dropna(subset=['hypervisor_cpu_ready_time_ppm'])
-    df['hypervisor_cpu_ready_time'] = (df['hypervisor_cpu_ready_time_ppm'] / 10000).round(2)
+    if graph is True:
+        df = df.dropna(subset=['disk_usage_ppm'])
+        df['disk_usage'] = (df['disk_usage_ppm'] / 10000).round(2)
+        df = df.dropna(subset=['memory_usage_ppm'])
+        df['memory_usage'] = (df['memory_usage_ppm'] / 10000).round(2)
+        df = df.dropna(subset=['hypervisor_cpu_usage_ppm'])
+        df['hypervisor_cpu_usage'] = (df['hypervisor_cpu_usage_ppm'] / 10000).round(2)
+        df = df.dropna(subset=['hypervisor_cpu_ready_time_ppm'])
+        df['hypervisor_cpu_ready_time'] = (df['hypervisor_cpu_ready_time_ppm'] / 10000).round(2)
 
-    fig = make_subplots(rows=2, cols=2,
-            subplot_titles=(f"{vm} Overview", f"{vm} Storage IOPS", f"{vm} Storage Bandwidth", f"{vm} Storage Latency"),
-            x_title="Time")  # Shared x-axis title
-    # Subplot 1: Overview
-    y_cols1 = ["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]
-    for y_col in y_cols1:
-        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%%{y}", name=y_col, mode='lines', legendgroup='group1'), row=1, col=1)
-    fig.update_yaxes(title_text="% Utilized", range=[0, 100], row=1, col=1)
-    # Subplot 2: Storage IOPS
-    y_cols2 = ["controller_num_iops", "controller_num_read_iops", "controller_num_write_iops"]
-    for y_col in y_cols2:
-        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} iops", name=y_col, mode='lines', legendgroup='group2'), row=1, col=2)
-    fig.update_yaxes(title_text="IOPS", row=1, col=2)
-    # Subplot 3: Storage Bandwidth
-    y_cols3 = ["controller_io_bandwidth_kbps", "controller_read_io_bandwidth_kbps", "controller_write_io_bandwidth_kbps"]
-    for y_col in y_cols3:
-        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} kbps", name=y_col, mode='lines', legendgroup='group3'), row=2, col=1)
-    fig.update_yaxes(title_text="Kbps", row=2, col=1)
-    # Subplot 4: Storage Latency
-    y_cols4 = ["controller_avg_io_latency_micros", "controller_avg_read_io_latency_micros", "controller_avg_write_io_latency_micros"]
-    for y_col in y_cols4:
-        fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} usec", name=y_col, mode='lines', legendgroup='group4'), row=2, col=2)
-    fig.update_yaxes(title_text="Microseconds", row=2, col=2)
-    fig.update_layout(height=800, legend_title_text="Metric") # Shared legend title
-    fig.show()
+        fig = make_subplots(rows=2, cols=2,
+                subplot_titles=(f"{vm} Overview", f"{vm} Storage IOPS", f"{vm} Storage Bandwidth", f"{vm} Storage Latency"),
+                x_title="Time")  # Shared x-axis title
+        # Subplot 1: Overview
+        y_cols1 = ["hypervisor_cpu_usage", "hypervisor_cpu_ready_time", "memory_usage", "disk_usage"]
+        for y_col in y_cols1:
+            fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%%{y}", name=y_col, mode='lines', legendgroup='group1'), row=1, col=1)
+        fig.update_yaxes(title_text="% Utilized", range=[0, 100], row=1, col=1)
+        # Subplot 2: Storage IOPS
+        y_cols2 = ["controller_num_iops", "controller_num_read_iops", "controller_num_write_iops"]
+        for y_col in y_cols2:
+            fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} iops", name=y_col, mode='lines', legendgroup='group2'), row=1, col=2)
+        fig.update_yaxes(title_text="IOPS", row=1, col=2)
+        # Subplot 3: Storage Bandwidth
+        y_cols3 = ["controller_io_bandwidth_kbps", "controller_read_io_bandwidth_kbps", "controller_write_io_bandwidth_kbps"]
+        for y_col in y_cols3:
+            fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} kbps", name=y_col, mode='lines', legendgroup='group3'), row=2, col=1)
+        fig.update_yaxes(title_text="Kbps", row=2, col=1)
+        # Subplot 4: Storage Latency
+        y_cols4 = ["controller_avg_io_latency_micros", "controller_avg_read_io_latency_micros", "controller_avg_write_io_latency_micros"]
+        for y_col in y_cols4:
+            fig.add_trace(go.Scatter(x=df.index, y=df[y_col], hovertemplate="%{x}<br>%{y} usec", name=y_col, mode='lines', legendgroup='group4'), row=2, col=2)
+        fig.update_yaxes(title_text="Microseconds", row=2, col=2)
+        fig.update_layout(height=800, legend_title_text="Metric") # Shared legend title
+        fig.show()
+
+    #* exporting results to csv
+    if csv_export is True:
+        for column in df.columns:
+            df[column].to_csv(f"{vm}_{column}.csv", index=True)
 
 
-def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_type="AVG",secure=False,show=False):
+def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_interval=30,stat_type="AVG",secure=False,show=False):
     '''main function.
         Args:
             api_server: IP or FQDN of the REST API server.
@@ -172,6 +183,9 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
 
     processing_start_time = time.time()
     limit=100
+    
+    """ print(f"(main) show graphs: {graph}")
+    print(f"(main) csv exports: {csv_export}") """
 
 
     if show is True:
@@ -258,7 +272,9 @@ def main(api_server,username,secret,vms,minutes_ago=5,sampling_interval=30,stat_
                         vm=vm,
                         minutes_ago=minutes_ago,
                         sampling_interval=sampling_interval,
-                        stat_type=stat_type
+                        stat_type=stat_type,
+                        graph=graph,
+                        csv_export=csv_export,
                     ) for vm in vms]
                 for future in as_completed(futures):
                     try:
@@ -301,8 +317,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-p", "--prism", help="prism server.")
     parser.add_argument("-u", "--username", default='admin', help="username for prism server.")
-    parser.add_argument("-s", "--secure", default=False, help="True of False to control SSL certs verification.")
-    parser.add_argument("-sh", "--show", type=bool, default=False, help="True or False to show available entity types and metrics.")
+    parser.add_argument("-s", "--secure", default=False, action=argparse.BooleanOptionalAction, help="Control SSL certs verification.")
+    parser.add_argument("-sh", "--show", action=argparse.BooleanOptionalAction, help="Show available entity types and metrics.")
+    parser.add_argument("-g", "--graph", action=argparse.BooleanOptionalAction, help="Indicate you want graphs to be generated. Defaults to True.")
+    parser.add_argument("-e", "--export", action=argparse.BooleanOptionalAction, help="Indicate you want csv exports to be generated (1 csv file per metric for each vm). Defaults to False.")
     parser.add_argument("-v", "--vm", type=str, help="Comma separated list of VM names you want to process.")
     parser.add_argument("-c", "--csv", type=str, help="Path and name of csv file with vm names (header: vm_name and then one vm name per line).")
     parser.add_argument("-t", "--time", type=int, default=5, help="Integer used to specify how many minutes ago you want to collect metrics for (defaults to 5 minutes ago).")
@@ -321,12 +339,15 @@ if __name__ == '__main__':
             print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
             exit(1)
 
-    if args.vm:
-        target_vms = args.vm.split(',')
+    if args.show is True:
+        target_vms = None
     elif args.csv:
         data=pd.read_csv(args.csv)
         target_vms = data['vm_name'].tolist()
-    elif args.show is True:
-        target_vms = None
+    elif args.vm:
+        target_vms = args.vm.split(',')
 
-    main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,show=args.show,vms=target_vms,minutes_ago=args.time,sampling_interval=args.interval,stat_type=args.stat_type)
+    """ print(f"show graphs: {args.graph}")
+    print(f"csv exports: {args.export}") """
+    
+    main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,show=args.show,vms=target_vms,minutes_ago=args.time,sampling_interval=args.interval,stat_type=args.stat_type,graph=args.graph,csv_export=args.export)

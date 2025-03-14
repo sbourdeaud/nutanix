@@ -1116,6 +1116,14 @@ def get_entities_batch(api_server, username, password, offset, entity_type, enti
         return []
 
 
+def v4_get_entities():
+    pass
+
+
+def v4_get_entity_stats():
+    pass
+
+
 def main():
     """Main entry point"""
 
