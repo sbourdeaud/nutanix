@@ -2,6 +2,7 @@
 set-EsxPortGroup.ps1
 .vscode
 *.html
+*.xlsx
 *.log
 .secrets
 *_flow_ruleset.json
@@ -11,6 +12,8 @@ prism/.DS_Store
 *.DS_Store
 *.tfvars
 .terraform
+**/.terraform/
 *.tfstate
 *.tfstate.backup
 *.lock.hcl
+.terraform.lock.hcl
