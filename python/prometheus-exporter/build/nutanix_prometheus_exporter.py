@@ -73,13 +73,13 @@ class NutanixMetrics:
             #creating host stats metrics
             for key,value in hosts_details[0]['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixHosts_stats_{key}"
+                key_string = f"nutanix_host_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['host']))
             for key,value in hosts_details[0]['usage_stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixHosts_usage_stats_{key}"
+                key_string = f"nutanix_host_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['host']))
@@ -87,63 +87,49 @@ class NutanixMetrics:
             #creating cluster stats metrics
             for key,value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixClusters_stats_{key}"
+                key_string = f"nutanix_cluster_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
             for key,value in cluster_details['usage_stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixClusters_usage_stats_{key}"
+                key_string = f"nutanix_cluster_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
 
             #creating cluster counts metrics
             key_strings = [
-                "NutanixClusters_count_vm",
-                "NutanixClusters_count_vm_on",
-                "NutanixClusters_count_vm_off",
-                "NutanixClusters_count_vcpu",
-                "NutanixClusters_count_vram_mib",
-                "NutanixClusters_count_vdisk",
-                "NutanixClusters_count_vdisk_ide",
-                "NutanixClusters_count_vdisk_sata",
-                "NutanixClusters_count_vdisk_scsi",
-                "NutanixClusters_count_vnic"
+                "nutanix_cluster_count_vm",
+                "nutanix_cluster_count_vm_on",
+                "nutanix_cluster_count_vm_off",
+                "nutanix_cluster_count_vcpu",
+                "nutanix_cluster_count_vram_mib",
+                "nutanix_cluster_count_vdisk",
+                "nutanix_cluster_count_vdisk_ide",
+                "nutanix_cluster_count_vdisk_sata",
+                "nutanix_cluster_count_vdisk_scsi",
+                "nutanix_cluster_count_vnic"
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
 
             #creating host counts metrics
             key_strings = [                
-                "NutanixHosts_count_vm",
-                "NutanixHosts_count_vcpu",
-                "NutanixHosts_count_vram_mib",
-                "NutanixHosts_count_vdisk",
-                "NutanixHosts_count_vdisk_ide",
-                "NutanixHosts_count_vdisk_sata",
-                "NutanixHosts_count_vdisk_scsi",
-                "NutanixHosts_count_vnic"
+                "nutanix_host_count_vm",
+                "nutanix_host_count_vcpu",
+                "nutanix_host_count_vram_mib",
+                "nutanix_host_count_vdisk",
+                "nutanix_host_count_vdisk_ide",
+                "nutanix_host_count_vdisk_sata",
+                "nutanix_host_count_vdisk_scsi",
+                "nutanix_host_count_vnic"
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['host']))
 
             #other misc info based metrics
-            #self.lts = Enum("is_lts", "AOS Long Term Support", ['cluster'], states=['True', 'False'])
-            setattr(self, 'NutanixClusters_info', Info('is_lts', 'Long Term Support AOS true/false', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('num_nodes', 'Quantity of hardware nodes', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('model_name', 'Hardware model', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('storage_type', 'Mixed or full flash', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('aos_version', 'AOS version', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('is_nsenabled', 'Status of network segmentation', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('encrypted', 'Status of encryption', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('timezone', 'Timezone', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('operation_mode', 'Status of operations', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('enable_shadow_clones', 'Status of shadow clones', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('rf', 'Replication factor', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('enable_rebuild_reservation', 'Status of rebuild reservation', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('fault_tolerance_domain_type', 'Fault tolerance type', ['cluster']))
-            setattr(self, 'NutanixClusters_info', Info('data_in_transit_encryption_dto', 'In transit encryption status', ['cluster']))
+            setattr(self, 'nutanix_cluster', Info('nutanix_cluster', 'Misc cluster information'))
 
         if self.vm_list:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for virtual machines...{PrintColors.RESET}")
@@ -171,13 +157,13 @@ class NutanixMetrics:
             storage_containers_details = prism_get_storage_containers(api_server=prism,username=user,secret=pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             for key,value in storage_containers_details[0]['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixStorageContainers_stats_{key}"
+                key_string = f"nutanix_storage_container_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['storage_container']))
             for key,value in storage_containers_details[0]['usage_stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixStorageContainers_usage_stats_{key}"
+                key_string = f"nutanix_storage_container_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 setattr(self, key_string, Gauge(key_string, key_string, ['storage_container']))
@@ -185,10 +171,10 @@ class NutanixMetrics:
         if self.ipmi_metrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for IPMI adapters...{PrintColors.RESET}")
             key_strings = [
-                "Nutanix_power_consumption_power_consumed_watts",
-                "Nutanix_power_consumption_min_consumed_watts",
-                "Nutanix_power_consumption_max_consumed_watts",
-                "Nutanix_power_consumption_average_consumed_watts"
+                "nutanix_power_consumption_power_consumed_watts",
+                "nutanix_power_consumption_min_consumed_watts",
+                "nutanix_power_consumption_max_consumed_watts",
+                "nutanix_power_consumption_average_consumed_watts"
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['node']))
@@ -232,6 +218,7 @@ class NutanixMetrics:
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['ncm_ssp']))
 
+
     def run_metrics_loop(self):
         """Metrics fetching loop"""
         print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting metrics loop {PrintColors.RESET}")
@@ -259,90 +246,92 @@ class NutanixMetrics:
                 #populating values for host stats metrics
                 for key, value in host['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixHosts_stats_{key}"
+                    key_string = f"nutanix_host_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(host=host['name']).set(value)
                 for key, value in host['usage_stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixHosts_usage_stats_{key}"
+                    key_string = f"nutanix_host_usage_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(host=host['name']).set(value)
                 #populating values for host count metrics
                 host_vms_list = [vm for vm in vms_powered_on if vm['host_uuid'] == host['uuid']]
-                key_string = "NutanixHosts_count_vm"
+                key_string = "nutanix_host_count_vm"
                 self.__dict__[key_string].labels(host=host['name']).set(len(host_vms_list))
-                key_string = "NutanixHosts_count_vcpu"
+                key_string = "nutanix_host_count_vcpu"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in host_vms_list]))
-                key_string = "NutanixHosts_count_vram_mib"
+                key_string = "nutanix_host_count_vram_mib"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([vm['memory_mb'] for vm in host_vms_list]))
-                key_string = "NutanixHosts_count_vdisk"
+                key_string = "nutanix_host_count_vdisk"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in host_vms_list]))
-                key_string = "NutanixHosts_count_vdisk_ide"
+                key_string = "nutanix_host_count_vdisk_ide"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in host_vms_list]))
-                key_string = "NutanixHosts_count_vdisk_sata"
+                key_string = "nutanix_host_count_vdisk_sata"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in host_vms_list]))
-                key_string = "NutanixHosts_count_vdisk_scsi"
+                key_string = "nutanix_host_count_vdisk_scsi"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in host_vms_list]))
-                key_string = "NutanixHosts_count_vnic"
+                key_string = "nutanix_host_count_vnic"
                 self.__dict__[key_string].labels(host=host['name']).set(sum([len(vm['vm_nics']) for vm in host_vms_list]))
 
             #populating values for cluster stats metrics
             for key, value in cluster_details['stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixClusters_stats_{key}"
+                key_string = f"nutanix_cluster_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
             for key, value in cluster_details['usage_stats'].items():
                 #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                key_string = f"NutanixClusters_usage_stats_{key}"
+                key_string = f"nutanix_cluster_usage_stats_{key}"
                 key_string = key_string.replace(".","_")
                 key_string = key_string.replace("-","_")
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
 
             #populating values for cluster count metrics
-            key_string = "NutanixClusters_count_vm"
+            key_string = "nutanix_cluster_count_vm"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vm_details))
-            key_string = "NutanixClusters_count_vm_on"
+            key_string = "nutanix_cluster_count_vm_on"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "on"]))
-            key_string = "NutanixClusters_count_vm_off"
+            key_string = "nutanix_cluster_count_vm_off"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "off"]))
-            key_string = "NutanixClusters_count_vcpu"
+            key_string = "nutanix_cluster_count_vcpu"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in vm_details]))
-            key_string = "NutanixClusters_count_vram_mib"
+            key_string = "nutanix_cluster_count_vram_mib"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([vm['memory_mb'] for vm in vm_details]))
-            key_string = "NutanixClusters_count_vdisk"
+            key_string = "nutanix_cluster_count_vdisk"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in vm_details]))
-            key_string = "NutanixClusters_count_vdisk_ide"
+            key_string = "nutanix_cluster_count_vdisk_ide"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in vm_details]))
-            key_string = "NutanixClusters_count_vdisk_sata"
+            key_string = "nutanix_cluster_count_vdisk_sata"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in vm_details]))
-            key_string = "NutanixClusters_count_vdisk_scsi"
+            key_string = "nutanix_cluster_count_vdisk_scsi"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in vm_details]))
-            key_string = "NutanixClusters_count_vnic"
+            key_string = "nutanix_cluster_count_vnic"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len(vm['vm_nics']) for vm in vm_details]))
 
             #populating values for other misc info based metrics
             #self.lts.labels(cluster=cluster_details['name']).state(str(cluster_details['is_lts']))
-            key_string = "NutanixClusters_info"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).info({
+            key_string = "nutanix_cluster"
+            labels = {
+                'entity': cluster_details['name'],
                 'is_lts': str(cluster_details['is_lts']),
                 'num_nodes': str(cluster_details['num_nodes']),
                 'model_name': str(cluster_details['rackable_units'][0]['model_name']),
                 'storage_type': str(cluster_details['storage_type']),
-                'aos_version': str(cluster_details['version']),
+                'version': str(cluster_details['version']),
                 'is_nsenabled': str(cluster_details['is_nsenabled']),
                 'encrypted': str(cluster_details['encrypted']),
                 'timezone': str(cluster_details['timezone']),
                 'operation_mode': str(cluster_details['operation_mode']),
                 'enable_shadow_clones': str(cluster_details['enable_shadow_clones']),
-                'rf': str(cluster_details['cluster_redundancy_state']['desired_redundancy_factor']),
+                'desired_redundancy_factor': str(cluster_details['cluster_redundancy_state']['desired_redundancy_factor']),
                 'enable_rebuild_reservation': str(cluster_details['enable_rebuild_reservation']),
                 'fault_tolerance_domain_type': str(cluster_details['fault_tolerance_domain_type']),
                 'data_in_transit_encryption_dto': str(cluster_details['data_in_transit_encryption_dto']['enabled'])
-            })
+            }
+            self.__dict__[key_string].info(labels)
 
         if self.vm_list:
             vm_list_array = self.vm_list.split(',')
@@ -368,13 +357,13 @@ class NutanixMetrics:
             for container in storage_containers_details:
                 for key, value in container['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixStorageContainers_stats_{key}"
+                    key_string = f"nutanix_storage_container_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(storage_container=container['name']).set(value)
                 for key, value in container['usage_stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixStorageContainers_usage_stats_{key}"
+                    key_string = f"nutanix_storage_container_usage_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(storage_container=container['name']).set(value)
@@ -398,13 +387,13 @@ class NutanixMetrics:
                 node_name = node_name.replace("-","_")
 
                 power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
-                key_string = "Nutanix_power_consumption_power_consumed_watts"
+                key_string = "nutanix_power_consumption_power_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerConsumedWatts'])
-                key_string = "Nutanix_power_consumption_min_consumed_watts"
+                key_string = "nutanix_power_consumption_min_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MinConsumedWatts'])
-                key_string = "Nutanix_power_consumption_max_consumed_watts"
+                key_string = "nutanix_power_consumption_max_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
-                key_string = "Nutanix_power_consumption_average_consumed_watts"
+                key_string = "nutanix_power_consumption_average_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
 
         if self.prism_central_metrics:
