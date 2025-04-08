@@ -17,6 +17,7 @@ from datetime import datetime
 import os
 import json
 import time
+import re
 import socket
 import ipaddress
 import urllib3
@@ -174,7 +175,12 @@ class NutanixMetrics:
                 "nutanix_power_consumption_power_consumed_watts",
                 "nutanix_power_consumption_min_consumed_watts",
                 "nutanix_power_consumption_max_consumed_watts",
-                "nutanix_power_consumption_average_consumed_watts"
+                "nutanix_power_consumption_average_consumed_watts",
+                "nutanix_thermal_cpu_temp_celsius",
+                "nutanix_thermal_pch_temp_celcius",
+                "nutanix_thermal_system_temp_celcius",
+                "nutanix_thermal_peripheral_temp_celcius",
+                "nutanix_thermal_inlet_temp_celcius",
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['node']))
@@ -372,7 +378,9 @@ class NutanixMetrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{PrintColors.RESET}")
             if not self.cluster_metrics:
                 hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            #todo: figure out a way to mutli-thread this
             for node in hosts_details:
+                #* figuring out management module creds
                 if self.ipmi_username is not None:
                     ipmi_username = self.ipmi_username
                 else:
@@ -382,10 +390,12 @@ class NutanixMetrics:
                 else:
                     ipmi_secret = node['serial']
 
+                #* getting node name for labels
                 node_name = node['name']
                 node_name = node_name.replace(".","_")
                 node_name = node_name.replace("-","_")
 
+                #* collection power consumption metrics
                 power_control = ipmi_get_powercontrol(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
                 key_string = "nutanix_power_consumption_power_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerConsumedWatts'])
@@ -395,6 +405,31 @@ class NutanixMetrics:
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
                 key_string = "nutanix_power_consumption_average_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
+                
+                #* collection thermal metrics
+                thermal = ipmi_get_thermal(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
+                cpu_temps = []
+                for temperature in thermal:
+                    if re.match(r"CPU\d+ Temp", temperature['Name']):
+                        #key_string = "nutanix_thermal_cpu_temp_celsius"
+                        #self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
+                        cpu_temps.append(float(temperature['ReadingCelsius']))
+                    elif temperature['Name'] == 'PCH Temp':
+                        key_string = "nutanix_thermal_pch_temp_celcius"
+                        self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
+                    elif temperature['Name'] == 'System Temp':
+                        key_string = "nutanix_thermal_system_temp_celcius"
+                        self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
+                    elif temperature['Name'] == 'Peripheral Temp':
+                        key_string = "nutanix_thermal_peripheral_temp_celcius"
+                        self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
+                    elif temperature['Name'] == 'Inlet Temp':
+                        key_string = "nutanix_thermal_inlet_temp_celcius"
+                        self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
+                if cpu_temps:
+                    cpu_temp = sum(cpu_temps) / len(cpu_temps)
+                    key_string = "nutanix_thermal_cpu_temp_celsius"
+                    self.__dict__[key_string].labels(node=node_name).set(cpu_temp)
 
         if self.prism_central_metrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting Prism Central metrics{PrintColors.RESET}")
@@ -434,6 +469,7 @@ class NutanixMetrics:
                     vms = future.result()
                     vm_details.extend(vms)
 
+            #* general vm count metrics
             key_string = "Nutanix_count_vm"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len(vm_details))
             key_string = "Nutanix_count_vm_on"
@@ -455,8 +491,11 @@ class NutanixMetrics:
             key_string = "Nutanix_count_vnic"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vnic for vnic in vm['status']['resources']['nic_list']]) for vm in vm_details]))
 
+            #* categories count metrics
+            #todo: keep count of entities for each category
             key_string = "Nutanix_count_category"
 
+            #* DR protected vm count metrics
             key_string = "Nutanix_count_vm_protected"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['protection_type'] == "RULE_PROTECTED"]))
             key_string = "Nutanix_count_vm_protected_synced"
@@ -466,6 +505,7 @@ class NutanixMetrics:
             key_string = "Nutanix_count_vm_protected_compliant"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([protected_vm for protected_vm in protected_vms_list if protected_vm['status']['resources']['protection_policy_state']['compliance_status'] == "COMPLIANT"]))
 
+            #* NGT vm count metrics
             ngt_vms_list = [vm for vm in vm_details if vm.get('status', {}).get('resources', {}).get('guest_tools') is not None]
             key_string = "Nutanix_count_ngt_installed"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([ngt_vm for ngt_vm in ngt_vms_list if ngt_vm['status']['resources']['guest_tools']['nutanix_guest_tools']['ngt_state'] == "INSTALLED"]))
@@ -1018,14 +1058,59 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
-            json.loads(response.content),
+            json.loads(resp.content),
             indent=4
         ))
         raise
 
+
+def ipmi_get_thermal(api_server,secret,username='ADMIN',api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
+    """Retrieves data from the IPMI RedFisk REST API endpoint /Thermal.
+
+    Args:
+        api_server: The IP or FQDN of the IPMI.
+        username: The IPMI user name (defaults to ADMIN).
+        secret: The IPMI user name password.
+        
+    Returns:
+        Thermal metrics object as thermal
+    """
+    
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_endpoint = "/redfish/v1/Chassis/1/Thermal"
+    url = "https://{}{}".format(
+        api_server,
+        api_server_endpoint
+    )
+    method = "GET"
+    #endregion
+    
+    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
+
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        thermal = json_resp['Temperatures']
+        return thermal
+    else:
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
+        print(json.dumps(
+            json.loads(resp.content),
+            indent=4
+        ))
+        raise
+#todo: add get thermals, cpu and memory metrics from redfish
 
 def get_total_entities(api_server, username, password, entity_type, entity_api_root, fiql_filter=None, secure=False):
 
