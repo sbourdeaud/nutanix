@@ -1110,7 +1110,7 @@ def ipmi_get_thermal(api_server,secret,username='ADMIN',api_requests_timeout_sec
             indent=4
         ))
         raise
-#todo: add get thermals, cpu and memory metrics from redfish
+#todo: add get cpu and memory metrics from redfish
 
 def get_total_entities(api_server, username, password, entity_type, entity_api_root, fiql_filter=None, secure=False):
 
@@ -1251,6 +1251,7 @@ def main():
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{PrintColors.RESET}")
+    #todo: figure out how to specify only IPMI addresses without requiriing prism details
     nutanix_metrics = NutanixMetrics(
         app_port=app_port,
         polling_interval_seconds=polling_interval_seconds,

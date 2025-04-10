@@ -31,9 +31,12 @@
         cluster_id = "${local.cluster}"
     }
     locals {
+        ips = [for row in csvdecode(file(var.ips_file)) : values(row)[0]]
+    }
+    locals {
         # Generate a list of maps, each containing the variables for a single VM
         cloud_init_configs = [for i in range(var.qty) : {
-            ip          = var.ips[i]
+            ip          = local.ips[i]
             name        = "${var.vmName}-${i + 1}" # Use local variables instead of interpolating within the string.
             domain      = var.domain
             subnetMask = var.subnetMask
@@ -47,9 +50,8 @@
 
 #region resources
     resource "nutanix_virtual_machine" "vm" {
-        count = "${var.qty}"
-        name = "${var.vmName}-${count.index + 1}"
-
+        count        = "${var.qty}"
+        name         = "${var.vmName}-${count.index + 1}"
         cluster_uuid = "${data.nutanix_cluster.cluster.id}"
 
         nic_list {
@@ -75,9 +77,9 @@
             disk_size_mib   = "${var.dataDiskSizeMib}"
         }
 
-        num_vcpus_per_socket = 1
-        num_sockets          = "${var.cpu}"
-        memory_size_mib      = "${var.ram}"
+        num_vcpus_per_socket                     = 1
+        num_sockets                              = "${var.cpu}"
+        memory_size_mib                          = "${var.ram}"
         guest_customization_cloud_init_user_data = "${base64encode(templatefile("cloud-init.tpl", local.cloud_init_configs[count.index]))}"
     }
 #endregion
