@@ -1,12 +1,18 @@
-""" creates a VM migration plan in Move, checks status and allows for cutover.
+""" creates a VM migration plan in Move and starts the migration process.
 
     Args:
         move: The IP or FQDN of the Move instance.
         username: The Move user name.
-        secret: The Move user name password.
+        source: The name of the source environment.
+        target: The name of the target environment.
+        vm: The name of the VM to migrate.
+        cluster: The name of the target cluster.
+        network: The name of the target network.
+        storage_container: The name of the target storage container.
+        os_username: The username of the VM guest operating system.
 
     Returns:
-        stdout text.
+        stdout text and a migration plan created, prepared and started in the target Move appliance.
 """
 
 
