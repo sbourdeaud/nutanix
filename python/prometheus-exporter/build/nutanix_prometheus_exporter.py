@@ -33,10 +33,56 @@ class PrintColors:
     OK = '\033[92m' #GREEN
     WARNING = '\033[93m' #YELLOW
     FAIL = '\033[91m' #RED
-    RESET = '\033[0m' #RESET COLOR   
+    RESET = '\033[0m' #RESET COLOR
 
 
 class NutanixMetrics:
+    """
+    Representation of Prometheus metrics and loop to fetch and transform
+    application metrics into Prometheus metrics.
+    """
+    def __init__(self,
+                 ipmi_username='ADMIN', ipmi_secret=None,
+                 app_port=9440, polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,
+                 prism='127.0.0.1', user='admin', pwd='Nutanix/4u', prism_secure=False,
+                 vm_list='',
+                 cluster_metrics=True, storage_containers_metrics=True, ipmi_metrics=True, prism_central_metrics=False, ncm_ssp_metrics=False):
+        self.ipmi_username = ipmi_username
+        self.ipmi_secret = ipmi_secret
+        self.app_port = app_port
+        self.polling_interval_seconds = polling_interval_seconds
+        self.api_requests_timeout_seconds = api_requests_timeout_seconds
+        self.api_requests_retries = api_requests_retries
+        self.api_sleep_seconds_between_retries = api_sleep_seconds_between_retries
+        self.prism = prism
+        self.user = user
+        self.pwd = pwd
+        self.prism_secure = prism_secure
+        self.vm_list = vm_list
+        self.cluster_metrics = cluster_metrics
+        self.storage_containers_metrics = storage_containers_metrics
+        self.ipmi_metrics = ipmi_metrics
+        self.prism_central_metrics = prism_central_metrics
+        self.ncm_ssp_metrics = ncm_ssp_metrics
+
+    def run_metrics_loop(self):
+        """Metrics fetching loop"""
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting metrics loop {PrintColors.RESET}")
+        while True:
+            self.fetch()
+            print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Waiting for {self.polling_interval_seconds} seconds...{PrintColors.RESET}")
+            time.sleep(self.polling_interval_seconds)
+
+
+    def fetch(self):
+        """
+        Get metrics from application and refresh Prometheus metrics with
+        new values.
+        """
+        pass
+
+
+class NutanixMetricsLegacy:
     """
     Representation of Prometheus metrics and loop to fetch and transform
     application metrics into Prometheus metrics.
@@ -116,7 +162,7 @@ class NutanixMetrics:
                 setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
 
             #creating host counts metrics
-            key_strings = [                
+            key_strings = [
                 "nutanix_host_count_vm",
                 "nutanix_host_count_vcpu",
                 "nutanix_host_count_vram_mib",
@@ -208,7 +254,7 @@ class NutanixMetrics:
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['prism_central']))
 
-        if self.ncm_ssp_metrics:        
+        if self.ncm_ssp_metrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for NCM SSP...{PrintColors.RESET}")
             key_strings = [
                 "Nutanix_ncm_count_applications",
@@ -245,9 +291,9 @@ class NutanixMetrics:
             cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             vm_details = prism_get_vms(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
-            
+
             vms_powered_on = [vm for vm in vm_details if vm['power_state'] == "on"]
-            
+
             for host in hosts_details:
                 #populating values for host stats metrics
                 for key, value in host['stats'].items():
@@ -378,7 +424,6 @@ class NutanixMetrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{PrintColors.RESET}")
             if not self.cluster_metrics:
                 hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
-            #todo: figure out a way to mutli-thread this
             for node in hosts_details:
                 #* figuring out management module creds
                 if self.ipmi_username is not None:
@@ -405,7 +450,7 @@ class NutanixMetrics:
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
                 key_string = "nutanix_power_consumption_average_consumed_watts"
                 self.__dict__[key_string].labels(node=node_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
-                
+
                 #* collection thermal metrics
                 thermal = ipmi_get_thermal(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
                 cpu_temps = []
@@ -444,7 +489,7 @@ class NutanixMetrics:
 
             length=500
             vm_details=[]
-            
+
             vm_count = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -523,7 +568,7 @@ class NutanixMetrics:
             else:
                 ncm_ssp_hostname = self.prism
 
-            print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP apps metrics{PrintColors.RESET}")        
+            print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP apps metrics{PrintColors.RESET}")
             ncm_applications = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -543,7 +588,7 @@ class NutanixMetrics:
                 fiql_filter="_state==running;(name!=Infrastructure;name!=Self%20Service)",
                 secure=self.prism_secure
             )
-            
+
             ncm_applications_provisioning = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -553,7 +598,7 @@ class NutanixMetrics:
                 fiql_filter="_state==provisioning;(name!=Infrastructure;name!=Self%20Service)",
                 secure=self.prism_secure
             )
-            
+
             ncm_applications_error = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -563,7 +608,7 @@ class NutanixMetrics:
                 fiql_filter="_state==error;(name!=Infrastructure;name!=Self%20Service)",
                 secure=self.prism_secure
             )
-            
+
             ncm_applications_deleting = get_total_entities(
                 api_server=self.prism,
                 username=self.user,
@@ -573,7 +618,7 @@ class NutanixMetrics:
                 fiql_filter="_state==deleting;(name!=Infrastructure;name!=Self%20Service)",
                 secure=self.prism_secure
             )
-            
+
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting NCM SSP projects metrics{PrintColors.RESET}")
             ncm_projects_count = get_total_entities(
                 api_server=self.prism,
@@ -610,7 +655,7 @@ class NutanixMetrics:
                 entity_api_root='runbooks',
                 secure=self.prism_secure
             )
-            
+
             key_string = "Nutanix_ncm_count_applications"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications)
             key_string = "Nutanix_ncm_count_applications_provisioning"
@@ -629,6 +674,106 @@ class NutanixMetrics:
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_marketplace_items_count)
             key_string = "Nutanix_ncm_count_projects"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_projects_count)
+
+
+class NutanixMetricsRedfish:
+    """
+    Representation of Prometheus metrics and loop to fetch and transform
+    application metrics into Prometheus metrics.
+    """
+    def __init__(self,
+                 ipmi_config,
+                 polling_interval_seconds=30, api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,
+                 ipmi_secure=False,
+                 ):
+        self.ipmi_config = ipmi_config
+        self.polling_interval_seconds = polling_interval_seconds
+        self.api_requests_timeout_seconds = api_requests_timeout_seconds
+        self.api_requests_retries = api_requests_retries
+        self.api_sleep_seconds_between_retries = api_sleep_seconds_between_retries
+        self.ipmi_secure = ipmi_secure
+
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for IPMI adapters...{PrintColors.RESET}")
+        key_strings = [
+            "nutanix_power_consumption_power_consumed_watts",
+            "nutanix_power_consumption_min_consumed_watts",
+            "nutanix_power_consumption_max_consumed_watts",
+            "nutanix_power_consumption_average_consumed_watts",
+            "nutanix_thermal_cpu_temp_celsius",
+            "nutanix_thermal_pch_temp_celcius",
+            "nutanix_thermal_system_temp_celcius",
+            "nutanix_thermal_peripheral_temp_celcius",
+            "nutanix_thermal_inlet_temp_celcius",
+        ]
+        for key_string in key_strings:
+            setattr(self, key_string, Gauge(key_string, key_string, ['ipmi']))
+
+
+    def run_metrics_loop(self):
+        """Metrics fetching loop"""
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting metrics loop {PrintColors.RESET}")
+        while True:
+            self.fetch()
+            print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Waiting for {self.polling_interval_seconds} seconds...{PrintColors.RESET}")
+            time.sleep(self.polling_interval_seconds)
+
+
+    def process_redfish_entity(self,ipmi_entity):
+        """Retrieves metrics from a single IPMI entity and updates Prometheus metrics."""
+        ipmi = ipmi_entity['ip']
+        ipmi_name = ipmi_entity['name']
+        ipmi_username = ipmi_entity['username']
+        ipmi_secret = ipmi_entity['password']
+
+        #* collection power consumption metrics
+        power_control = ipmi_get_powercontrol(ipmi,secret=ipmi_secret,username=ipmi_username,secure=self.ipmi_secure)
+        key_string = "nutanix_power_consumption_power_consumed_watts"
+        self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerConsumedWatts'])
+        key_string = "nutanix_power_consumption_min_consumed_watts"
+        self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerMetrics']['MinConsumedWatts'])
+        key_string = "nutanix_power_consumption_max_consumed_watts"
+        self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
+        key_string = "nutanix_power_consumption_average_consumed_watts"
+        self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
+
+        #* collection thermal metrics
+        thermal = ipmi_get_thermal(ipmi,secret=ipmi_secret,username=ipmi_username,secure=self.ipmi_secure)
+        cpu_temps = []
+        for temperature in thermal:
+            if re.match(r"CPU\d+ Temp", temperature['Name']):
+                cpu_temps.append(float(temperature['ReadingCelsius']))
+            elif temperature['Name'] == 'PCH Temp':
+                key_string = "nutanix_thermal_pch_temp_celcius"
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+            elif temperature['Name'] == 'System Temp':
+                key_string = "nutanix_thermal_system_temp_celcius"
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+            elif temperature['Name'] == 'Peripheral Temp':
+                key_string = "nutanix_thermal_peripheral_temp_celcius"
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+            elif temperature['Name'] == 'Inlet Temp':
+                key_string = "nutanix_thermal_inlet_temp_celcius"
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+        if cpu_temps:
+            cpu_temp = sum(cpu_temps) / len(cpu_temps)
+            key_string = "nutanix_thermal_cpu_temp_celsius"
+            self.__dict__[key_string].labels(ipmi=ipmi_name).set(cpu_temp)
+
+
+    def fetch(self):
+        """
+        Get metrics from application and refresh Prometheus metrics with
+        new values.
+        """
+
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Collecting IPMI metrics{PrintColors.RESET}")
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(self.process_redfish_entity,ipmi_entity=ipmi_entity) for ipmi_entity in self.ipmi_config]
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception as e:
+                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] A task failed with error: {e}{PrintColors.RESET}")
 #endregion #*CLASS
 
 
@@ -695,7 +840,7 @@ def process_request(url, method, user, password, headers, api_requests_timeout_s
                     timeout=timeout
                 )
 
-        except requests.exceptions.HTTPError as error_code:
+        except requests.exceptions.HTTPError:
             print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Http Error! Status code: {response.status_code}{PrintColors.RESET}")
             print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {response.reason}{PrintColors.RESET}")
             print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {response.text}{PrintColors.RESET}")
@@ -707,40 +852,46 @@ def process_request(url, method, user, password, headers, api_requests_timeout_s
                 json.loads(response.content),
                 indent=4
             ))
-            exit(response.status_code)
+            error_message = f"HTTPError {url} {response.status_code} {response.reason} {response.text}"
+            raise Exception(error_message)
         except requests.exceptions.ConnectionError as error_code:
             if retries == 1:
-                print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
-                exit(1)
+                error_message = f"ConnectionError {url} {type(error_code).__name__} {str(error_code)}"
+                print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] ConnectionError {url} {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
+                raise Exception(error_message)
             else:
-                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
+                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {url} {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
                 time.sleep(sleep_between_retries)
                 retries -= 1
-                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Retries left: {retries}{PrintColors.RESET}")
+                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {url} Retries left: {retries}{PrintColors.RESET}")
                 continue
         except requests.exceptions.Timeout as error_code:
             if retries == 1:
-                print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
-                exit(1)
+                error_message = f"Timeout {url} {type(error_code).__name__} {str(error_code)}"
+                print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Timeout {url} {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
+                raise Exception(error_message)
             else:
-                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
+                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {url} {type(error_code).__name__} {str(error_code)} {PrintColors.RESET}")
                 time.sleep(sleep_between_retries)
                 retries -= 1
-                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Retries left: {retries}{PrintColors.RESET}")
+                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] {url} Retries left: {retries}{PrintColors.RESET}")
                 continue
         except requests.exceptions.RequestException as error_code:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {response.status_code} {PrintColors.RESET}")
-            exit(response.status_code)
+            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {url} {response.status_code} {PrintColors.RESET}")
+            error_message = f"{url} {response.status_code}"
+            raise Exception(error_message)
         break
 
     if response.ok:
         return response
     if response.status_code == 401:
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {response.status_code} {response.reason} {PrintColors.RESET}")
-        exit(response.status_code)
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {url} {response.status_code} {response.reason} {PrintColors.RESET}")
+        error_message = f"{url} {response.status_code} {response.reason}"
+        raise Exception(error_message)
     elif response.status_code == 500:
-        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {response.status_code} {response.reason} {response.text} {PrintColors.RESET}")
-        exit(response.status_code)
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {url} {response.status_code} {response.reason} {response.text} {PrintColors.RESET}")
+        error_message = f"{url} {response.status_code} {response.reason} {response.text}"
+        raise Exception(error_message)
     else:
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] Request failed! Status code: {response.status_code}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [ERROR] reason: {response.reason}{PrintColors.RESET}")
@@ -754,7 +905,8 @@ def process_request(url, method, user, password, headers, api_requests_timeout_s
             json.loads(response.content),
             indent=4
         ))
-        exit(response.status_code)
+        error_message = f"{url} {response.status_code} {response.reason} {response.text}"
+        raise Exception(error_message)
 
 
 def prism_get_cluster(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
@@ -768,7 +920,7 @@ def prism_get_cluster(api_server,username,secret,api_requests_timeout_seconds=30
     Returns:
         Cluster uuid as cluster_uuid. Cluster details as cluster_details
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -800,13 +952,12 @@ def prism_get_cluster(api_server,username,secret,api_requests_timeout_seconds=30
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
-            json.loads(response.content),
+            json.loads(resp.content),
             indent=4
         ))
-        raise
+        error_message = f"{url} {resp.status_code} {resp.reason} {resp.text}"
+        raise Exception(error_message)
 
 
 def prism_get_vm(vm_name,api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
@@ -821,7 +972,7 @@ def prism_get_vm(vm_name,api_server,username,secret,api_requests_timeout_seconds
     Returns:
         VM details as vm_details
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -836,7 +987,7 @@ def prism_get_vm(vm_name,api_server,username,secret,api_requests_timeout_seconds
     )
     method = "GET"
     #endregion
-    
+
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
@@ -856,13 +1007,12 @@ def prism_get_vm(vm_name,api_server,username,secret,api_requests_timeout_seconds
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
-            json.loads(response.content),
+            json.loads(resp.content),
             indent=4
         ))
-        raise
+        error_message = f"{url} {resp.status_code} {resp.reason} {resp.text}"
+        raise Exception(error_message)
 
 
 def prism_get_storage_containers(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
@@ -876,7 +1026,7 @@ def prism_get_storage_containers(api_server,username,secret,api_requests_timeout
     Returns:
         Storage containers details as storage_containers_details
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -891,7 +1041,7 @@ def prism_get_storage_containers(api_server,username,secret,api_requests_timeout
     )
     method = "GET"
     #endregion
-    
+
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
@@ -907,13 +1057,12 @@ def prism_get_storage_containers(api_server,username,secret,api_requests_timeout
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
-            json.loads(response.content),
+            json.loads(resp.content),
             indent=4
         ))
-        raise
+        error_message = f"{url} {resp.status_code} {resp.reason} {resp.text}"
+        raise Exception(error_message)
 
 
 def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
@@ -927,7 +1076,7 @@ def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, 
     Returns:
         Hosts details as hosts_details
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -942,7 +1091,7 @@ def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, 
     )
     method = "GET"
     #endregion
-    
+
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
@@ -958,14 +1107,13 @@ def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, 
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
-            json.loads(response.content),
+            json.loads(resp.content),
             indent=4
         ))
-        raise
-    
+        error_message = f"{url} {resp.status_code} {resp.reason} {resp.text}"
+        raise Exception(error_message)
+
 
 def prism_get_vms(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
     """Retrieves data from the Prism Element v2 REST API endpoint /hosts.
@@ -978,7 +1126,7 @@ def prism_get_vms(api_server,username,secret,api_requests_timeout_seconds=30, ap
     Returns:
         Hosts details as vms_details
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -993,7 +1141,7 @@ def prism_get_vms(api_server,username,secret,api_requests_timeout_seconds=30, ap
     )
     method = "GET"
     #endregion
-    
+
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
@@ -1009,13 +1157,12 @@ def prism_get_vms(api_server,username,secret,api_requests_timeout_seconds=30, ap
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
-        if payload is not None:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] payload: {payload}{PrintColors.RESET}")
         print(json.dumps(
-            json.loads(response.content),
+            json.loads(resp.content),
             indent=4
         ))
-        raise
+        error_message = f"{url} {resp.status_code} {resp.reason} {resp.text}"
+        raise Exception(error_message)
 
 
 def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
@@ -1029,7 +1176,7 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
     Returns:
         PowerControl metrics object as power_control
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -1042,7 +1189,7 @@ def ipmi_get_powercontrol(api_server,secret,username='ADMIN',api_requests_timeou
     )
     method = "GET"
     #endregion
-    
+
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
@@ -1076,7 +1223,7 @@ def ipmi_get_thermal(api_server,secret,username='ADMIN',api_requests_timeout_sec
     Returns:
         Thermal metrics object as thermal
     """
-    
+
     #region prepare the api call
     headers = {
     'Content-Type': 'application/json',
@@ -1089,7 +1236,7 @@ def ipmi_get_thermal(api_server,secret,username='ADMIN',api_requests_timeout_sec
     )
     method = "GET"
     #endregion
-    
+
     print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
     resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
 
@@ -1174,7 +1321,7 @@ def get_entities_batch(api_server, username, password, offset, entity_type, enti
     payload = {'kind': entity_type, 'length': length, 'offset': offset}
     if fiql_filter:
         payload["filter"] = fiql_filter
-    
+
     try:
         response = requests.post(
             url=url,
@@ -1208,37 +1355,37 @@ def main():
     api_sleep_seconds_between_retries = int(os.getenv("API_SLEEP_SECONDS_BETWEEN_RETRIES", "15"))
     app_port = int(os.getenv("APP_PORT", "9440"))
     exporter_port = int(os.getenv("EXPORTER_PORT", "8000"))
-    
+
     cluster_metrics_env = os.getenv('CLUSTER_METRICS',default='True')
     if cluster_metrics_env is not None:
         cluster_metrics = cluster_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         cluster_metrics = False
-    
+
     storage_containers_metrics_env = os.getenv('STORAGE_CONTAINERS_METRICS',default='True')
     if storage_containers_metrics_env is not None:
         storage_containers_metrics = storage_containers_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         storage_containers_metrics = False
-    
+
     ipmi_metrics_env = os.getenv('IPMI_METRICS',default='True')
     if ipmi_metrics_env is not None:
         ipmi_metrics = ipmi_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         ipmi_metrics = False
-    
+
     prism_central_metrics_env = os.getenv('PRISM_CENTRAL_METRICS',default='False')
     if prism_central_metrics_env is not None:
         prism_central_metrics = prism_central_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         prism_central_metrics = False
-    
+
     ncm_ssp_metrics_env = os.getenv('NCM_SSP_METRICS',default='False')
     if ncm_ssp_metrics_env is not None:
         ncm_ssp_metrics = ncm_ssp_metrics_env.lower() in ("true", "1", "t", "y", "yes")
     else:
         ncm_ssp_metrics = False
-        
+
     prism_secure_env = os.getenv('PRISM_SECURE',default='False')
     if prism_secure_env is not None:
         prism_secure = prism_secure_env.lower() in ("true", "1", "t", "y", "yes")
@@ -1250,31 +1397,84 @@ def main():
         #! suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{PrintColors.RESET}")
-    #todo: figure out how to specify only IPMI addresses without requiriing prism details
-    nutanix_metrics = NutanixMetrics(
-        app_port=app_port,
-        polling_interval_seconds=polling_interval_seconds,
-        api_requests_timeout_seconds=api_requests_timeout_seconds,
-        api_requests_retries=api_requests_retries,
-        api_sleep_seconds_between_retries=api_sleep_seconds_between_retries,
-        prism=os.getenv('PRISM'),
-        user = os.getenv('PRISM_USERNAME'),
-        pwd = os.getenv('PRISM_SECRET'),
-        prism_secure=prism_secure,
-        ipmi_username = os.getenv('IPMI_USERNAME', default='ADMIN'),
-        ipmi_secret = os.getenv('IPMI_SECRET', default=None),
-        vm_list=os.getenv('VM_LIST'),
-        cluster_metrics=cluster_metrics,
-        storage_containers_metrics=storage_containers_metrics,
-        ipmi_metrics=ipmi_metrics,
-        prism_central_metrics=prism_central_metrics,
-        ncm_ssp_metrics=ncm_ssp_metrics
-    )
-    
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{PrintColors.RESET}")
-    start_http_server(exporter_port)
-    nutanix_metrics.run_metrics_loop()
+    ipmi_secure_env = os.getenv('IPMI_SECURE',default='False')
+    if ipmi_secure_env is not None:
+        ipmi_secure = ipmi_secure_env.lower() in ("true", "1", "t", "y", "yes")
+        if ipmi_secure is False:
+            #! suppress warnings about insecure connections
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    else:
+        ipmi_secure = False
+        #! suppress warnings about insecure connections
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    ipmi_config = json.loads(os.getenv('IPMI_CONFIG', '[]'))
+
+    operations_mode_env = os.getenv('OPERATIONS_MODE',default='v4')
+
+    if operations_mode_env == 'legacy':
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{PrintColors.RESET}")
+        nutanix_metrics = NutanixMetricsLegacy(
+            app_port=app_port,
+            polling_interval_seconds=polling_interval_seconds,
+            api_requests_timeout_seconds=api_requests_timeout_seconds,
+            api_requests_retries=api_requests_retries,
+            api_sleep_seconds_between_retries=api_sleep_seconds_between_retries,
+            prism=os.getenv('PRISM'),
+            user = os.getenv('PRISM_USERNAME'),
+            pwd = os.getenv('PRISM_SECRET'),
+            prism_secure=prism_secure,
+            ipmi_username = os.getenv('IPMI_USERNAME', default='ADMIN'),
+            ipmi_secret = os.getenv('IPMI_SECRET', default=None),
+            vm_list=os.getenv('VM_LIST'),
+            cluster_metrics=cluster_metrics,
+            storage_containers_metrics=storage_containers_metrics,
+            ipmi_metrics=ipmi_metrics,
+            prism_central_metrics=prism_central_metrics,
+            ncm_ssp_metrics=ncm_ssp_metrics
+        )
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{PrintColors.RESET}")
+        start_http_server(exporter_port)
+        nutanix_metrics.run_metrics_loop()
+    elif operations_mode_env == 'v4':
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{PrintColors.RESET}")
+        nutanix_metrics = NutanixMetrics(
+            app_port=app_port,
+            polling_interval_seconds=polling_interval_seconds,
+            api_requests_timeout_seconds=api_requests_timeout_seconds,
+            api_requests_retries=api_requests_retries,
+            api_sleep_seconds_between_retries=api_sleep_seconds_between_retries,
+            prism=os.getenv('PRISM'),
+            user = os.getenv('PRISM_USERNAME'),
+            pwd = os.getenv('PRISM_SECRET'),
+            prism_secure=prism_secure,
+            ipmi_username = os.getenv('IPMI_USERNAME', default='ADMIN'),
+            ipmi_secret = os.getenv('IPMI_SECRET', default=None),
+            vm_list=os.getenv('VM_LIST'),
+            cluster_metrics=cluster_metrics,
+            storage_containers_metrics=storage_containers_metrics,
+            ipmi_metrics=ipmi_metrics,
+            prism_central_metrics=prism_central_metrics,
+            ncm_ssp_metrics=ncm_ssp_metrics
+        )
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{PrintColors.RESET}")
+        start_http_server(exporter_port)
+        nutanix_metrics.run_metrics_loop()
+    elif operations_mode_env == 'redfish':
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Initializing metrics class...{PrintColors.RESET}")
+        nutanix_metrics = NutanixMetricsRedfish(
+            polling_interval_seconds=polling_interval_seconds,
+            api_requests_timeout_seconds=api_requests_timeout_seconds,
+            api_requests_retries=api_requests_retries,
+            api_sleep_seconds_between_retries=api_sleep_seconds_between_retries,
+            ipmi_secure=ipmi_secure,
+            ipmi_config=ipmi_config,
+        )
+        print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Starting http server on port {exporter_port}{PrintColors.RESET}")
+        start_http_server(exporter_port)
+        nutanix_metrics.run_metrics_loop()
+    else:
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Invalid operations mode (v4, legacy, redfish): {operations_mode_env}{PrintColors.RESET}")
 #endregion #*FUNCTIONS
 
 

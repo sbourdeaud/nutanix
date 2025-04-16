@@ -21,7 +21,7 @@ ENV PRISM_SECRET='secret'
 #ENV IPMI_SECRET='secret'
 #leave this value to null if you don't want to verify SSL certificates. Set it to anything but null to check SSL certificates.
 #ENV PRISM_SECURE=''
-#used to specify the port used by Prism Element API
+#used to specify the port used by Prism API
 ENV APP_PORT='9440'
 
 #defines the time to wait between each poll
@@ -38,6 +38,11 @@ ENV EXPORTER_PORT='8000'
 #use a comma separated string with virtual machine names for which you want to collect metrics. If this is null, then no VM metrics will be collected.
 #it is strongly recommended not to get crazy with vm list as this would considerably lengthen the metric collection time.
 ENV VM_LIST=''
+
+#used to determine operations mode (v4,legacy,redfish).
+ENV OPERATIONS_MODE='legacy'
+
+#*used when operations mode is legacy
 #used to determine if clusters metrics will be generated; set it to False value if you don't want to collect cluster metrics.
 ENV CLUSTER_METRICS='True'
 #used to determine if storage containers metrics will be generated; set it to False value if you don't want to collect storage containers metrics.
@@ -48,5 +53,14 @@ ENV IPMI_METRICS='True'
 ENV PRISM_CENTRAL_METRICS='False'
 #used to determine if NCM SSP metrics will be generated; set it to False value if you don't want to collect NCM SSP metrics.
 ENV NCM_SSP_METRICS='False'
+
+#*used when operations mode is redfish
+#leave this value to null if you don't want to verify SSL certificates when using redfish operations mode. Set it to anything but null to check SSL certificates.
+#ENV IPMI_SECURE=''
+#When using redfish operations mode, configure list of ipmi entities as follows.
+#ENV IPMI_CONFIG='[
+#    {"ip":"1.1.1.1","name":"myhost1","username":"ADMIN","password":"my_pwd"},
+#    {"ip":"2.2.2.2","name":"myhost2","username":"ADMIN","password":"my_other_pwd"},
+#]
 
 
