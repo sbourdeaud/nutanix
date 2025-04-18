@@ -234,6 +234,7 @@ class NutanixMetricsLegacy:
         if self.prism_central_metrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for Prism Central...{PrintColors.RESET}")
             key_strings = [
+                "nutanix_count_vg",
                 "nutanix_count_vm",
                 "nutanix_count_vm_on",
                 "nutanix_count_vm_off",
@@ -498,6 +499,15 @@ class NutanixMetricsLegacy:
                 entity_api_root='vms',
                 secure=self.prism_secure
             )
+            
+            vg_count = get_total_entities(
+                api_server=self.prism,
+                username=self.user,
+                password=self.pwd,
+                entity_type='volume_group',
+                entity_api_root='volume_groups',
+                secure=self.prism_secure
+            )
 
             with ThreadPoolExecutor(max_workers=10) as executor:
                 futures = [executor.submit(
@@ -514,6 +524,10 @@ class NutanixMetricsLegacy:
                     vms = future.result()
                     vm_details.extend(vms)
 
+            #* volume groups metrics
+            key_string = "nutanix_count_vg"
+            self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(vg_count)
+            
             #* general vm count metrics
             key_string = "nutanix_count_vm"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len(vm_details))
