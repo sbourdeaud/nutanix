@@ -1,4 +1,4 @@
-FROM python:3.14.0a7-alpine3.21
+FROM python:3.14.0a7-alpine
 
 WORKDIR /~
 
@@ -9,6 +9,8 @@ COPY . .
 
 CMD [ "python", "-u", "./nutanix_prometheus_exporter.py" ]
 
+#to make sure stdout shows up in the logs
+ENV PYTHONUNBUFFERED=1
 #used to specify Prism Element IP address or FQDN (assuming FQDN can be resolved inside the container)
 ENV PRISM='127.0.0.1'
 #used to specify the username to access Prism (viewer is the least privilege required) 

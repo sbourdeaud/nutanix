@@ -1,0 +1,11 @@
+apiVersion: v2
+name: nutanix-prometheus-exporter
+description: A Helm chart for a Nutanix Prometheus exporter.
+
+type: application
+
+# Versions are expected to follow Semantic Versioning (https://semver.org/)
+version: 0.1.0
+
+# It is recommended to use it with quotes.
+appVersion: "1.0.0"

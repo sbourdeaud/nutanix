@@ -4,6 +4,8 @@ From the **build** directory, run (if using podman, rename `dockerfile` to `Dock
 
  `docker build -t nutanix-prometheus-exporter .`
 
+> [!TIP] It is recommended to tag your image build with the correct processor architecture you are building it for (such as Linux/arm64 or Linux/amd64).  With podman this can be achieved with the --platform parameter when using the build command.
+
  # Running the container
 
  Available environment variables are listed in the `dockerfile` file in the **build** directory.
@@ -16,7 +18,6 @@ From the **build** directory, run (if using podman, rename `dockerfile` to `Dock
 
  You can use `docker logs nutanix-exporter-1` to troubleshoot issues in the container (if using podman, replace `docker` with `podman`).
 
- For now, only cluster *stats* and *usage_stats* are being published.
 
  # Building a demo environment
 
