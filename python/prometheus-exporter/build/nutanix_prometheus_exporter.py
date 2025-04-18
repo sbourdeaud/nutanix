@@ -185,13 +185,13 @@ class NutanixMetricsLegacy:
             if len(vm_details) > 0:
                 for key,value in vm_details['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixVms_stats_{key}"
+                    key_string = f"nutanix_vms_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
                 for key,value in vm_details['usageStats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixVms_usage_stats_{key}"
+                    key_string = f"nutanix_vms_usage_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     setattr(self, key_string, Gauge(key_string, key_string, ['vm']))
@@ -234,22 +234,22 @@ class NutanixMetricsLegacy:
         if self.prism_central_metrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for Prism Central...{PrintColors.RESET}")
             key_strings = [
-                "Nutanix_count_vm",
-                "Nutanix_count_vm_on",
-                "Nutanix_count_vm_off",
-                "Nutanix_count_vcpu",
-                "Nutanix_count_vram_mib",
-                "Nutanix_count_vdisk",
-                "Nutanix_count_vdisk_ide",
-                "Nutanix_count_vdisk_sata",
-                "Nutanix_count_vdisk_scsi",
-                "Nutanix_count_vnic",
-                "Nutanix_count_category",
-                "Nutanix_count_vm_protected",
-                "Nutanix_count_vm_protected_compliant",
-                "Nutanix_count_vm_protected_synced",
-                "Nutanix_count_ngt_installed",
-                "Nutanix_count_ngt_enabled"
+                "nutanix_count_vm",
+                "nutanix_count_vm_on",
+                "nutanix_count_vm_off",
+                "nutanix_count_vcpu",
+                "nutanix_count_vram_mib",
+                "nutanix_count_vdisk",
+                "nutanix_count_vdisk_ide",
+                "nutanix_count_vdisk_sata",
+                "nutanix_count_vdisk_scsi",
+                "nutanix_count_vnic",
+                "nutanix_count_category",
+                "nutanix_count_vm_protected",
+                "nutanix_count_vm_protected_compliant",
+                "nutanix_count_vm_protected_synced",
+                "nutanix_count_ngt_installed",
+                "nutanix_count_ngt_enabled"
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['prism_central']))
@@ -257,15 +257,15 @@ class NutanixMetricsLegacy:
         if self.ncm_ssp_metrics:
             print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d_%H:%M:%S')} [INFO] Initializing metrics for NCM SSP...{PrintColors.RESET}")
             key_strings = [
-                "Nutanix_ncm_count_applications",
-                "Nutanix_ncm_count_applications_provisioning",
-                "Nutanix_ncm_count_applications_running",
-                "Nutanix_ncm_count_applications_error",
-                "Nutanix_ncm_count_applications_deleting",
-                "Nutanix_ncm_count_blueprints",
-                "Nutanix_ncm_count_runbooks",
-                "Nutanix_ncm_count_projects",
-                "Nutanix_ncm_count_marketplace_items"
+                "nutanix_ncm_count_applications",
+                "nutanix_ncm_count_applications_provisioning",
+                "nutanix_ncm_count_applications_running",
+                "nutanix_ncm_count_applications_error",
+                "nutanix_ncm_count_applications_deleting",
+                "nutanix_ncm_count_blueprints",
+                "nutanix_ncm_count_runbooks",
+                "nutanix_ncm_count_projects",
+                "nutanix_ncm_count_marketplace_items"
             ]
             for key_string in key_strings:
                 setattr(self, key_string, Gauge(key_string, key_string, ['ncm_ssp']))

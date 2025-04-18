@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD [ "python", "./nutanix_prometheus_exporter.py" ]
+CMD [ "python", "-u", "./nutanix_prometheus_exporter.py" ]
 
 #used to specify Prism Element IP address or FQDN (assuming FQDN can be resolved inside the container)
 ENV PRISM='127.0.0.1'
