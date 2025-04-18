@@ -147,6 +147,7 @@ class NutanixMetricsLegacy:
 
             #creating cluster counts metrics
             key_strings = [
+                "nutanix_cluster_count_vg",
                 "nutanix_cluster_count_vm",
                 "nutanix_cluster_count_vm_on",
                 "nutanix_cluster_count_vm_off",
@@ -292,7 +293,8 @@ class NutanixMetricsLegacy:
             cluster_uuid, cluster_details = prism_get_cluster(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             vm_details = prism_get_vms(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
             hosts_details = prism_get_hosts(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
-
+            vg_details = prism_get_volume_groups(api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
+            
             vms_powered_on = [vm for vm in vm_details if vm['power_state'] == "on"]
 
             for host in hosts_details:
@@ -343,6 +345,8 @@ class NutanixMetricsLegacy:
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
 
             #populating values for cluster count metrics
+            key_string = "nutanix_cluster_count_vg"
+            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vg_details))
             key_string = "nutanix_cluster_count_vm"
             self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vm_details))
             key_string = "nutanix_cluster_count_vm_on"
@@ -431,7 +435,7 @@ class NutanixMetricsLegacy:
                     ipmi_username = self.ipmi_username
                 else:
                     ipmi_username = 'ADMIN'
-                if self.ipmi_secret is not None:
+                if self.ipmi_secret is not None and self.ipmi_secret != 'null':
                     ipmi_secret = self.ipmi_secret
                 else:
                     ipmi_secret = node['serial']
@@ -1114,6 +1118,56 @@ def prism_get_hosts(api_server,username,secret,api_requests_timeout_seconds=30, 
         json_resp = json.loads(resp.content)
         hosts_details = json_resp['entities']
         return hosts_details
+    else:
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] text: {resp.text}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] raise_for_status: {resp.raise_for_status()}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] elapsed: {resp.elapsed}{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] headers: {resp.headers}{PrintColors.RESET}")
+        print(json.dumps(
+            json.loads(resp.content),
+            indent=4
+        ))
+        error_message = f"{url} {resp.status_code} {resp.reason} {resp.text}"
+        raise Exception(error_message)
+
+
+def prism_get_volume_groups(api_server,username,secret,api_requests_timeout_seconds=30, api_requests_retries=5, api_sleep_seconds_between_retries=15,secure=False):
+    """Retrieves data from the Prism Element v2 REST API endpoint /volume_groups.
+
+    Args:
+        api_server: The IP or FQDN of Prism.
+        username: The Prism user name.
+        secret: The Prism user name password.
+        
+    Returns:
+        VG details as vg_details
+    """
+
+    #region prepare the api call
+    headers = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+    }
+    api_server_port = int(os.getenv("APP_PORT", "9440"))
+    api_server_endpoint = "/PrismGateway/services/rest/v2.0/volume_groups/"
+    url = "https://{}:{}{}".format(
+        api_server,
+        api_server_port,
+        api_server_endpoint
+    )
+    method = "GET"
+    #endregion
+
+    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Making a {method} API call to {url} with secure set to {secure}{PrintColors.RESET}")
+    resp = process_request(url,method,username,secret,headers,secure=secure,api_requests_timeout_seconds=api_requests_timeout_seconds, api_requests_retries=api_requests_retries, api_sleep_seconds_between_retries=api_sleep_seconds_between_retries)
+
+    # deal with the result/response
+    if resp.ok:
+        json_resp = json.loads(resp.content)
+        vg_details = json_resp['entities']
+        return vg_details
     else:
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Request failed! Status code: {resp.status_code}{PrintColors.RESET}")
         print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] reason: {resp.reason}{PrintColors.RESET}")
