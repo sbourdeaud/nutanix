@@ -392,13 +392,13 @@ class NutanixMetricsLegacy:
                 vm_details = prism_get_vm(vm_name=vm,api_server=self.prism,username=self.user,secret=self.pwd,secure=self.prism_secure,api_requests_timeout_seconds=self.api_requests_timeout_seconds, api_requests_retries=self.api_requests_retries, api_sleep_seconds_between_retries=self.api_sleep_seconds_between_retries)
                 for key, value in vm_details['stats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixVms_stats_{key}"
+                    key_string = f"nutanix_vms_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(vm=vm_details['vmName']).set(value)
                 for key, value in vm_details['usageStats'].items():
                     #making sure we are compliant with the data model (https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels)
-                    key_string = f"NutanixVms_usage_stats_{key}"
+                    key_string = f"nutanix_vms_usage_stats_{key}"
                     key_string = key_string.replace(".","_")
                     key_string = key_string.replace("-","_")
                     self.__dict__[key_string].labels(vm=vm_details['vmName']).set(value)
@@ -515,46 +515,46 @@ class NutanixMetricsLegacy:
                     vm_details.extend(vms)
 
             #* general vm count metrics
-            key_string = "Nutanix_count_vm"
+            key_string = "nutanix_count_vm"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len(vm_details))
-            key_string = "Nutanix_count_vm_on"
+            key_string = "nutanix_count_vm_on"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['power_state'] == "ON"]))
-            key_string = "Nutanix_count_vm_off"
+            key_string = "nutanix_count_vm_off"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['power_state'] == "OFF"]))
-            key_string = "Nutanix_count_vcpu"
+            key_string = "nutanix_count_vcpu"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([(vm['status']['resources']['num_sockets'] * vm['status']['resources']['num_threads_per_core']) for vm in vm_details]))
-            key_string = "Nutanix_count_vram_mib"
+            key_string = "nutanix_count_vram_mib"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([vm['status']['resources']['memory_size_mib'] for vm in vm_details]))
-            key_string = "Nutanix_count_vdisk"
+            key_string = "nutanix_count_vdisk"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if vdisk['device_properties']['device_type'] == 'DISK']) for vm in vm_details]))
-            key_string = "Nutanix_count_vdisk_ide"
+            key_string = "nutanix_count_vdisk_ide"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'IDE')]) for vm in vm_details]))
-            key_string = "Nutanix_count_vdisk_sata"
+            key_string = "nutanix_count_vdisk_sata"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'SATA')]) for vm in vm_details]))
-            key_string = "Nutanix_count_vdisk_scsi"
+            key_string = "nutanix_count_vdisk_scsi"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vdisk for vdisk in vm['status']['resources']['disk_list'] if (vdisk['device_properties']['device_type'] == 'DISK') and (vdisk['device_properties']['disk_address']['adapter_type'] == 'SCSI')]) for vm in vm_details]))
-            key_string = "Nutanix_count_vnic"
+            key_string = "nutanix_count_vnic"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(sum([len([vnic for vnic in vm['status']['resources']['nic_list']]) for vm in vm_details]))
 
             #* categories count metrics
             #todo: keep count of entities for each category
-            key_string = "Nutanix_count_category"
+            key_string = "nutanix_count_category"
 
             #* DR protected vm count metrics
-            key_string = "Nutanix_count_vm_protected"
+            key_string = "nutanix_count_vm_protected"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([vm for vm in vm_details if vm['status']['resources']['protection_type'] == "RULE_PROTECTED"]))
-            key_string = "Nutanix_count_vm_protected_synced"
+            key_string = "nutanix_count_vm_protected_synced"
             protected_vms_list = [vm for vm in vm_details if vm.get('status', {}).get('resources', {}).get('protection_policy_state') is not None]
             protected_vms_with_status_list = [vm for vm in protected_vms_list if vm.get('status', {}).get('resources', {}).get('protection_policy_state').get('policy_info').get('replication_status') is not None]
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([protected_vm for protected_vm in protected_vms_with_status_list if protected_vm['status']['resources']['protection_policy_state']['policy_info']['replication_status'] == "SYNCED"]))
-            key_string = "Nutanix_count_vm_protected_compliant"
+            key_string = "nutanix_count_vm_protected_compliant"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([protected_vm for protected_vm in protected_vms_list if protected_vm['status']['resources']['protection_policy_state']['compliance_status'] == "COMPLIANT"]))
 
             #* NGT vm count metrics
             ngt_vms_list = [vm for vm in vm_details if vm.get('status', {}).get('resources', {}).get('guest_tools') is not None]
-            key_string = "Nutanix_count_ngt_installed"
+            key_string = "nutanix_count_ngt_installed"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([ngt_vm for ngt_vm in ngt_vms_list if ngt_vm['status']['resources']['guest_tools']['nutanix_guest_tools']['ngt_state'] == "INSTALLED"]))
-            key_string = "Nutanix_count_ngt_enabled"
+            key_string = "nutanix_count_ngt_enabled"
             self.__dict__[key_string].labels(prism_central=prism_central_hostname).set(len([ngt_vm for ngt_vm in ngt_vms_list if ngt_vm['status']['resources']['guest_tools']['nutanix_guest_tools']['is_reachable'] is True]))
 
         if self.ncm_ssp_metrics:
@@ -656,23 +656,23 @@ class NutanixMetricsLegacy:
                 secure=self.prism_secure
             )
 
-            key_string = "Nutanix_ncm_count_applications"
+            key_string = "nutanix_ncm_count_applications"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications)
-            key_string = "Nutanix_ncm_count_applications_provisioning"
+            key_string = "nutanix_ncm_count_applications_provisioning"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_provisioning)
-            key_string = "Nutanix_ncm_count_applications_running"
+            key_string = "nutanix_ncm_count_applications_running"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_running)
-            key_string = "Nutanix_ncm_count_applications_error"
+            key_string = "nutanix_ncm_count_applications_error"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_error)
-            key_string = "Nutanix_ncm_count_applications_deleting"
+            key_string = "nutanix_ncm_count_applications_deleting"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_applications_deleting)
-            key_string = "Nutanix_ncm_count_blueprints"
+            key_string = "nutanix_ncm_count_blueprints"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_blueprints_count)
-            key_string = "Nutanix_ncm_count_runbooks"
+            key_string = "nutanix_ncm_count_runbooks"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_runbooks_count)
-            key_string = "Nutanix_ncm_count_marketplace_items"
+            key_string = "nutanix_ncm_count_marketplace_items"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_marketplace_items_count)
-            key_string = "Nutanix_ncm_count_projects"
+            key_string = "nutanix_ncm_count_projects"
             self.__dict__[key_string].labels(ncm_ssp=ncm_ssp_hostname).set(ncm_projects_count)
 
 
