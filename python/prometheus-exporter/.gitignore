@@ -136,3 +136,5 @@ build/.secrets*
 *.xlsx
 .DS_Store
 *.css
+/.local/
+.local

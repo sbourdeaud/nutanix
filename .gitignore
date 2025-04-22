@@ -18,3 +18,4 @@ prism/.DS_Store
 *.lock.hcl
 .terraform.lock.hcl
 /.local/
+.local/
