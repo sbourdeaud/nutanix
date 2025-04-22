@@ -1,15 +1,20 @@
+{{- range $instanceName, $instanceValues := .Values.instances }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "chart.fullname" . }}
+  name: {{ include "chart.fullname" $ }}-{{ $instanceName }}
   labels:
-    {{- include "chart.labels" . | nindent 4 }}
+    app.kubernetes.io/instance: {{ include "chart.name" $ }}-{{ $instanceName }}
+    app.kubernetes.io/name: {{ include "chart.name" $ }}
 spec:
-  type: {{ .Values.service.type }}
+  type: {{ $instanceValues.service.type }}
   ports:
-    - port: {{ .Values.service.port }}
-      targetPort: http
+    - port: {{ $instanceValues.service.port }}
+      targetPort: http-metrics
       protocol: TCP
-      name: http
+      name: http-metrics
   selector:
-    {{- include "chart.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/instance: {{ include "chart.name" $ }}-{{ $instanceName }}
+    app.kubernetes.io/name: {{ include "chart.name" $ }}
+{{- end }}

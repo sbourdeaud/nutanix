@@ -17,3 +17,4 @@ prism/.DS_Store
 *.tfstate.backup
 *.lock.hcl
 .terraform.lock.hcl
+/.local/

@@ -183,10 +183,6 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
 
     processing_start_time = time.time()
     limit=100
-    
-    """ print(f"(main) show graphs: {graph}")
-    print(f"(main) csv exports: {csv_export}") """
-
 
     if show is True:
         #* initialize variable for API client configuration
@@ -303,7 +299,6 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
                   legend_title_text="Metric")
             fig.show() """
 
-
     processing_end_time = time.time()
     elapsed_time = processing_end_time - processing_start_time
     print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
@@ -347,7 +342,4 @@ if __name__ == '__main__':
     elif args.vm:
         target_vms = args.vm.split(',')
 
-    """ print(f"show graphs: {args.graph}")
-    print(f"csv exports: {args.export}") """
-    
     main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,show=args.show,vms=target_vms,minutes_ago=args.time,sampling_interval=args.interval,stat_type=args.stat_type,graph=args.graph,csv_export=args.export)

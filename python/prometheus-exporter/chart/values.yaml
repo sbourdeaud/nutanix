@@ -1,9 +1,65 @@
-# Default values for chart.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+#* use this section to detail your specific instances
+instances:
+  instance1:
+    # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+    replicaCount: 1
+    # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+    service:
+      # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+      type: ClusterIP
+      # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
+      port: 8000
+    # Note that the secret referenced here must pre-exist on the k8s cluster
+    environment: 
+      - name: PRISM
+        value: "<your_prism_ip>"
+      - name: PRISM_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: prism
+            key: username
+      - name: PRISM_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: prism
+            key: secret
+      - name: APP_PORT
+        value: "9440"
+      - name: POLLING_INTERVAL_SECONDS
+        value: "30"
+      - name: API_REQUESTS_TIMEOUT_SECONDS
+        value: "30"
+      - name: API_REQUESTS_RETRIES
+        value: "5"
+      - name: API_SLEEP_SECONDS_BETWEEN_RETRIES
+        value: "15"
+      - name: EXPORTER_PORT
+        value: "8000"
+      - name: VM_LIST
+        value: ""
+      - name: CLUSTER_METRICS
+        value: "True"
+      - name: STORAGE_CONTAINERS_METRICS
+        value: "True"
+      - name: IPMI_METRICS
+        value: "False"
+      - name: PRISM_CENTRAL_METRICS
+        value: "False"
+      - name: NCM_SSP_METRICS
+        value: "False"
+      - name: OPERATIONS_MODE
+        value: "legacy"
+      - name: PYTHONUNBUFFERED
+        value: "1"
+  
 
-# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
-replicaCount: 1
+#* values below are commong for all instances
+# If this is set to true, a serviceMonitor will be created for automating prometheus scraping
+serviceMonitorCreate: true
+
+# This is to override the chart name.
+nameOverride: ""
+fullnameOverride: ""
 
 # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
 image:
@@ -12,25 +68,6 @@ image:
   pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   tag: "latest"
-
-# This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
-imagePullSecrets: 
-  - name: "harbor-registry-secret"
-# This is to override the chart name.
-nameOverride: ""
-fullnameOverride: ""
-
-# This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
-serviceAccount:
-  # Specifies whether a service account should be created
-  create: true
-  # Automatically mount a ServiceAccount's API credentials?
-  automount: true
-  # Annotations to add to the service account
-  annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
-  name: ""
 
 # This is for setting Kubernetes Annotations to a Pod.
 # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
@@ -49,13 +86,6 @@ securityContext: {}
   # readOnlyRootFilesystem: true
   # runAsNonRoot: true
   # runAsUser: 1000
-
-# This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
-service:
-  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
-  type: ClusterIP
-  # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
-  port: 8000
 
 # This block is for setting up the ingress for more information can be found here: https://kubernetes.io/docs/concepts/services-networking/ingress/
 ingress:
@@ -90,11 +120,11 @@ resources: {}
 livenessProbe:
   httpGet:
     path: /
-    port: http
+    port: 8000
 readinessProbe:
   httpGet:
     path: /
-    port: http
+    port: 8000
 
 # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
 autoscaling:
@@ -122,43 +152,3 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
-
-# Note that the secret referenced here must pre-exist on the k8s cluster
-env: 
-  - name: PRISM
-    value: "<your_prism_ip>"
-  - name: PRISM_USERNAME
-    value: "<your_prism_username>"
-  - name: PRISM_SECRET
-    valueFrom:
-      secretKeyRef:
-        name: prism
-        key: secret
-  - name: APP_PORT
-    value: "9440"
-  - name: POLLING_INTERVAL_SECONDS
-    value: "30"
-  - name: API_REQUESTS_TIMEOUT_SECONDS
-    value: "30"
-  - name: API_REQUESTS_RETRIES
-    value: "5"
-  - name: API_SLEEP_SECONDS_BETWEEN_RETRIES
-    value: "15"
-  - name: EXPORTER_PORT
-    value: "8000"
-  - name: VM_LIST
-    value: ""
-  - name: CLUSTER_METRICS
-    value: "True"
-  - name: STORAGE_CONTAINERS_METRICS
-    value: "True"
-  - name: IPMI_METRICS
-    value: "True"
-  - name: PRISM_CENTRAL_METRICS
-    value: "False"
-  - name: NCM_SSP_METRICS
-    value: "False"
-  - name: OPERATIONS_MODE
-    value: "legacy"
-  - name: PYTHONUNBUFFERED
-    value: "1"

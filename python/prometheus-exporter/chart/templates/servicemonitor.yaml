@@ -1,0 +1,18 @@
+{{- if .Values.serviceMonitorCreate -}}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "chart.fullname" $ }}
+  labels:
+    prometheus.kommander.d2iq.io/select: "true"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "chart.name" $ }}
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+      path: /metrics
+      scheme: http
+{{- end }}

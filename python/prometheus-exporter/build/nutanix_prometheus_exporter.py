@@ -147,34 +147,20 @@ class NutanixMetricsLegacy:
 
             #creating cluster counts metrics
             key_strings = [
-                "nutanix_cluster_count_vg",
-                "nutanix_cluster_count_vm",
-                "nutanix_cluster_count_vm_on",
-                "nutanix_cluster_count_vm_off",
-                "nutanix_cluster_count_vcpu",
-                "nutanix_cluster_count_vram_mib",
-                "nutanix_cluster_count_vdisk",
-                "nutanix_cluster_count_vdisk_ide",
-                "nutanix_cluster_count_vdisk_sata",
-                "nutanix_cluster_count_vdisk_scsi",
-                "nutanix_cluster_count_vnic"
+                "nutanix_count_vg",
+                "nutanix_count_vm",
+                "nutanix_count_vm_on",
+                "nutanix_count_vm_off",
+                "nutanix_count_vcpu",
+                "nutanix_count_vram_mib",
+                "nutanix_count_vdisk",
+                "nutanix_count_vdisk_ide",
+                "nutanix_count_vdisk_sata",
+                "nutanix_count_vdisk_scsi",
+                "nutanix_count_vnic"
             ]
             for key_string in key_strings:
-                setattr(self, key_string, Gauge(key_string, key_string, ['cluster']))
-
-            #creating host counts metrics
-            key_strings = [
-                "nutanix_host_count_vm",
-                "nutanix_host_count_vcpu",
-                "nutanix_host_count_vram_mib",
-                "nutanix_host_count_vdisk",
-                "nutanix_host_count_vdisk_ide",
-                "nutanix_host_count_vdisk_sata",
-                "nutanix_host_count_vdisk_scsi",
-                "nutanix_host_count_vnic"
-            ]
-            for key_string in key_strings:
-                setattr(self, key_string, Gauge(key_string, key_string, ['host']))
+                setattr(self, key_string, Gauge(key_string, key_string, ['entity']))
 
             #other misc info based metrics
             setattr(self, 'nutanix_cluster', Info('nutanix_cluster', 'Misc cluster information'))
@@ -313,22 +299,22 @@ class NutanixMetricsLegacy:
                     self.__dict__[key_string].labels(host=host['name']).set(value)
                 #populating values for host count metrics
                 host_vms_list = [vm for vm in vms_powered_on if vm['host_uuid'] == host['uuid']]
-                key_string = "nutanix_host_count_vm"
-                self.__dict__[key_string].labels(host=host['name']).set(len(host_vms_list))
-                key_string = "nutanix_host_count_vcpu"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in host_vms_list]))
-                key_string = "nutanix_host_count_vram_mib"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([vm['memory_mb'] for vm in host_vms_list]))
-                key_string = "nutanix_host_count_vdisk"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in host_vms_list]))
-                key_string = "nutanix_host_count_vdisk_ide"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in host_vms_list]))
-                key_string = "nutanix_host_count_vdisk_sata"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in host_vms_list]))
-                key_string = "nutanix_host_count_vdisk_scsi"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in host_vms_list]))
-                key_string = "nutanix_host_count_vnic"
-                self.__dict__[key_string].labels(host=host['name']).set(sum([len(vm['vm_nics']) for vm in host_vms_list]))
+                key_string = "nutanix_count_vm"
+                self.__dict__[key_string].labels(entity=host['name']).set(len(host_vms_list))
+                key_string = "nutanix_count_vcpu"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in host_vms_list]))
+                key_string = "nutanix_count_vram_mib"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([vm['memory_mb'] for vm in host_vms_list]))
+                key_string = "nutanix_count_vdisk"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in host_vms_list]))
+                key_string = "nutanix_count_vdisk_ide"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in host_vms_list]))
+                key_string = "nutanix_count_vdisk_sata"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in host_vms_list]))
+                key_string = "nutanix_count_vdisk_scsi"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in host_vms_list]))
+                key_string = "nutanix_count_vnic"
+                self.__dict__[key_string].labels(entity=host['name']).set(sum([len(vm['vm_nics']) for vm in host_vms_list]))
 
             #populating values for cluster stats metrics
             for key, value in cluster_details['stats'].items():
@@ -345,28 +331,28 @@ class NutanixMetricsLegacy:
                 self.__dict__[key_string].labels(cluster=cluster_details['name']).set(value)
 
             #populating values for cluster count metrics
-            key_string = "nutanix_cluster_count_vg"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vg_details))
-            key_string = "nutanix_cluster_count_vm"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len(vm_details))
-            key_string = "nutanix_cluster_count_vm_on"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "on"]))
-            key_string = "nutanix_cluster_count_vm_off"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "off"]))
-            key_string = "nutanix_cluster_count_vcpu"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in vm_details]))
-            key_string = "nutanix_cluster_count_vram_mib"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([vm['memory_mb'] for vm in vm_details]))
-            key_string = "nutanix_cluster_count_vdisk"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in vm_details]))
-            key_string = "nutanix_cluster_count_vdisk_ide"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in vm_details]))
-            key_string = "nutanix_cluster_count_vdisk_sata"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in vm_details]))
-            key_string = "nutanix_cluster_count_vdisk_scsi"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in vm_details]))
-            key_string = "nutanix_cluster_count_vnic"
-            self.__dict__[key_string].labels(cluster=cluster_details['name']).set(sum([len(vm['vm_nics']) for vm in vm_details]))
+            key_string = "nutanix_count_vg"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(len(vg_details))
+            key_string = "nutanix_count_vm"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(len(vm_details))
+            key_string = "nutanix_count_vm_on"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "on"]))
+            key_string = "nutanix_count_vm_off"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(len([vm for vm in vm_details if vm['power_state'] == "off"]))
+            key_string = "nutanix_count_vcpu"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([(vm['num_vcpus'] * vm['num_cores_per_vcpu']) for vm in vm_details]))
+            key_string = "nutanix_count_vram_mib"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([vm['memory_mb'] for vm in vm_details]))
+            key_string = "nutanix_count_vdisk"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if vdisk['is_cdrom'] is False]) for vm in vm_details]))
+            key_string = "nutanix_count_vdisk_ide"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'ide')]) for vm in vm_details]))
+            key_string = "nutanix_count_vdisk_sata"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'sata')]) for vm in vm_details]))
+            key_string = "nutanix_count_vdisk_scsi"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([len([vdisk for vdisk in vm['vm_disk_info'] if (vdisk['is_cdrom'] is False) and (vdisk['disk_address']['device_bus'] == 'scsi')]) for vm in vm_details]))
+            key_string = "nutanix_count_vnic"
+            self.__dict__[key_string].labels(entity=cluster_details['name']).set(sum([len(vm['vm_nics']) for vm in vm_details]))
 
             #populating values for other misc info based metrics
             #self.lts.labels(cluster=cluster_details['name']).state(str(cluster_details['is_lts']))
@@ -460,20 +446,20 @@ class NutanixMetricsLegacy:
                 thermal = ipmi_get_thermal(node['ipmi_address'],secret=ipmi_secret,username=ipmi_username,secure=self.prism_secure)
                 cpu_temps = []
                 for temperature in thermal:
-                    if re.match(r"CPU\d+ Temp", temperature['Name']):
+                    if re.match(r"CPU\d+ Temp", temperature['Name']) and temperature['ReadingCelsius']:
                         #key_string = "nutanix_thermal_cpu_temp_celsius"
                         #self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
                         cpu_temps.append(float(temperature['ReadingCelsius']))
-                    elif temperature['Name'] == 'PCH Temp':
+                    elif temperature['Name'] == 'PCH Temp' and temperature['ReadingCelsius']:
                         key_string = "nutanix_thermal_pch_temp_celcius"
                         self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
-                    elif temperature['Name'] == 'System Temp':
+                    elif temperature['Name'] == 'System Temp' and temperature['ReadingCelsius']:
                         key_string = "nutanix_thermal_system_temp_celcius"
                         self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
-                    elif temperature['Name'] == 'Peripheral Temp':
+                    elif temperature['Name'] == 'Peripheral Temp' and temperature['ReadingCelsius']:
                         key_string = "nutanix_thermal_peripheral_temp_celcius"
                         self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
-                    elif temperature['Name'] == 'Inlet Temp':
+                    elif temperature['Name'] == 'Inlet Temp' and temperature['ReadingCelsius']:
                         key_string = "nutanix_thermal_inlet_temp_celcius"
                         self.__dict__[key_string].labels(node=node_name).set(temperature['ReadingCelsius'])
                 if cpu_temps:
