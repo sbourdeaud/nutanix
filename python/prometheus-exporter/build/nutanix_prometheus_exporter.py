@@ -15,6 +15,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import os
+import traceback
 import json
 import time
 import re
@@ -729,35 +730,53 @@ class NutanixMetricsRedfish:
         ipmi_username = ipmi_entity['username']
         ipmi_secret = ipmi_entity['password']
 
+
         #* collection power consumption metrics
         power_control = ipmi_get_powercontrol(ipmi,secret=ipmi_secret,username=ipmi_username,secure=self.ipmi_secure)
         key_string = "nutanix_power_consumption_power_consumed_watts"
-        self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerConsumedWatts'])
+        power = float(power_control.get('PowerConsumedWatts', 0))
+        self.__dict__[key_string].labels(ipmi=ipmi_name).set(power)
+        
         key_string = "nutanix_power_consumption_min_consumed_watts"
+        power = float(power_control.get('PowerMetrics', {}).get('MinConsumedWatts', 0))
         self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerMetrics']['MinConsumedWatts'])
+        
         key_string = "nutanix_power_consumption_max_consumed_watts"
+        power = float(power_control.get('PowerMetrics', {}).get('MaxConsumedWatts', 0))
         self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerMetrics']['MaxConsumedWatts'])
+        
         key_string = "nutanix_power_consumption_average_consumed_watts"
+        power = float(power_control.get('PowerMetrics', {}).get('AverageConsumedWatts', 0))
         self.__dict__[key_string].labels(ipmi=ipmi_name).set(power_control['PowerMetrics']['AverageConsumedWatts'])
+
 
         #* collection thermal metrics
         thermal = ipmi_get_thermal(ipmi,secret=ipmi_secret,username=ipmi_username,secure=self.ipmi_secure)
         cpu_temps = []
         for temperature in thermal:
+            #print(f"{ipmi_entity['name']}: {type(temperature['Name'])}: {type(temperature['ReadingCelsius'])}")
+            if temperature['ReadingCelsius'] is None:
+                temp = 0
+            else:
+                try:
+                    temp = float(temperature.get('ReadingCelsius', 0))
+                except TypeError as e:
+                    print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] TypeError: {e} for {ipmi_entity['name']} when retrieving {temperature['ReadingCelsius']} for {temperature['Name']}. Setting value to 0. {PrintColors.RESET}")
+                    temp = 0
             if re.match(r"CPU\d+ Temp", temperature['Name']):
-                cpu_temps.append(float(temperature['ReadingCelsius']))
+                cpu_temps.append(temp)
             elif temperature['Name'] == 'PCH Temp':
                 key_string = "nutanix_thermal_pch_temp_celcius"
-                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temp)
             elif temperature['Name'] == 'System Temp':
                 key_string = "nutanix_thermal_system_temp_celcius"
-                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temp)
             elif temperature['Name'] == 'Peripheral Temp':
                 key_string = "nutanix_thermal_peripheral_temp_celcius"
-                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temp)
             elif temperature['Name'] == 'Inlet Temp':
                 key_string = "nutanix_thermal_inlet_temp_celcius"
-                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temperature['ReadingCelsius'])
+                self.__dict__[key_string].labels(ipmi=ipmi_name).set(temp)
         if cpu_temps:
             cpu_temp = sum(cpu_temps) / len(cpu_temps)
             key_string = "nutanix_thermal_cpu_temp_celsius"
@@ -777,7 +796,8 @@ class NutanixMetricsRedfish:
             try:
                 future.result()
             except Exception as e:
-                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] A task failed with error: {e}{PrintColors.RESET}")
+                print(f"{PrintColors.WARNING}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] A task failed with error: {e} {type(e)} {PrintColors.RESET}")
+                traceback.print_exc()
 #endregion #*CLASS
 
 
