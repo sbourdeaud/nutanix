@@ -8,8 +8,9 @@ set-EsxPortGroup.ps1
 *_flow_ruleset.json
 ahv/github.code-workspace
 .DS_Store
-prism/.DS_Store
 *.DS_Store
+.DS_Store/
+/.DS_Store/
 *.tfvars
 .terraform
 **/.terraform/
