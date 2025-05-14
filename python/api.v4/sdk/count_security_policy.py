@@ -4,6 +4,7 @@
         prism: The IP or FQDN of Prism Central.
         username: The Prism Central user name.
         secure: True or False to control SSL certs verification.
+        prefix: Optional prefix of security policy names (only policies starting with this prefix will be counted).
 
     Returns:
         Count of FNS security policies created in Prism Central.
