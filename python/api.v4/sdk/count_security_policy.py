@@ -18,17 +18,17 @@ import time
 import datetime
 import argparse
 import getpass
-import json
 
 from humanfriendly import format_timespan
 
 import urllib3
 import keyring
 import tqdm
+from tabulate import tabulate
+from colorama import just_fix_windows_console
+from termcolor import colored
 
-import ntnx_prism_py_client
 import ntnx_microseg_py_client
-import ntnx_networking_py_client
 #endregion IMPORT
 
 
@@ -81,7 +81,7 @@ def main(api_server,username,secret,max_workers=5,secure=False,prefix=None):
     limit=100
 
     #region policies
-    #* GET policies
+    
     #region GET policies
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_microseg_py_client.Configuration()
@@ -125,54 +125,168 @@ def main(api_server,username,secret,max_workers=5,secure=False,prefix=None):
     security_policies_list = entity_list
     #endregion GET policies
     
+    #region variables
     if prefix:
         total_security_policies_count = len([policy for policy in security_policies_list if policy.name.startswith(prefix)])
     else:
         total_security_policies_count = len(security_policies_list)
-    isolation_security_policies_total_count = 0
-    isolation_security_policies_vlan_count = 0
-    isolation_security_policies_vpc_count = 0
-    application_security_policies_total_count = 0
-    application_security_policies_vlan_count = 0
-    application_security_policies_vpc_count = 0
-    quarantine_security_policies_total_count = 0
-    unknown_security_policies_count = 0
+    save_security_policies_count, monitor_security_policies_count, enforce_security_policies_count = 0, 0, 0
+    save_security_policies_vlan_count, monitor_security_policies_vlan_count, enforce_security_policies_vlan_count = 0, 0, 0
+    save_security_policies_vpc_count, monitor_security_policies_vpc_count, enforce_security_policies_vpc_count = 0, 0, 0
     
+    isolation_security_policies_total_count = 0
+    isolation_save_security_policies_count, isolation_monitor_security_policies_count, isolation_enforce_security_policies_count = 0, 0, 0
+    isolation_security_policies_vlan_count = 0
+    isolation_save_security_policies_vlan_count, isolation_monitor_security_policies_vlan_count, isolation_enforce_security_policies_vlan_count = 0, 0, 0
+    isolation_security_policies_vpc_count = 0
+    isolation_save_security_policies_vpc_count, isolation_monitor_security_policies_vpc_count, isolation_enforce_security_policies_vpc_count = 0, 0, 0
+    
+    application_security_policies_total_count = 0
+    application_save_security_policies_count, application_monitor_security_policies_count, application_enforce_security_policies_count = 0, 0, 0
+    application_security_policies_vlan_count = 0
+    application_save_security_policies_vlan_count, application_monitor_security_policies_vlan_count, application_enforce_security_policies_vlan_count = 0, 0, 0
+    application_security_policies_vpc_count = 0
+    application_save_security_policies_vpc_count, application_monitor_security_policies_vpc_count, application_enforce_security_policies_vpc_count = 0, 0, 0
+    
+    quarantine_security_policies_total_count = 0
+    quarantine_save_security_policies_count, quarantine_monitor_security_policies_count, quarantine_enforce_security_policies_count = 0, 0, 0
+    quarantine_security_policies_vlan_count = 0
+    quarantine_save_security_policies_vlan_count, quarantine_monitor_security_policies_vlan_count, quarantine_enforce_security_policies_vlan_count = 0, 0, 0
+    quarantine_security_policies_vpc_count = 0
+    quarantine_save_security_policies_vpc_count, quarantine_monitor_security_policies_vpc_count, quarantine_enforce_security_policies_vpc_count = 0, 0, 0
+    
+    unknown_security_policies_count = 0
+    #endregion variables
+
+    #region count policies
     for policy in security_policies_list:
         if prefix:
             if not policy.name.startswith(prefix):
                 continue
         if policy.type == 'ISOLATION':
             isolation_security_policies_total_count += 1
+            if policy.state == 'SAVE':
+                isolation_save_security_policies_count += 1
+            elif policy.state == 'MONITOR':
+                isolation_monitor_security_policies_count += 1
+            elif policy.state == 'ENFORCE':
+                isolation_enforce_security_policies_count += 1
             if policy.scope == 'ALL_VLAN':
                 isolation_security_policies_vlan_count += 1
+                if policy.state == 'SAVE':
+                    isolation_save_security_policies_vlan_count += 1
+                elif policy.state == 'MONITOR':
+                    isolation_monitor_security_policies_vlan_count += 1
+                elif policy.state == 'ENFORCE':
+                    isolation_enforce_security_policies_vlan_count += 1
             elif policy.scope in ['VPC_LIST','ALL_VPC']:
                 isolation_security_policies_vpc_count += 1
+                if policy.state == 'SAVE':
+                    isolation_save_security_policies_vpc_count += 1
+                elif policy.state == 'MONITOR':
+                    isolation_monitor_security_policies_vpc_count += 1
+                elif policy.state == 'ENFORCE':
+                    isolation_enforce_security_policies_vpc_count += 1
             else:
                 unknown_security_policies_count += 1
         elif policy.type == 'APPLICATION':
             application_security_policies_total_count += 1
+            if policy.state == 'SAVE':
+                application_save_security_policies_count += 1
+            elif policy.state == 'MONITOR':
+                application_monitor_security_policies_count += 1
+            elif policy.state == 'ENFORCE':
+                application_enforce_security_policies_count += 1
             if policy.scope == 'ALL_VLAN':
                 application_security_policies_vlan_count += 1
+                if policy.state == 'SAVE':
+                    application_save_security_policies_vlan_count += 1
+                elif policy.state == 'MONITOR':
+                    application_monitor_security_policies_vlan_count += 1
+                elif policy.state == 'ENFORCE':
+                    application_enforce_security_policies_vlan_count += 1
             elif policy.scope in ['VPC_LIST','ALL_VPC']:
                 application_security_policies_vpc_count += 1
+                if policy.state == 'SAVE':
+                    application_save_security_policies_vpc_count += 1
+                elif policy.state == 'MONITOR':
+                    application_monitor_security_policies_vpc_count += 1
+                elif policy.state == 'ENFORCE':
+                    application_enforce_security_policies_vpc_count += 1
             else:
                 unknown_security_policies_count += 1
         elif policy.type == 'QUARANTINE':
             quarantine_security_policies_total_count += 1
-    #endregion policies
+            if policy.state == 'SAVE':
+                quarantine_save_security_policies_count += 1
+            elif policy.state == 'MONITOR':
+                quarantine_monitor_security_policies_count += 1
+            elif policy.state == 'ENFORCE':
+                quarantine_enforce_security_policies_count += 1
+            if policy.scope == 'ALL_VLAN':
+                quarantine_security_policies_vlan_count += 1
+                if policy.state == 'SAVE':
+                    quarantine_save_security_policies_vlan_count += 1
+                elif policy.state == 'MONITOR':
+                    quarantine_monitor_security_policies_vlan_count += 1
+                elif policy.state == 'ENFORCE':
+                    quarantine_enforce_security_policies_vlan_count += 1
+            elif policy.scope in ['VPC_LIST','ALL_VPC']:
+                quarantine_security_policies_vpc_count += 1
+                if policy.state == 'SAVE':
+                    quarantine_save_security_policies_vpc_count += 1
+                elif policy.state == 'MONITOR':
+                    quarantine_monitor_security_policies_vpc_count += 1
+                elif policy.state == 'ENFORCE':
+                    quarantine_enforce_security_policies_vpc_count += 1
+            else:
+                unknown_security_policies_count += 1
     
-    print(f"{PrintColors.DATA}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [DATA] ------ Security Policies on {api_server} ------")
-    print(f"    Total security policies count : {total_security_policies_count}")
-    print(f"    Isolation policies            : {isolation_security_policies_total_count}")
-    print(f"        VLAN                      : {isolation_security_policies_vlan_count}")
-    print(f"        VPC                       : {isolation_security_policies_vpc_count}")
-    print(f"    Application policies          : {application_security_policies_total_count}")
-    print(f"        VLAN                      : {application_security_policies_vlan_count}")
-    print(f"        VPC                       : {application_security_policies_vpc_count}")
-    print(f"    Quarantine policies           : {quarantine_security_policies_total_count}")
-    print(f"    Unknown type policies         : {unknown_security_policies_count}{PrintColors.RESET}")
+    total_vlan_security_policies_count = isolation_security_policies_vlan_count + application_security_policies_vlan_count + quarantine_security_policies_vlan_count
+    total_vpc_security_policies_count = isolation_security_policies_vpc_count + application_security_policies_vpc_count + quarantine_security_policies_vpc_count
+    save_security_policies_count = isolation_save_security_policies_count + application_save_security_policies_count + quarantine_save_security_policies_count
+    monitor_security_policies_count = isolation_monitor_security_policies_count + application_monitor_security_policies_count + quarantine_monitor_security_policies_count
+    enforce_security_policies_count = isolation_enforce_security_policies_count + application_enforce_security_policies_count + quarantine_enforce_security_policies_count
+    save_security_policies_vlan_count = isolation_save_security_policies_vlan_count + application_save_security_policies_vlan_count + quarantine_save_security_policies_vlan_count
+    monitor_security_policies_vlan_count = isolation_monitor_security_policies_vlan_count + application_monitor_security_policies_vlan_count + quarantine_monitor_security_policies_vlan_count
+    enforce_security_policies_vlan_count = isolation_enforce_security_policies_vlan_count + application_enforce_security_policies_vlan_count + quarantine_enforce_security_policies_vlan_count
+    save_security_policies_vpc_count = isolation_save_security_policies_vpc_count + application_save_security_policies_vpc_count + quarantine_save_security_policies_vpc_count
+    monitor_security_policies_vpc_count = isolation_monitor_security_policies_vpc_count + application_monitor_security_policies_vpc_count + quarantine_monitor_security_policies_vpc_count
+    enforce_security_policies_vpc_count = isolation_enforce_security_policies_vpc_count + application_enforce_security_policies_vpc_count + quarantine_enforce_security_policies_vpc_count
+    #endregion count policies
+    
+    #endregion policies
 
+    #region tabulate
+    
+    just_fix_windows_console()
+    
+    print(colored("ALL Security Policies:", 'black', 'on_white'))
+    all_security_policies_report = [
+        {"type": "Quarantine", "Saved": quarantine_save_security_policies_count, "Monitored": quarantine_monitor_security_policies_count, "Enforced": quarantine_enforce_security_policies_count},
+        {"type": "Application", "Saved": application_save_security_policies_count, "Monitored": application_monitor_security_policies_count, "Enforced": application_monitor_security_policies_count},
+        {"type": "Isolation", "Saved": isolation_save_security_policies_count, "Monitored": isolation_monitor_security_policies_count, "Enforced": isolation_enforce_security_policies_count}
+    ]
+    print(colored(tabulate(all_security_policies_report, headers="keys", tablefmt="fancy_grid"), 'white'))
+
+    print(colored("VLAN Security Policies:", 'white', 'on_green'))
+    vlan_security_policies_report = [
+        {"type": "Quarantine", "Saved": quarantine_save_security_policies_vlan_count, "Monitored": quarantine_monitor_security_policies_vlan_count, "Enforced": quarantine_enforce_security_policies_vlan_count},
+        {"type": "Application", "Saved": application_save_security_policies_vlan_count, "Monitored": application_monitor_security_policies_vlan_count, "Enforced": application_monitor_security_policies_vlan_count},
+        {"type": "Isolation", "Saved": isolation_save_security_policies_vlan_count, "Monitored": isolation_monitor_security_policies_vlan_count, "Enforced": isolation_enforce_security_policies_vlan_count}
+    ]
+    print(colored(tabulate(vlan_security_policies_report, headers="keys", tablefmt="fancy_grid"), 'green'))
+
+    print(colored("VPC Security Policies:", 'white', 'on_blue'))
+    vpc_security_policies_report = [
+        {"Type": "Quarantine", "Saved": quarantine_save_security_policies_vpc_count, "Monitored": quarantine_monitor_security_policies_vpc_count, "Enforced": quarantine_enforce_security_policies_vpc_count},
+        {"Type": "Application", "Saved": application_save_security_policies_vpc_count, "Monitored": application_monitor_security_policies_vpc_count, "Enforced": application_monitor_security_policies_vpc_count},
+        {"Type": "Isolation", "Saved": isolation_save_security_policies_vpc_count, "Monitored": isolation_monitor_security_policies_vpc_count, "Enforced": isolation_enforce_security_policies_vpc_count}
+    ]
+    print(colored(tabulate(vpc_security_policies_report, headers="keys", tablefmt="fancy_grid"), 'blue'))
+
+    #endregion tabulate
+    
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
