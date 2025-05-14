@@ -263,17 +263,17 @@ def main(api_server,username,secret,max_workers=5,secure=False,prefix=None):
     
     print(colored("ALL Security Policies:", 'black', 'on_white'))
     all_security_policies_report = [
-        {"type": "Quarantine", "Saved": quarantine_save_security_policies_count, "Monitored": quarantine_monitor_security_policies_count, "Enforced": quarantine_enforce_security_policies_count},
-        {"type": "Application", "Saved": application_save_security_policies_count, "Monitored": application_monitor_security_policies_count, "Enforced": application_monitor_security_policies_count},
-        {"type": "Isolation", "Saved": isolation_save_security_policies_count, "Monitored": isolation_monitor_security_policies_count, "Enforced": isolation_enforce_security_policies_count}
+        {"Type": "Quarantine", "Saved": quarantine_save_security_policies_count, "Monitored": quarantine_monitor_security_policies_count, "Enforced": quarantine_enforce_security_policies_count},
+        {"Type": "Application", "Saved": application_save_security_policies_count, "Monitored": application_monitor_security_policies_count, "Enforced": application_monitor_security_policies_count},
+        {"Type": "Isolation", "Saved": isolation_save_security_policies_count, "Monitored": isolation_monitor_security_policies_count, "Enforced": isolation_enforce_security_policies_count}
     ]
     print(colored(tabulate(all_security_policies_report, headers="keys", tablefmt="fancy_grid"), 'white'))
 
     print(colored("VLAN Security Policies:", 'white', 'on_green'))
     vlan_security_policies_report = [
-        {"type": "Quarantine", "Saved": quarantine_save_security_policies_vlan_count, "Monitored": quarantine_monitor_security_policies_vlan_count, "Enforced": quarantine_enforce_security_policies_vlan_count},
-        {"type": "Application", "Saved": application_save_security_policies_vlan_count, "Monitored": application_monitor_security_policies_vlan_count, "Enforced": application_monitor_security_policies_vlan_count},
-        {"type": "Isolation", "Saved": isolation_save_security_policies_vlan_count, "Monitored": isolation_monitor_security_policies_vlan_count, "Enforced": isolation_enforce_security_policies_vlan_count}
+        {"Type": "Quarantine", "Saved": quarantine_save_security_policies_vlan_count, "Monitored": quarantine_monitor_security_policies_vlan_count, "Enforced": quarantine_enforce_security_policies_vlan_count},
+        {"Type": "Application", "Saved": application_save_security_policies_vlan_count, "Monitored": application_monitor_security_policies_vlan_count, "Enforced": application_monitor_security_policies_vlan_count},
+        {"Type": "Isolation", "Saved": isolation_save_security_policies_vlan_count, "Monitored": isolation_monitor_security_policies_vlan_count, "Enforced": isolation_enforce_security_policies_vlan_count}
     ]
     print(colored(tabulate(vlan_security_policies_report, headers="keys", tablefmt="fancy_grid"), 'green'))
 
