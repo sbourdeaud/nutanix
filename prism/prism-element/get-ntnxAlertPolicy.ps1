@@ -517,8 +517,8 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
   if ($help) {get-help $myvarScriptName; exit}
   if ($History) {$HistoryText; exit}
 
-  Set-PoSHSSLCerts
-  Set-PoshTls
+  #Set-PoSHSSLCerts
+  #Set-PoshTls
 
 #endregion
 

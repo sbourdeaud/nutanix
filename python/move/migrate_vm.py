@@ -405,7 +405,7 @@ def main(api_server,username,secret,source,target,vm,cluster,network,storage_con
                 for workload in migration_plan["MetaData"]["VMStatus"]:
                     migration_plan_workload_output = {
                         'vm_name': workload['Name'],
-                        'progress_percentage': workload['ProgressPercentage'],
+                        'progress_percentage': workload.get('ProgressPercentage', None),
                         'eta_seconds': None,
                         'state': workload['StateString'],
                         'plan': migration_plan['MetaData']['Name'],
