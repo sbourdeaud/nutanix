@@ -171,18 +171,18 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
     required_categories_list = ["AppTier:Web","AppTier:App","AppTier:DB"]
     #adding AppType category values based on the required quantity of policies
     for i in range(qty):
-        required_categories_list.append(f"AppType:NVDMultiVmApp{i + 1:02}")
+        required_categories_list.append(f"AppType:NVDMultiVmApp{i + 1:03}")
     #converting our list to a list of dictionaries for later
     required_categories_dict_list = []
     for category_key_value_pair in required_categories_list:
         category_key,category_value = category_key_value_pair.split(":")
         required_categories_dict_list.append({"category_key": category_key, "category_value": category_value})
-    
+
     #figure out unique list of existing and required category keys
     unique_existing_category_keys = {getattr(c, 'key') for c in categories_list if hasattr(c, 'key')}
     unique_required_category_keys = {c["category_key"] for c in required_categories_dict_list}
     #print(f"unique_required_category_keys: {unique_required_category_keys}")
-    
+
     #check we have all categories and values we need otherwise create them
     if action == "add":
         for category_key in unique_required_category_keys:
@@ -304,7 +304,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
     #region POST policies
     required_policies_list = []
     for i in range(qty):
-        required_policies_list.append(f"NVDMultiVmApp{i + 1:02}")
+        required_policies_list.append(f"NVDMultiVmApp{i + 1:03}")
     app_tier_list = [c["category_value"] for c in required_categories_dict_list if c["category_key"] == "AppTier"]
 
     for security_policy in required_policies_list:
@@ -315,7 +315,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
             secured_group.append(str(next(iter(app_tier_uuid))))
         #* check if policy already exists
         #policy_name = security_policy
-        policy_name = f"{security_policy}_{policy_type}"
+        policy_name = f"{security_policy}"
         security_policy_match = [s for s in security_policies_list if s.name == policy_name and s.type == policy_type.upper() and s.scope == scope]
         if not security_policy_match and action == "add":
             #* define policy

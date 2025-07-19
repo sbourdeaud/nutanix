@@ -1061,8 +1061,8 @@ https://github.com/sbourdeaud
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-    Set-PoSHSSLCerts
-    Set-PoshTls
+    #Set-PoSHSSLCerts
+    #Set-PoshTls
 
 #endregion
 
@@ -1101,7 +1101,7 @@ https://github.com/sbourdeaud
         Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $cluster ..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
         $method = "GET"
-        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+        $cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $cluster" -ForegroundColor Cyan
 
         Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)." -ForegroundColor Green
@@ -1116,7 +1116,7 @@ https://github.com/sbourdeaud
         Write-Host "$(get-date) [INFO] Retrieving VMs from cluster $cluster..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true"
         $method = "GET"
-        $vmList = Invoke-PrismRESTCall -method $method -url $url  -credential $prismCredentials
+        $vmList = Invoke-PrismAPICall -method $method -url $url  -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs from $cluster!" -ForegroundColor Cyan
         
         if (!($vmDetails = $vmList.entities | Where-Object {$_.name -eq $vm}))
@@ -1145,7 +1145,7 @@ https://github.com/sbourdeaud
         Write-Host "$(get-date) [INFO] Retrieving details of disk $diskUuid..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/virtual_disks/$diskUuid"
         $method = "GET"
-        $diskDetails = Invoke-PrismRESTCall -method $method -url $url  -credential $prismCredentials
+        $diskDetails = Invoke-PrismAPICall -method $method -url $url  -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of disk $diskUuid!" -ForegroundColor Cyan
 
         $diskContainerUUid = $diskDetails.storage_container_uuid
@@ -1159,7 +1159,7 @@ https://github.com/sbourdeaud
             Write-Host "$(get-date) [INFO] Retrieving storage containers from Nutanix cluster $cluster ..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/storage_containers/"
             $method = "GET"
-            $storage_containers = Invoke-PrismRESTCall -method $method -url $url  -credential $prismCredentials
+            $storage_containers = Invoke-PrismAPICall -method $method -url $url  -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers from Nutanix cluster $cluster" -ForegroundColor Cyan
 
             if (!($diskContainerUUid = ($storage_containers.entities | Where-Object {$_.name -eq $container}).storage_container_uuid))
@@ -1173,7 +1173,7 @@ https://github.com/sbourdeaud
         Write-Host "$(get-date) [INFO] Retrieving images from Nutanix cluster $cluster ..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/images/"
         $method = "GET"
-        $images = Invoke-PrismRESTCall -method $method -url $url  -credential $prismCredentials
+        $images = Invoke-PrismAPICall -method $method -url $url  -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved images from Nutanix cluster $cluster" -ForegroundColor Cyan
 
         if ($image_object = $images.entities | Where-Object {$_.name -eq $image})
@@ -1192,7 +1192,7 @@ https://github.com/sbourdeaud
                 #todo: if image is managed in PC, this will probably fail: double check
                 Write-Host "$(get-date) [INFO] Requesting deletion of image $($image) with uuid $($image_object.uuid) from Nutanix cluster $cluster ..." -ForegroundColor Green
                 $url = "https://"+$cluster+":9440/PrismGateway/services/rest/v2.0/images/$($image_object.uuid)"
-                $imageRemove_taskUuid = Invoke-PrismRESTCall  -credential $prismCredentials -method "DELETE" -url $url
+                $imageRemove_taskUuid = Invoke-PrismAPICall  -credential $prismCredentials -method "DELETE" -url $url
                 Write-Host "$(get-date) [SUCCESS] Successfully requested deletion of image $($image) with uuid $($image_object.uuid) from Nutanix cluster $cluster" -ForegroundColor Cyan
 
                 Write-Host "$(get-date) [INFO] Checking status of the image $($image) delete task $($imageRemove_taskUuid.task_uuid)..." -ForegroundColor Green
@@ -1230,7 +1230,7 @@ https://github.com/sbourdeaud
         $method = "POST"
         $content = @{image_type="disk_image";image_import_spec=@{storage_container_uuid=$diskContainerUUid;url=$diskNfsFilePath};name=$image}
         $body = (ConvertTo-Json $content -Depth 4)
-        $taskUuid = Invoke-PrismRESTCall -method $method -url $url  -credential $prismCredentials -payload $body
+        $taskUuid = Invoke-PrismAPICall -method $method -url $url  -credential $prismCredentials -payload $body
         Write-Host "$(get-date) [SUCCESS] Successfully requested creation of image $($image) based on disk $diskUuid in container $diskContainerUUid!" -ForegroundColor Cyan
 
         #check on image import task status

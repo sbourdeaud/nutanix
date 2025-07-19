@@ -345,7 +345,7 @@ def main(api_server,username,secret,secure=False):
         entity_output = {
             'name': entity.name,
             'ext_id': entity.ext_id,
-            'cluster': next(iter({ cluster['name'] for cluster in cluster_list_output if cluster['ext_id'] == entity.cluster_reference })) if hasattr(entity, 'cluster_reference') else '',
+            'cluster': next((cluster['name'] for cluster in cluster_list_output if cluster['ext_id'] == entity.cluster_reference), '') if hasattr(entity, 'cluster_reference') else '',
             'network_id': entity.network_id,
             'subnet_type': entity.subnet_type,
             'bridge_name': entity.bridge_name,
