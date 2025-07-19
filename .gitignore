@@ -20,3 +20,7 @@ ahv/github.code-workspace
 .terraform.lock.hcl
 /.local/
 .local/
+/__pycache__/
+__pycache__
+previous
+/previous/
