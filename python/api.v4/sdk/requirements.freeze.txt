@@ -3,7 +3,7 @@ appnope==0.1.4
 asttokens==3.0.0
 attrs==25.3.0
 backports.tarfile==1.2.0
-certifi==2023.11.17
+certifi==2024.7.4
 chardet==5.2.0
 colorlog==6.9.0
 comm==0.2.2
