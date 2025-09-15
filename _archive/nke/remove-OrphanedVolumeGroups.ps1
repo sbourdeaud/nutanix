@@ -14,7 +14,7 @@
 .PARAMETER prismcentral
   Nutanix Prism Central fully qualified domain name or IP address.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .PARAMETER noprompt
   Switch to specify you do not want to be prompted for each volume group to be removed.  WARNING: note that pvcs could belong to other k8s clusters using the Nutanix storage class (such as an OpenShift cluster). While the script checks for activity in the last 24 hours, it is not bullet proof. use at your own risk and be warned that you will be deleting data!
 .EXAMPLE

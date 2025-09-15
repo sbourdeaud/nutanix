@@ -20,10 +20,10 @@
 
 #region IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 import math
 import time
-import datetime
 import argparse
 import getpass
 import json
@@ -109,12 +109,12 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
         
         client = ntnx_networking_py_client.ApiClient(configuration=api_client_configuration)
         entity_api = ntnx_networking_py_client.VpcsApi(api_client=client)
-        print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching VPC {vpc_name}...{PrintColors.RESET}")
+        print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching VPC {vpc_name}...{PrintColors.RESET}")
         entity_list=[]
         response = entity_api.list_vpcs(_page=0,_limit=1,_filter=f"name eq '{vpc_name}'")
         vpc_details = response.data
         if not vpc_details:
-            print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] VPC {vpc_name} not found.{PrintColors.RESET}")
+            print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] VPC {vpc_name} not found.{PrintColors.RESET}")
             exit(1)
         #print(vpc_details)
     #endregion vpc
@@ -137,7 +137,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
     
     client = ntnx_prism_py_client.ApiClient(configuration=api_client_configuration)
     entity_api = ntnx_prism_py_client.CategoriesApi(api_client=client)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Categories...{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Categories...{PrintColors.RESET}")
     entity_list=[]
     response = entity_api.list_categories(_page=0,_limit=1)
     total_available_results=response.metadata.total_available_results
@@ -158,10 +158,10 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
                     entities = future.result()
                     entity_list.extend(entities.data)
                 except Exception as e:
-                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                    print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                 finally:
                     progress_bar.update(1)
-    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
     categories_list = entity_list
     #endregion GET categories
 
@@ -191,7 +191,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
             if category_key not in unique_existing_category_keys:
                 for category_value in category_values:
                     #* create category value in this new category key
-                    print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Creating category {category_key}:{category_value}{PrintColors.RESET}")
+                    print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Creating category {category_key}:{category_value}{PrintColors.RESET}")
                     new_category = ntnx_prism_py_client.Category()
                     new_category.key = category_key
                     new_category.value = category_value
@@ -202,7 +202,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
                     category_match = [c for c in categories_list if c.key == category_key and c.value == category_value]
                     if not category_match:
                         #* create category value in this existing category key
-                        print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Creating category {category_key}:{category_value}{PrintColors.RESET}")
+                        print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Creating category {category_key}:{category_value}{PrintColors.RESET}")
                         new_category = ntnx_prism_py_client.Category()
                         new_category.key = category_key
                         new_category.value = category_value
@@ -223,7 +223,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
         
         client = ntnx_prism_py_client.ApiClient(configuration=api_client_configuration)
         entity_api = ntnx_prism_py_client.CategoriesApi(api_client=client)
-        print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching updated list of Categories...{PrintColors.RESET}")
+        print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching updated list of Categories...{PrintColors.RESET}")
         entity_list=[]
         response = entity_api.list_categories(_page=0,_limit=1)
         total_available_results=response.metadata.total_available_results
@@ -244,10 +244,10 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
                         entities = future.result()
                         entity_list.extend(entities.data)
                     except Exception as e:
-                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                        print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                     finally:
                         progress_bar.update(1)
-        print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+        print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
         categories_list = entity_list
         #endregion GET categories
     #endregion POST categories
@@ -271,7 +271,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
     
     client = ntnx_microseg_py_client.ApiClient(configuration=api_client_configuration)
     entity_api = ntnx_microseg_py_client.NetworkSecurityPoliciesApi(api_client=client)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Security Policies...{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Security Policies...{PrintColors.RESET}")
     entity_list=[]
     response = entity_api.list_network_security_policies(_page=0,_limit=1)
     total_available_results=response.metadata.total_available_results
@@ -292,10 +292,10 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
                     entities = future.result()
                     entity_list.extend(entities.data)
                 except Exception as e:
-                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                    print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                 finally:
                     progress_bar.update(1)
-    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
     security_policies_list = entity_list
     #endregion GET policies
 
@@ -319,7 +319,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
         security_policy_match = [s for s in security_policies_list if s.name == policy_name and s.type == policy_type.upper() and s.scope == scope]
         if not security_policy_match and action == "add":
             #* define policy
-            print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Creating {policy_type} security policy {policy_name} for scope {scope} with state {policy_state}{PrintColors.RESET}")
+            print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Creating {policy_type} security policy {policy_name} for scope {scope} with state {policy_state}{PrintColors.RESET}")
             new_policy = ntnx_microseg_py_client.NetworkSecurityPolicy()
             new_policy.name = policy_name
             new_policy.description = "Created by add_security_policy.py script"
@@ -335,7 +335,7 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
             #figuring out the uuid of the AppType category value and adding it to the secured group
             app_type_uuid = {c.ext_id for c in categories_list if (c.key == "AppType" and c.value == security_policy)}
             if not app_type_uuid:
-                print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] AppType category value {security_policy} not found.{PrintColors.RESET}")
+                print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] AppType category value {security_policy} not found.{PrintColors.RESET}")
                 exit(1)
             secured_group.append(str(next(iter(app_type_uuid))))
             new_policy.secured_groups = secured_group
@@ -447,24 +447,24 @@ def main(api_server,username,secret,policy_type,scope,vpc_name,qty,action,policy
                 if policy_state != "SAVE":
                     pass
             except ntnx_microseg_py_client.rest.ApiException as e:
-                print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {e.status} {e.reason} when creating {policy_name}{PrintColors.RESET}")
+                print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {e.status} {e.reason} when creating {policy_name}{PrintColors.RESET}")
                 error_details = json.loads(e.body)
                 for error_message in error_details["data"]["error"]["validationErrorMessages"]:
-                    print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error_message['message']}{PrintColors.RESET}")
+                    print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error_message['message']}{PrintColors.RESET}")
         elif action == "remove":
             security_policy_uuid = {s.ext_id for s in security_policies_list if (s.name == policy_name and s.type == policy_type.upper() and s.scope == scope)}
             if security_policy_uuid:
-                print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Removing security policy {policy_name} with scope {scope}{PrintColors.RESET}")
+                print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [STEP] Removing security policy {policy_name} with scope {scope}{PrintColors.RESET}")
                 try:
                     response = entity_api.delete_network_security_policy_by_id(str(next(iter(security_policy_uuid))))
                 except ntnx_microseg_py_client.rest.ApiException as e:
-                    print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {e.status} {e.reason} when deleting {policy_name}{PrintColors.RESET}")
+                    print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {e.status} {e.reason} when deleting {policy_name}{PrintColors.RESET}")
     #endregion POST policies
     #endregion policies
 
     end_time = time.time()
     elapsed_time = end_time - start_time
-    print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
+    print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
 
 
 #endregion FUNCTIONS
@@ -522,17 +522,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # * check for password (we use keyring python module to access the workstation operating system password store in an "ntnx" section)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
     pwd = keyring.get_password("ntnx",args.username)
     if not pwd:
         try:
             pwd = getpass.getpass()
             keyring.set_password("ntnx",args.username,pwd)
         except Exception as error:
-            print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+            print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
     
     if args.scope == "vpc" and args.action == "add" and args.vpc_name is None:
-        print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] You must specify a vpc name when scope is vpc.{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] You must specify a vpc name when scope is vpc.{PrintColors.RESET}")
         exit(1)
     main(api_server=args.prism,username=args.username,secret=pwd,
          action=args.action,

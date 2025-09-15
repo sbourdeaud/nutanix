@@ -16,7 +16,7 @@
 .PARAMETER prismcentral
   Nutanix Prism Central FQDN or IP. You can target a Prism Central instance instead of an individual cluster/Prism Element, in which case the script will process each Nutanix cluster managed by that Prism Central instance.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .PARAMETER nolcm
   Specifies you don't want to retrieve lcm version information.
 .PARAMETER csv

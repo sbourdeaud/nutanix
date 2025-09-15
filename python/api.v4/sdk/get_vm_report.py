@@ -11,7 +11,7 @@
 
 #region IMPORT
 from time import sleep
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from urllib.parse import parse_qs
 
@@ -134,7 +134,7 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_clustermgmt_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of clusters
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all clusters from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all clusters from {api_server}.{PrintColors.RESET}")
     
     api_instance_cluster = ntnx_clustermgmt_py_client.api.ClustersApi(api_client=api_client)
     
@@ -183,7 +183,7 @@ def main(api_server,username,secret,secure=False):
     
     #region hosts
     #* getting list of hosts
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all hosts from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all hosts from {api_server}.{PrintColors.RESET}")
     host_list = ntnx_api_pagination(api_instance=api_instance_cluster,function='list_hosts')
     
     #* format output
@@ -199,7 +199,7 @@ def main(api_server,username,secret,secure=False):
     
     #region storage containers
     #* getting list of storage containers
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all storage containers from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all storage containers from {api_server}.{PrintColors.RESET}")
     api_instance_storage_containers = ntnx_clustermgmt_py_client.api.StorageContainersApi(api_client=api_client)
     storage_container_list = ntnx_api_pagination(api_instance=api_instance_storage_containers,function='list_storage_containers')
     
@@ -230,7 +230,7 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_networking_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of subnets
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all subnets from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all subnets from {api_server}.{PrintColors.RESET}")
     
     api_instance_networking = ntnx_networking_py_client.api.SubnetsApi(api_client=api_client)
     
@@ -263,7 +263,7 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_prism_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of categories
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all categories from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all categories from {api_server}.{PrintColors.RESET}")
     
     api_instance_categories = ntnx_prism_py_client.api.CategoriesApi(api_client=api_client)
     
@@ -296,7 +296,7 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_iam_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of users
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all users from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all users from {api_server}.{PrintColors.RESET}")
     
     api_instance_users = ntnx_iam_py_client.api.UsersApi(api_client=api_client)
     
@@ -329,7 +329,7 @@ def main(api_server,username,secret,secure=False):
     api_client = ntnx_vmm_py_client.ApiClient(configuration=api_client_configuration)
     
     #* getting list of virtual machines
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all virtual machines from {api_server}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all virtual machines from {api_server}.{PrintColors.RESET}")
     api_instance_vm = ntnx_vmm_py_client.api.VmApi(api_client=api_client)
     vm_list = ntnx_api_pagination(api_instance=api_instance_vm,function='list_vms')
 
@@ -414,7 +414,7 @@ def main(api_server,username,secret,secure=False):
     #* exporting to html
     html_file_name = "get_vm_report.html"
     df = pandas.DataFrame(vm_list_output)
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting {len(df)} results to file {html_file_name}.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting {len(df)} results to file {html_file_name}.{PrintColors.RESET}")
     """ html_content = df.to_html(index=False)
     html_file= open(html_file_name,"w")
     html_file.write(html_content)
@@ -434,13 +434,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # * check for password (we use keyring python module to access the workstation operating system password store in an "ntnx" section)
-    print(f"{PrintColors.OK}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
     pwd = keyring.get_password("ntnx",args.username)
     if not pwd:
         try:
             pwd = getpass.getpass()
             keyring.set_password("ntnx",args.username,pwd)
         except Exception as error:
-            print(f"{PrintColors.FAIL}{(datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+            print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
             
     main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure)

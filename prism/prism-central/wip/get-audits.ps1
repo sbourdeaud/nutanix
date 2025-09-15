@@ -14,7 +14,7 @@
 .PARAMETER prismcentral
   Nutanix Prism Central fully qualified domain name or IP address.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .PARAMETER vm
   Specifies the name of one or more virtual machine which you want to audit.  Multiple names can be specified in a comma separated list.  You can also specify 'all' to audit all virtual machines.
 .PARAMETER category

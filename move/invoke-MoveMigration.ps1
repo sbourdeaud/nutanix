@@ -15,7 +15,7 @@
 .PARAMETER move
   Nutanix Move instance fully qualified domain name or IP address.  This can be a comma separated list if you need to take actions on multiple move instances (such as reporting plans status with -action report).
 .PARAMETER moveCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .PARAMETER action
   Specifies what type of action the script should do. Valid actions are: migrate (to create migration plans), report (to show status of migration plans), cutover, failback, suspend, resume and validate (to check pre-reqs are in place on source vms)
 .PARAMETER plans

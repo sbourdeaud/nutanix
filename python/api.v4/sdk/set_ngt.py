@@ -16,10 +16,10 @@
 
 #region IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 import math
 import time
-import datetime
 import argparse
 import getpass
 
@@ -130,7 +130,7 @@ def main(api_server,username,secret,target_vms,action,max_workers=5,run_async=Fa
     #* getting list of virtual machines
     client = ntnx_vmm_py_client.ApiClient(configuration=api_client_configuration)
     entity_api = ntnx_vmm_py_client.VmApi(api_client=client)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching VMs...{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching VMs...{PrintColors.RESET}")
     entity_list=[]
     response = entity_api.list_vms(_page=0,_limit=1)
     total_available_results=response.metadata.total_available_results
@@ -151,14 +151,14 @@ def main(api_server,username,secret,target_vms,action,max_workers=5,run_async=Fa
                     entities = future.result()
                     entity_list.extend(entities.data)
                 except Exception as e:
-                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                    print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                 finally:
                     progress_bar.update(1)
-    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
     vm_list = entity_list
 
     #* building list of vm uuids to process
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Figuring out which VMs will need processing...{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Figuring out which VMs will need processing...{PrintColors.RESET}")
     vms_to_process=[]
     for entity in target_vms:
         for vm_entity in vm_list:
@@ -167,7 +167,7 @@ def main(api_server,username,secret,target_vms,action,max_workers=5,run_async=Fa
     vm_uuids = [vm_entity.ext_id for vm_entity in vms_to_process]
 
     #* processing vm uuids
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Enabling NGT on {len(vm_uuids)} VMs...{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Enabling NGT on {len(vm_uuids)} VMs...{PrintColors.RESET}")
     if action == "enable":
         with tqdm.tqdm(total=len(vm_uuids), desc="Processing tasks") as progress_bar:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -182,9 +182,9 @@ def main(api_server,username,secret,target_vms,action,max_workers=5,run_async=Fa
                     try:
                         result = future.result()
                         # Process the result if needed
-                        #print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
+                        #print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
                     except Exception as e:
-                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                        print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                     finally:
                         progress_bar.update(1)
     elif action == "mount":
@@ -201,9 +201,9 @@ def main(api_server,username,secret,target_vms,action,max_workers=5,run_async=Fa
                     try:
                         result = future.result()
                         # Process the result if needed
-                        #print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
+                        #print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
                     except Exception as e:
-                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                        print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                     finally:
                         progress_bar.update(1)
     elif action == "upgrade":
@@ -219,16 +219,16 @@ def main(api_server,username,secret,target_vms,action,max_workers=5,run_async=Fa
                     try:
                         result = future.result()
                         # Process the result if needed
-                        #print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
+                        #print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] Task completed: {result}{PrintColors.RESET}")
                     except Exception as e:
-                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                        print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                     finally:
                         progress_bar.update(1)
     #endregion vms
 
     end_time = time.time()
     elapsed_time = end_time - start_time
-    print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
+    print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
 
 
 #endregion FUNCTIONS
@@ -270,14 +270,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # * check for password (we use keyring python module to access the workstation operating system password store in an "ntnx" section)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
     pwd = keyring.get_password("ntnx",args.username)
     if not pwd:
         try:
             pwd = getpass.getpass()
             keyring.set_password("ntnx",args.username,pwd)
         except Exception as error:
-            print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+            print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
 
     if args.vm:
         target_vms = args.vm.split(',')
@@ -285,6 +285,6 @@ if __name__ == '__main__':
         data=pd.read_csv(args.csv)
         target_vms = data['vm_name'].tolist()
     else:
-        print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] You must specify at least one vm name or a csv file!{PrintColors.RESET}")
+        print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] You must specify at least one vm name or a csv file!{PrintColors.RESET}")
         exit(1)
     main(api_server=args.prism,username=args.username,secret=pwd,target_vms=target_vms,max_workers=args.threads,action=args.action,run_async=args.run_async,secure=args.secure)

@@ -12,6 +12,7 @@
 
 #region #*IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 import math
 import time
@@ -104,7 +105,7 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
     query_filter = f"name eq '{vm}'"
     response = entity_api.list_vms(_filter=query_filter)
     vm_uuid = response.data[0].ext_id
-    #print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching metrics for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
+    #print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching metrics for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
     
     #* fetch metrics for vm
     entity_api = ntnx_vmm_py_client.StatsApi(api_client=client)
@@ -112,7 +113,7 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
     end_time = (datetime.datetime.now(datetime.timezone.utc)).isoformat()
     response = entity_api.get_vm_stats_by_id(vm_uuid, _startTime=start_time, _endTime=end_time, _samplingInterval=sampling_interval, _statType=stat_type, _select='*')
     vm_stats = [stat for stat in response.data.stats if stat.cluster is None]
-    #print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found {len(vm_stats)} data points for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
+    #print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found {len(vm_stats)} data points for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
     
     #* building pandas dataframe from the retrieved data
     data_points = []
@@ -200,12 +201,12 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
         #* getting list of sources
         client = ntnx_aiops_py_client.ApiClient(configuration=api_client_configuration)
         entity_api = ntnx_aiops_py_client.StatsApi(api_client=client)
-        print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching available sources...{PrintColors.RESET}")
+        print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching available sources...{PrintColors.RESET}")
         response = entity_api.get_sources_v4() 
         source_ext_id = next(iter([source.ext_id for source in response.data if source.source_name == 'nutanix']))
         
         #* getting entities and metrics descriptor for nutanix source
-        print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching entities and descriptors for source nutanix...{PrintColors.RESET}")
+        print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching entities and descriptors for source nutanix...{PrintColors.RESET}")
         entity_list=[]
         response = entity_api.get_entity_descriptors_v4(sourceExtId=source_ext_id,_page=0,_limit=1)
         total_available_results=response.metadata.total_available_results
@@ -224,7 +225,7 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
                         entities = future.result()
                         entity_list.extend(entities.data)
                     except Exception as e:
-                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                        print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                     finally:
                         progress_bar.update(1)
         entity_descriptors_list = entity_list
@@ -242,7 +243,7 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
                 else:
                     descriptors[entity_type][metric_name]['description'] = None
         for entity_type in descriptors.keys():
-            print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Available metrics for {entity_type} are:{PrintColors.RESET}")
+            print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Available metrics for {entity_type} are:{PrintColors.RESET}")
             for metric in sorted(descriptors[entity_type]):
                 print(f"    {descriptors[entity_type][metric]['name']},{descriptors[entity_type][metric]['value_type']},{descriptors[entity_type][metric]['description']}")
     elif vms:
@@ -276,7 +277,7 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
                     try:
                         entities = future.result()
                     except Exception as e:
-                        print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                        print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                     finally:
                         progress_bar.update(1)
 
@@ -301,7 +302,7 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
 
     processing_end_time = time.time()
     elapsed_time = processing_end_time - processing_start_time
-    print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
+    print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
 
 
 #endregion #*FUNCTIONS
@@ -324,14 +325,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # * check for password (we use keyring python module to access the workstation operating system password store in an "ntnx" section)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
     pwd = keyring.get_password("ntnx",args.username)
     if not pwd:
         try:
             pwd = getpass.getpass()
             keyring.set_password("ntnx",args.username,pwd)
         except Exception as error:
-            print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+            print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
             exit(1)
 
     if args.show is True:

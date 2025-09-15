@@ -26,7 +26,7 @@
 .PARAMETER retain
   If this parameter is used, the original volume groups will not be deleted after being cloned.  You will have to clean them up manually.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .EXAMPLE
  .\move-ntnxVg.ps1 -cluster ntnxc1.local -username admin -password admin -vm sqlprod1 -vg all -container ctr2
 Move all volume groups attached to sqlprod1 to container ctr2.

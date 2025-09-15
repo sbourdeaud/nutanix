@@ -13,10 +13,10 @@
 
 #region IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
 import math
 import time
-import datetime
 import argparse
 import getpass
 
@@ -98,7 +98,7 @@ def main(api_server,username,secret,max_workers=5,secure=False,prefix=None):
     
     client = ntnx_microseg_py_client.ApiClient(configuration=api_client_configuration)
     entity_api = ntnx_microseg_py_client.NetworkSecurityPoliciesApi(api_client=client)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Security Policies...{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Fetching Security Policies...{PrintColors.RESET}")
     entity_list=[]
     response = entity_api.list_network_security_policies(_page=0,_limit=1)
     total_available_results=response.metadata.total_available_results
@@ -119,10 +119,10 @@ def main(api_server,username,secret,max_workers=5,secure=False,prefix=None):
                     entities = future.result()
                     entity_list.extend(entities.data)
                 except Exception as e:
-                    print(f"{PrintColors.WARNING}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
+                    print(f"{PrintColors.WARNING}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [WARNING] Task failed: {e}{PrintColors.RESET}")
                 finally:
                     progress_bar.update(1)
-    print(f"{PrintColors.SUCCESS}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
+    print(f"{PrintColors.SUCCESS}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUCCESS] {len(entity_list)} entities found.{PrintColors.RESET}")
     security_policies_list = entity_list
     #endregion GET policies
     
@@ -290,7 +290,7 @@ def main(api_server,username,secret,max_workers=5,secure=False,prefix=None):
     
     end_time = time.time()
     elapsed_time = end_time - start_time
-    print(f"{PrintColors.STEP}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
+    print(f"{PrintColors.STEP}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [SUM] Process completed in {format_timespan(elapsed_time)}{PrintColors.RESET}")
 
 
 #endregion FUNCTIONS
@@ -318,13 +318,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # * check for password (we use keyring python module to access the workstation operating system password store in an "ntnx" section)
-    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
+    print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Trying to retrieve secret for user {args.username} from the password store.{PrintColors.RESET}")
     pwd = keyring.get_password("ntnx",args.username)
     if not pwd:
         try:
             pwd = getpass.getpass()
             keyring.set_password("ntnx",args.username,pwd)
         except Exception as error:
-            print(f"{PrintColors.FAIL}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+            print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
     
     main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,prefix=args.prefix)

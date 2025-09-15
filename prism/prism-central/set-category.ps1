@@ -6,7 +6,7 @@
 .PARAMETER prism
   IP address or FQDN of Prism Central.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://blog.kloud.com.au/2016/04/21/using-saved-credentials-securely-in-powershell-scripts/ for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .PARAMETER vm
   Name of the virtual machine to edit (as displayed in Prism Central)
 .PARAMETER sourcecsv
@@ -831,6 +831,7 @@ Date       By   Updates (newest updates at the top)
 
   #! step 1: check category value pairs exist
   #region check category:value pair exist
+  #Write-Host $myvarListToProcess
   ForEach ($category_name in $myvarListToProcess.category_name | Select-Object -Unique) {
     ForEach ($category_value in $myvarListToProcess | Where-Object {$_.category_name -eq $category_name} | Select-Object -ExpandProperty category_value | Select-Object -Unique) {
       $category = $category_name
@@ -922,7 +923,6 @@ Date       By   Updates (newest updates at the top)
   }
   #endregion check category:value pair exist
 
-#todo: need to turn this into // processing
   Write-Host "$(Get-Date) [INFO] Updating the configuration of $(($myvarListToProcess | Measure-Object).Count) vms in $($prism)..." -ForegroundColor Green
   $results = $myvarListToProcess | ForEach-Object -ThrottleLimit 10 -Parallel {
     $myvar_already_tagged = $false
@@ -930,6 +930,7 @@ Date       By   Updates (newest updates at the top)
     $category = $_.category_name
     $value = $_.category_value
     $vm_uuid = ($($using:vm_list) | Where-Object {$_.spec.name -eq $vm}).metadata.uuid
+    Write-Host "$(Get-Date) [STEP] Applying $($category):$($value) to vm $vm with uuid $vm_uuid on $($using:prism)..." -ForegroundColor Magenta
 
     $headers = @{
       "Content-Type"="application/json";
@@ -955,6 +956,7 @@ Date       By   Updates (newest updates at the top)
         catch {
           $saved_error = $_.Exception.Message
           Write-Host "$(get-date) [WARNING] While retrieving details of $($vm): $saved_error" -ForegroundColor Yellow
+          #Write-Host $resp
           Continue
         }
         finally {
@@ -1011,7 +1013,7 @@ Date       By   Updates (newest updates at the top)
           if (!$vm_config.metadata.use_categories_mapping) {
             $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
           }
-          $payload = (ConvertTo-Json $vm_config -Depth 6)
+          $payload = (ConvertTo-Json $vm_config -Depth 20)
         #endregion
 
         #region make the api call
