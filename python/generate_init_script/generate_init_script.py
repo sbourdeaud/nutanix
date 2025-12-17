@@ -59,6 +59,7 @@ def main(operating_system):
         macros[macro] = macro_value
 
     #* load template, render and write to file
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Rendring templates using user input...{PrintColors.RESET}")
     env = Environment(loader=FileSystemLoader('./config'))
     output_path = './.local/output'
     path_obj = pathlib.Path(output_path)
@@ -75,6 +76,7 @@ def main(operating_system):
         file_path = path_obj / f'{macros["computer_name"]}.xml'
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(output)
+    print(f"{PrintColors.OK}{(datetime.datetime.now()).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Init file has been saved in the .local/output directory{PrintColors.RESET}")
 
 #endregion #* FUNCTIONS
 
