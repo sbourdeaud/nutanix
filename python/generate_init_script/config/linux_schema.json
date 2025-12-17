@@ -1,0 +1,60 @@
+{
+    "init_variables" :{
+        "type": "dict",
+        "schema": {
+            "hostname": {
+                "meta" : {"description": "Hostname for Linux OS"},
+                "required": true,
+                "type": "string",
+                "default": "lin0001"
+                },
+            "ip_address": {
+                "meta" : {"description": "IP address in CIDR format to be assigned to the Linux VM"},
+                "required": true,
+                "type": "string",
+                "default": "10.124.0.6/21"
+                },
+            "gateway": {
+                "meta" : {"description": "Gateway IP address for the Linux VM"},
+                "required": true,
+                "type": "string",
+                "default": "10.124.0.1"
+                },
+            "dns_domain": {
+                "meta" : {"description": "DNS domain name"},
+                "required": true,
+                "type": "string",
+                "default": "nvd.local"
+                },
+            "primary_dns": {
+                "meta" : {"description": "IP address of the primary DNS server"},
+                "required": true,
+                "type": "string",
+                "default": "10.50.0.40"
+                },
+            "secondary_dns": {
+                "meta" : {"description": "IP address of the secondary DNS server"},
+                "required": true,
+                "type": "string",
+                "default": "10.50.0.41"
+                },
+            "username": {
+                "meta" : {"description": "Default username for the Linux sudo account"},
+                "required": true,
+                "type": "string",
+                "default": "nutanix"
+                },
+            "public_key": {
+                "meta" : {"description": "Path to the public key file to use for the Linux sudo account"},
+                "required": true,
+                "type": "string",
+                "default": "~/.ssh/id_rsa.pub"
+                },
+            "password": {
+                "meta" : {"description": "Linux sudo account default password"},
+                "required": true,
+                "type": "string"
+                }
+        }
+    }
+}

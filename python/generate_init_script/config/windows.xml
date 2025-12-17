@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+   <settings pass="specialize">
+      <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+         <ComputerName>{{ computer_name }}</ComputerName>
+         <RegisteredOrganization>{{ registered_organization }}</RegisteredOrganization>
+         <RegisteredOwner>{{ registered_owner }}</RegisteredOwner>
+         <TimeZone>{{ time_zone }}</TimeZone>
+         <ProductKey>{{ product_key }}</ProductKey>
+      </component>
+      <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-TCPIP" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+         <Interfaces>
+            <Interface wcm:action="add">
+               <Identifier>Ethernet</Identifier>
+               <Ipv4Settings>
+                  <DhcpEnabled>false</DhcpEnabled>
+                  <RouterDiscoveryEnabled>true</RouterDiscoveryEnabled>
+                  <Metric>30</Metric>
+               </Ipv4Settings>
+               <UnicastIpAddresses>
+                  <IpAddress wcm:action="add" wcm:keyValue="1">{{ ip_address }}</IpAddress>
+               </UnicastIpAddresses>
+               <Routes>
+                  <Route wcm:action="add">
+                     <Identifier>10</Identifier>
+                     <Metric>20</Metric>
+                     <NextHopAddress>{{ next_hop_address }}</NextHopAddress>
+                     <Prefix>0.0.0.0/0</Prefix>
+                  </Route>
+               </Routes>
+            </Interface>
+         </Interfaces>
+      </component>
+      <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-DNS-Client" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+         <UseDomainNameDevolution>true</UseDomainNameDevolution>
+         <DNSDomain>{{ dns_domain }}</DNSDomain>
+         <Interfaces>
+            <Interface wcm:action="add">
+               <Identifier>Ethernet</Identifier>
+               <DNSDomain>{{ dns_domain }}</DNSDomain>
+               <DNSServerSearchOrder>
+                  <IpAddress wcm:action="add" wcm:keyValue="1">{{ primary_dns }}</IpAddress>
+                  <IpAddress wcm:action="add" wcm:keyValue="2">{{ secondary_dns }}</IpAddress>
+               </DNSServerSearchOrder>
+               <EnableAdapterDomainNameRegistration>true</EnableAdapterDomainNameRegistration>
+               <DisableDynamicUpdate>true</DisableDynamicUpdate>
+            </Interface>
+         </Interfaces>
+      </component>
+      <component xmlns="" name="Microsoft-Windows-TerminalServices-LocalSessionManager" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" processorArchitecture="amd64">
+         <fDenyTSConnections>false</fDenyTSConnections>
+      </component>
+      <component xmlns="" name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" processorArchitecture="amd64">
+         <UserAuthentication>0</UserAuthentication>
+      </component>
+      <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Networking-MPSSVC-Svc" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+         <FirewallGroups>
+            <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
+               <Active>true</Active>
+               <Profile>all</Profile>
+               <Group>@FirewallAPI.dll,-28752</Group>
+            </FirewallGroup>
+         </FirewallGroups>
+      </component>
+      <component name="Microsoft-Windows-UnattendedJoin" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+        <Identification>
+            <Credentials>
+               <Domain>{{ active_directory_domain }}</Domain>
+               <Password>{{ domain_join_password }}</Password>
+               <Username>{{ domain_join_username }}</Username>
+            </Credentials>
+            <JoinDomain>{{ active_directory_domain }}</JoinDomain>
+            <!-- Optional: Specify the OU where the computer account will be created -->
+            <MachineObjectOU>{{ machine_object_ou }}</MachineObjectOU>
+        </Identification>
+    </component>
+   </settings>
+   <settings pass="oobeSystem">
+      <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+         <UserAccounts>
+            <AdministratorPassword>
+               <Value>{{ administrator_password }}</Value>
+               <PlainText>true</PlainText>
+            </AdministratorPassword>
+         </UserAccounts>
+         <AutoLogon>
+            <Password>
+               <Value>{{ administrator_password }}</Value>
+               <PlainText>true</PlainText>
+            </Password>
+            <Enabled>true</Enabled>
+            <Username>{{ administrator_username }}</Username>
+         </AutoLogon>
+         <FirstLogonCommands>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>cmd.exe /c netsh advfirewall firewall add rule name="Windows Remote Management" profile=any dir=in protocol=tcp localport=5985 action=allow</CommandLine>
+               <Description>Win RM port open</Description>
+               <Order>1</Order>
+               <RequiresUserInput>true</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>cmd.exe /c netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" profile=any protocol=icmpv4:8,any dir=in action=allow</CommandLine>
+               <Description>Allow ping</Description>
+               <Order>2</Order>
+               <RequiresUserInput>true</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>cmd.exe /c netsh advfirewall firewall add rule name="Nutanix Guest Tools (NGT)" profile=any protocol=tcp localport=2704 dir=in action=allow</CommandLine>
+               <Description>NGT port open</Description>
+               <Order>3</Order>
+               <RequiresUserInput>true</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>powershell -Command "Enable-PSRemoting -SkipNetworkProfileCheck -Force"</CommandLine>
+               <Description>Enable PS-Remoting</Description>
+               <Order>4</Order>
+               <RequiresUserInput>false</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>powershell -Command "Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Force"</CommandLine>
+               <Description>Enable Remote-Signing</Description>
+               <Order>5</Order>
+               <RequiresUserInput>false</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>powershell.exe -Command "foreach ($i in Get-NetAdapter) { Set-NetIPInterface -NlMtuBytes 1442 }"</CommandLine>
+               <Description>Set MTU to 1442</Description>
+               <Order>6</Order>
+               <RequiresUserInput>false</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>powershell -Command "$sh = (New-Object -ComObject 'Shell.Application').Namespace(17).Items() | Where-Object { $_.Type -eq 'CD Drive' } | foreach { $_.InvokeVerb('Eject') }"</CommandLine>
+               <Description>Eject CDROM Drive</Description>
+               <Order>7</Order>
+               <RequiresUserInput>false</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>powershell -Command "Get-WmiObject -Class Win32_volume -Filter 'DriveType=5' | Select-Object -First 1 | Set-WmiInstance -Arguments @{DriveLetter='W:'}"</CommandLine>
+               <Description>Change CDROM Drive Letter to W</Description>
+               <Order>8</Order>
+               <RequiresUserInput>false</RequiresUserInput>
+            </SynchronousCommand>
+            <SynchronousCommand wcm:action="add">
+               <CommandLine>logoff</CommandLine>
+               <Description>Log out of Windows</Description>
+               <Order>9</Order>
+               <RequiresUserInput>true</RequiresUserInput>
+            </SynchronousCommand>
+         </FirstLogonCommands>
+         <OOBE>
+            <HideEULAPage>true</HideEULAPage>
+            <SkipMachineOOBE>true</SkipMachineOOBE>
+         </OOBE>
+      </component>
+      <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+         <InputLocale>{{ input_locale }}</InputLocale>
+         <SystemLocale>{{ system_locale }}</SystemLocale>
+         <UILanguage>{{ ui_language }}</UILanguage>
+      </component>
+   </settings>
+</unattend>

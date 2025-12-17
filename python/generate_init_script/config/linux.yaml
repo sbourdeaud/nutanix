@@ -1,0 +1,51 @@
+#cloud-config
+hostname: {{ hostname }}
+
+fqdn: {{ hostname }}.{{ dns_domain }}
+
+users:
+   - default
+   - name: {{ username }}
+     groups: sudo
+     shell: /bin/bash
+     lock_passwd: false
+     ssh-authorized-keys:
+      - {{ public_key }}
+     sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+
+chpasswd:
+   list: |
+     {{ username }}:{{ password }}
+   expire: false
+      
+runcmd:
+   - nmcli connection migrate
+   - nmcli con down "System eth0"
+   - nmcli con del "System eth0"
+   - nmcli con add con-name "System eth0" ifname eth0 type ethernet ip4 {{ ip_address }} gw4 {{ gateway }} ipv4.dns "{{ primary_dns }} {{ secondary_dns }}"
+   - nmcli con up "System eth0"
+   - nmcli general reload
+   - nmcli connection reload
+
+packages:
+  - git
+  - wget
+  - curl
+  - unzip
+  - tar
+  - python3
+  - cloud-guest-utils
+
+package_upgrade: false
+
+growpart:
+  mode: auto
+  devices: ['/']
+  ignore_growroot_disabled: false
+
+power_state:
+  delay: "+1"
+  mode: reboot
+  message: Rebooting after cloud-init
+  timeout: 30
+  condition: True
