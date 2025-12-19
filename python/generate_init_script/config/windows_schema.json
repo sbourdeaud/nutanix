@@ -30,37 +30,37 @@
                 "meta" : {"description": "Windows Product key"},
                 "required": true,
                 "type": "string",
-                "default": "YN79C-6RRPG-YHTGV-4JJKD-FM83G"
+                "default": "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
                 },
             "ip_address": {
                 "meta" : {"description": "IP address in CIDR format to be assigned to the Windows VM"},
                 "required": true,
                 "type": "string",
-                "default": "10.124.0.6/21"
+                "default": "10.10.10.0/21"
                 },
             "next_hop_address": {
                 "meta" : {"description": "Gateway IP address for the Windows VM"},
                 "required": true,
                 "type": "string",
-                "default": "10.124.0.1"
+                "default": "10.10.10.1"
                 },
             "dns_domain": {
                 "meta" : {"description": "DNS domain name"},
                 "required": true,
                 "type": "string",
-                "default": "nvd.local"
+                "default": "mydomain.local"
                 },
             "primary_dns": {
                 "meta" : {"description": "IP address of the primary DNS server"},
                 "required": true,
                 "type": "string",
-                "default": "10.50.0.40"
+                "default": "8.8.8.8"
                 },
             "secondary_dns": {
                 "meta" : {"description": "IP address of the secondary DNS server"},
                 "required": true,
                 "type": "string",
-                "default": "10.50.0.41"
+                "default": "9.9.9.9"
                 },
             "administrator_password": {
                 "meta" : {"description": "Windows administrator default password"},
@@ -95,25 +95,24 @@
                 "meta" : {"description": "Active Directory domain name you want to join the Windows VM to"},
                 "required": true,
                 "type": "string",
-                "default": "nvd.local"
+                "default": "mydomain.local"
                 },
             "domain_join_username": {
                 "meta" : {"description": "Active Directory domain username you want to use to join the Windows VM to the Active Directory domain"},
                 "required": true,
                 "type": "string",
-                "default": "stephane@nvd.local"
+                "default": "me@mydomain.local"
                 },
             "domain_join_password": {
                 "meta" : {"description": "Active Directory domain password you want to use to join the Windows VM to the Active Directory domain"},
                 "required": true,
-                "type": "string",
-                "default": "Key2theNVDdoor!"
+                "type": "string"
                 },
             "machine_object_ou": {
                 "meta" : {"description": "DN of the Active Directory OU where the computer object should be created"},
                 "required": true,
                 "type": "string",
-                "default": "OU=Lab Machines,DC=nvd,DC=local"
+                "default": "OU=Computers,DC=mydomain,DC=local"
                 }
         }
     }
