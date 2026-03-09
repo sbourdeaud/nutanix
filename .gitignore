@@ -24,3 +24,4 @@ ahv/github.code-workspace
 __pycache__
 previous
 /previous/
+.DS_Store

@@ -1,0 +1,41 @@
+---
+description: Guidelines for interacting with Nutanix Cloud Platform API v4.
+globs: *.ps1, *.psm1
+alwaysApply: true
+---
+
+# Nutanix API v4 Interaction Rules
+
+## Request Mechanics
+- **Cmdlet**: Use `Invoke-RestMethod` for all API calls.
+- **Headers**:
+  - `Content-Type`: `application/json`
+  - `Accept`: `application/json`
+  - **Authorization**: Use Basic Auth with `[System.Management.Automation.PSCredential]`.
+- **PowerShell ETag Quirk**: When sending the `If-Match` header (ETag), you MUST include the `-SkipHeaderValidation` parameter in `Invoke-RestMethod` (PowerShell 7+) to prevent formatting errors.
+
+## Idempotency & Concurrency
+- **Create/Post**: ALWAYS generate and include a `NTNX-Request-Id` header with a new GUID for POST requests to ensure idempotency.
+```powershell
+NTNX-Request-Id = (New-Guid).ToString()
+```
+- **Update/Put**: ALWAYS Fetch the entity first to get the `ETag` header. Include it in the `If-Match` header of your update request to prevent lost updates (CAS - Check-And-Set).
+
+## Pagination
+- Nutanix v4 APIs use `$page` and `$limit` (max 100).
+- Do not assume a single call returns all results.
+- Implement a recursive or `do/while` loop checking `metadata.totalAvailableResults` or the presence of a `next` link in the response.
+
+## Examples
+
+@example
+# Fetching ETag for Update
+$vm = Invoke-RestMethod -Uri "$BaseUrl/vmm/v4.0/ahv/config/vms/$ExtId" -Method GET -Headers $Headers -ResponseHeadersVariable 'RespHeaders'
+$etag = $RespHeaders['ETag'][0]
+
+# Updating with Idempotency and ETag
+$updateHeaders = $Headers.Clone()
+$updateHeaders.Add('If-Match', $etag)
+$updateHeaders.Add('NTNX-Request-Id', (New-Guid).ToString())
+
+Invoke-RestMethod -Uri "..." -Method PUT -Headers $updateHeaders -Body $JsonBody -SkipHeaderValidation

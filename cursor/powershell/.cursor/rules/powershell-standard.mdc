@@ -1,0 +1,53 @@
+---
+description: Standards for writing clean, idiomatic, and maintainable PowerShell scripts.
+globs: *.ps1, *.psm1, *.psd1
+alwaysApply: true
+---
+
+# PowerShell Coding Standards
+
+## Naming Conventions
+- **Cmdlet/Function Names**: Must use the standard `Verb-Noun` format (e.g., `Get-NtnxVm`, `New-NtnxCluster`).
+  - Use `Get-Verb` to verify approved verbs.
+  - Prefix Nouns with `Ntnx` or a project-specific prefix to avoid collisions.
+- **Variables**: Use `CamelCase` for parameters and local variables (e.g., `$vmName`, `$clusterConfig`).
+- **Constants**: Use `UPPER_CASE` for script-wide constants (e.g., `$MAX_RETRIES`).
+
+## Style & Structure
+- **Parameter Splatting**: ALWAYS use splatting for cmdlets with more than 3 parameters to improve readability.
+- **Output**: Return objects (`PSCustomObject`), not text. Do not use `Write-Host` for data return; use `Write-Output` or direct object emission.
+- **Comments**: Use "Better Comments" style:
+  - `# ! Critical alert`
+  - `# ? Question/Explanation`
+  - `# TODO: Future work`
+
+## Error Handling
+- **Strict Mode**: Scripts must start with `Set-StrictMode -Version Latest`.
+- **ErrorAction**: Default to `$ErrorActionPreference = 'Stop'` for production scripts.
+- **Try/Catch**: Wrap all external calls (API, File I/O) in `try { } catch { }` blocks.
+  - In `catch` blocks, capture specific exception types when possible (e.g., `[System.Net.WebException]`).
+
+## Examples
+
+@example
+# Good: Parameter Splatting and Verb-Noun
+function Get-NtnxVmConfig {
+    [CmdletBinding()]
+    param (
+        [string]$VmName,
+        [string]$ClusterId
+    )
+
+    $params = @{
+        Uri     = "https://api.nutanix.com/..."
+        Method  = "GET"
+        Headers = $AuthHeaders
+    }
+    Invoke-RestMethod @params
+}
+
+# Bad: Long lines and Write-Host
+function getVM {
+    $data = Invoke-RestMethod -Uri "..." -Method GET -Headers ...
+    Write-Host $data.name
+}

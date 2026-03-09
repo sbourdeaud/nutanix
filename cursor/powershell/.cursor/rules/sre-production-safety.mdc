@@ -1,0 +1,53 @@
+---
+description: Safety, reliability, and observability standards for production automation.
+globs: *.ps1, *.psm1
+alwaysApply: true
+---
+
+# SRE Production Safety Rules
+
+## 1. Safety & Simulation
+- **WhatIf Support**: All functions that modify state (POST, PUT, DELETE) MUST support `[CmdletBinding(SupportsShouldProcess)]`.
+  - Wrap the modification logic in `if ($PSCmdlet.ShouldProcess($Target, "Operation")) { ... }`.
+- **Validation**: Validate pre-conditions (e.g., Cluster health, connectivity) before attempting changes.
+
+## 2. Observability & Logging
+- **Structured Logging**: Do NOT print raw text. Log structured events including:
+  - Timestamp (ISO 8601)
+  - Severity (INFO, WARN, ERROR)
+  - Correlation ID (Request ID)
+  - Target Entity (UUID/Name)
+- **Secret Sanitization**: NEVER log raw credential objects, bearer tokens, or session cookies. Use `[System.Management.Automation.PSCredential]` objects to keep secrets secure in memory.
+
+## 3. Resilience
+- **Retries**: Implement exponential backoff for transient errors (HTTP 429, 503).
+  - Do NOT retry on 4xx errors (except 429).
+- **Timeouts**: Explicitly define `-TimeoutSec` on all REST calls (default to 30s or 60s depending on operation).
+
+## Examples
+
+@example
+# Production-Safe State Modification
+function Remove-NtnxVmSafe {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [string]$VmId
+    )
+
+    process {
+        if ($PSCmdlet.ShouldProcess($VmId, "Delete Nutanix VM")) {
+            try {
+                $requestId = (New-Guid).ToString()
+                Write-Log -Level INFO -Message "Attempting delete" -Target $VmId -RequestId $requestId
+
+                # Retry logic for transient failures
+                Invoke-RestMethodWithRetry -Uri "..." -Method DELETE -Header @{'NTNX-Request-Id' = $requestId}
+            }
+            catch {
+                Write-Log -Level ERROR -Message "Delete failed" -Exception $_
+                throw
+            }
+        }
+    }
+}
