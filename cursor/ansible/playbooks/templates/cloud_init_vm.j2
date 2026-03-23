@@ -1,0 +1,25 @@
+#cloud-config
+# Cloud-init for Nutanix AHV VMs - nutanix user with SSH key, optional partition expansion
+# Variables: cloud_init_ssh_public_key (required when cloud-init enabled)
+#           system_partition_size_gib (optional - disk must be created at this size for expansion)
+
+{% if cloud_init_ssh_public_key is defined and cloud_init_ssh_public_key | length > 0 %}
+users:
+  - name: nutanix
+    groups: [sudo, adm]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "{{ cloud_init_ssh_public_key }}"
+{% endif %}
+
+{% if system_partition_size_gib is defined and system_partition_size_gib | int > 0 %}
+# Expand system partition to use full disk (disk must be provisioned at system_partition_size_gib)
+growpart:
+  mode: auto
+  devices: ['/']
+  ignore_growroot_disabled: false
+
+resizefs:
+  - /
+{% endif %}

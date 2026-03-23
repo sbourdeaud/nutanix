@@ -1,0 +1,58 @@
+---
+# Delete Nutanix AHV VMs in Prism Central by name prefix.
+# Uses the same vars as create_ahv_vms.yml: vm_name_prefix, prism_host,
+# prism_username, prism_password. Optional: vm_count (to restrict scope).
+# Run: .venv/bin/ansible-playbook playbooks/delete_ahv_vms.yml -i "localhost," -e @.local/nvd-mgmt.yml
+
+- name: "Delete AHV VMs in Prism Central"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+  collections:
+    - nutanix.ncp
+  module_defaults:
+    group/nutanix.ncp.ntnx:
+      nutanix_host: "{{ prism_host }}"
+      nutanix_username: "{{ prism_username }}"
+      nutanix_password: "{{ prism_password }}"
+      validate_certs: false
+  tasks:
+    - name: "Validate required variables"
+      ansible.builtin.assert:
+        that:
+          - vm_name_prefix is defined and vm_name_prefix | length > 0
+          - prism_host is defined and prism_host | length > 0
+          - prism_username is defined and prism_username | length > 0
+          - prism_password is defined and prism_password | length > 0
+        fail_msg: "Missing required variable. Required: vm_name_prefix, prism_host, prism_username, prism_password"
+      check_mode: false
+
+    - name: "List VMs matching name prefix"
+      nutanix.ncp.ntnx_vms_info_v2:
+        filter: "startswith(name, '{{ vm_name_prefix }}')"
+      register: vms_list
+      no_log: true
+
+    - name: "Set VMs to delete (by prefix, optionally limited by vm_count)"
+      ansible.builtin.set_fact:
+        vms_to_delete: "{{ (vms_list.response | default([]))[:vm_count|int] if (vm_count is defined and vm_count|int > 0) else (vms_list.response | default([])) }}"
+
+    - name: "Fail when no VMs found"
+      ansible.builtin.fail:
+        msg: "No VMs found matching prefix '{{ vm_name_prefix }}'"
+      when: (vms_to_delete | default([]) | length) == 0
+
+    - name: "Delete AHV VM {{ vm_to_delete.name | default('unknown') }}"
+      ansible.builtin.include_tasks: tasks/delete_ahv_vm_single.yml
+      loop: "{{ vms_to_delete | default([]) }}"
+      loop_control:
+        loop_var: vm_to_delete
+        label: "{{ vm_to_delete.name }}"
+      when: not ansible_check_mode
+
+    - name: "Report delete (check mode)"
+      ansible.builtin.debug:
+        msg: "Check mode: Would delete {{ vms_to_delete | default([]) | length }} VM(s) matching '{{ vm_name_prefix }}'"
+      when: ansible_check_mode

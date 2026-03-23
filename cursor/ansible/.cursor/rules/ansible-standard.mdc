@@ -1,0 +1,94 @@
+---
+description: Guidelines for writing modern, idempotent, and clean Ansible code.
+globs: *.yml, *.yaml, roles/*/tasks/*.yml
+alwaysApply: true
+---
+
+# Ansible Development Guidelines
+
+## 1. Core Philosophy
+- **Idempotency is King**: Every task must be repeatable. If running a playbook twice changes the system state the second time, the code is broken.
+- **Declarative over Imperative**: Describe the *desired state* (e.g., "file should exist"), not the actions to get there (e.g., "create file").
+- **Clear Naming**: Every `name:` field must describe *what* is being done and *why*, not just the module name.
+
+## 2. Syntax & Modern Practices
+- **Fully Qualified Collection Names (FQCN)**: ALWAYS use the full namespace for modules.
+  - **Bad**: `copy`, `service`, `uri`
+  - **Good**: `ansible.builtin.copy`, `ansible.builtin.service`, `ansible.builtin.uri`
+  - **Reason**: Prevents namespace collisions and clarifies dependencies.
+- **YAML Formatting**:
+  - Use 2-space indentation.
+  - Always quote strings that contain special characters or start with variables (`"{{ var }}"`).
+  - Use `true`/`false` (lowercase) for booleans.
+
+## 3. Variables & Jinja2
+- **Spacing**: Always put spaces around variable names in Jinja2 brackets: `{{ variable_name }}`.
+- **Filters**: Use filters for data manipulation rather than complex inline logic.
+  - Common filters: `| default`, `| quote`, `| mandatory`, `| to_uuid`.
+- **Snake Case**: Use `snake_case` for all variable names (e.g., `web_server_port`, `db_password`).
+
+## 4. Task Structure
+- **Explicit State**: Always define the `state` parameter explicitly (e.g., `state: present`, `state: started`). Do not rely on defaults.
+- **Command/Shell Modules**:
+  - Avoid `ansible.builtin.command` or `shell` if a dedicated module exists.
+  - If you MUST use them, you MUST implement `changed_when` and `failed_when` to ensure correct idempotency reporting.
+  - **Safety**: Use `set -o pipefail` in shell blocks.
+
+## 5. Error Handling & Flow Control
+- **Blocks**: Use `block`, `rescue`, and `always` for grouping related tasks and handling failures (try/catch logic), especially for API interactions.
+- **Looping**: Prefer `loop` over the legacy `with_items`.
+- **Handlers**: Use handlers for service restarts. Do not restart services directly in tasks unless absolutely necessary for immediate dependency.
+
+## 6. Nutanix & Infrastructure Specifics
+- **Secrets**: Never hardcode credentials. Use `ansible-vault` or lookups (e.g., environment variables) for `password` / `secret` fields.
+- **Local Actions**: When interacting with APIs (like Nutanix Prism), explicitly delegate to localhost or a control node using `delegate_to: localhost` to avoid connection attempts to the target host if it's not an OS-level configuration.
+
+## Examples
+
+@example
+# Modern Task Syntax & FQCN
+- name: "Ensure the Nginx service is enabled and started"
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: "Deploy application configuration"
+  ansible.builtin.template:
+    src: app.conf.j2
+    dest: /etc/app/app.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart Application
+
+@example
+# Handling Command Idempotency
+- name: "Check if custom agent is installed"
+  ansible.builtin.command: /usr/local/bin/agent --version
+  register: agent_check
+  changed_when: false
+  failed_when: false
+
+- name: "Install custom agent if missing"
+  ansible.builtin.shell: |
+    set -o pipefail
+    ./install_agent.sh
+  args:
+    executable: /bin/bash
+  when: agent_check.rc != 0
+
+@example
+# API Interaction with Block/Rescue
+- name: "Configure External Authentication"
+  block:
+    - name: "Post configuration to API"
+      ansible.builtin.uri:
+        url: "https://api.example.com/v1/auth"
+        method: POST
+        body: "{{ auth_config | to_json }}"
+        status_code: 201
+  rescue:
+    - name: "Log failure details"
+      ansible.builtin.debug:
+        msg: "Failed to configure auth. Response: {{ ansible_failed_result }}"

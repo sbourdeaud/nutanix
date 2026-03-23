@@ -1,0 +1,107 @@
+---
+description: Guidelines for interacting with Nutanix Cloud Platform API v4 using Python and Ansible.
+globs: *.py, *.yml, *.yaml
+alwaysApply: true
+---
+
+# Nutanix API v4 Interaction Rules
+
+## General Principles
+- **API Versioning**: URL paths typically follow `/api/vmm/v4.0.a1/...` format.
+- **SSL Verification**: Nutanix clusters often use self-signed certificates.
+  - **Python**: Use `verify=False` and suppress `InsecureRequestWarning`.
+  - **Ansible**: Set `validate_certs: false`.
+
+## Python (using `requests`)
+
+### Request Mechanics
+- **Library**: Use the standard `requests` library.
+- **Session**: Use `requests.Session()` to persist headers and authentication (Basic Auth).
+- **Headers**:
+  - `Content-Type`: `application/json`
+  - `Accept`: `application/json`
+
+### Idempotency & Concurrency
+- **Create/Post**: Generate a UUID for the `NTNX-Request-Id` header to ensure idempotency.
+  ```python
+  headers['NTNX-Request-Id'] = str(uuid.uuid4())
+  ```
+- **Update/Put**: You **MUST** fetch the entity first to retrieve the `ETag`. Include this in the `If-Match` header of your update request to prevent lost updates (CAS).
+
+### Pagination
+- Implement a generator or `while` loop.
+- Query parameters: `$page` (index) and `$limit` (max usually 50 or 100).
+- Check `response.json()['metadata']['totalAvailableResults']` or existence of `data` to determine termination.
+
+## Ansible (using `uri` module)
+
+### Request Mechanics
+- **Module**: Use `ansible.builtin.uri`.
+- **Authentication**: Use `url_username` and `url_password` with `force_basic_auth: true`.
+- **Status Codes**: V4 APIs often return `202 Accepted` for async operations. Always allow `status_code: [200, 201, 202]`.
+
+### Idempotency & Concurrency
+- **Create/Post**: Use the `to_uuid` filter to generate request IDs.
+- **Update/Put**:
+  1. **Task 1 (GET)**: Register the response to capture the ETag.
+  2. **Task 2 (PUT)**: Use the ETag from Task 1 in the `If-Match` header.
+
+## Examples
+
+@example
+# [Python] Fetch ETag and Update (CAS Pattern)
+import requests
+import uuid
+import json
+
+# Setup
+url = f"{base_url}/api/vmm/v4.0.a1/ahv/config/vms/{ext_id}"
+session = requests.Session()
+session.auth = (username, password)
+session.headers.update({'Content-Type': 'application/json', 'Accept': 'application/json'})
+
+# 1. GET to retrieve ETag
+resp = session.get(url, verify=False)
+resp.raise_for_status()
+current_vm = resp.json()
+etag = resp.headers.get('ETag')
+
+# 2. PUT with If-Match and Request-Id
+if etag:
+    session.headers['If-Match'] = etag
+session.headers['NTNX-Request-Id'] = str(uuid.uuid4())
+
+# Modify payload...
+payload = current_vm['data']
+# ... modification logic here ...
+
+update_resp = session.put(url, json=payload, verify=False)
+
+@example
+# [Ansible] Idempotent Update with ETag
+- name: "Get VM Details to retrieve ETag"
+  ansible.builtin.uri:
+    url: "https://{{ prism_ip }}/api/vmm/v4.0.a1/ahv/config/vms/{{ vm_ext_id }}"
+    method: GET
+    user: "{{ prism_user }}"
+    password: "{{ prism_pass }}"
+    force_basic_auth: true
+    validate_certs: false
+    return_content: true
+  register: vm_details
+
+- name: "Update VM with ETag and Request ID"
+  ansible.builtin.uri:
+    url: "https://{{ prism_ip }}/api/vmm/v4.0.a1/ahv/config/vms/{{ vm_ext_id }}"
+    method: PUT
+    user: "{{ prism_user }}"
+    password: "{{ prism_pass }}"
+    force_basic_auth: true
+    validate_certs: false
+    headers:
+      Content-Type: "application/json"
+      If-Match: "{{ vm_details.x_etag }}" # or vm_details.headers.ETag depending on ansible version
+      NTNX-Request-Id: "{{ 12345 | to_uuid }}" # Ensure a unique seed or generate dynamically
+    body_format: json
+    body: "{{ new_payload }}"
+    status_code: [200, 202]

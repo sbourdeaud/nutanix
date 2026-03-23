@@ -1,0 +1,14 @@
+# Nutanix dynamic inventory configuration
+# This file can be encrypted with ansible-vault for credential storage.
+#
+# Environment variables take precedence over values here.
+# Set NUTANIX_CONFIG to the path of this file, or place it alongside the script.
+# NUTANIX_CATEGORIES env can be comma-separated: Environment:Production,App:Web
+
+host: ""  # Prism Central IP or FQDN (required)
+username: ""
+password: ""
+categories: []  # List of "key:value" strings, e.g. ["Environment:Production", "App:Web"]
+category_match: any  # "any" = VM matches ANY category; "all" = VM must match ALL categories
+verify_ssl: false
+ansible_port: 22

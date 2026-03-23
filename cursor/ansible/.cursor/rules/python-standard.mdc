@@ -1,0 +1,95 @@
+---
+description: Comprehensive guidelines for writing modern, robust, and maintainable Python code.
+globs: *.py, *.ipynb
+alwaysApply: true
+---
+
+# Python Development Guidelines
+
+## 1. Core Philosophy
+- **Modern Python**: Target Python 3.10+ features. Use match statements, union types (`X | Y`), and modern generic hints.
+- **Explicit is better than implicit**: Avoid "magic" behavior. Code should be readable and predictable.
+- **Robustness**: Write code designed for production environments (logging, error handling, retries), not just "happy path" scripts.
+
+## 2. Type Hinting & Data Structures
+- **Strict Typing**: ALWAYS use type hints for function arguments, return values, and class attributes.
+- **Pydantic over Dicts**: When handling complex structured data (especially API payloads/responses), use `Pydantic` models instead of raw dictionaries or `TypedDict`.
+- **Dataclasses**: Use `@dataclass` for internal data transfer objects (DTOs) that don't require validation.
+- **Generics**: Use `typing.Iterable`, `typing.Sequence`, or `typing.Mapping` for collections when the specific implementation (List/Tuple) doesn't matter.
+
+## 3. Style & Syntax
+- **Formatting**: Follow PEP 8 standards. Assume the use of `Black` for formatting and `isort` for import sorting.
+- **Strings**:
+  - Use **f-strings** for all string interpolation.
+  - Avoid `+` for string concatenation.
+- **Path Handling**: ALWAYS use `pathlib.Path` instead of `os.path` or string manipulation for file paths.
+- **Conditionals**: Use `is` for `None` checks. Use truthiness (`if my_list:`) for empty collections.
+
+## 4. Error Handling & Logging
+- **No Print**: NEVER use `print()` for status output in scripts. Use the standard `logging` library.
+  - Exception: CLI tools where stdout is the explicit deliverable.
+- **Exceptions**:
+  - Use `try/except` blocks for predictable IO/Network errors.
+  - Create custom exception classes (inheriting from `Exception`) for domain-specific errors.
+  - Always chain exceptions using `raise ... from e` to preserve the stack trace.
+- **Fail Fast**: Validate inputs at the start of functions.
+
+## 5. Functions & Classes
+- **Immutability**: Prefer immutable data structures where possible. Default to `frozen=True` for dataclasses if mutation isn't required.
+- **Docstrings**: Use Google-style docstrings for all public functions and classes.
+  - Include `Args:`, `Returns:`, and `Raises:` sections.
+- **Size**: Keep functions small and focused (Single Responsibility Principle).
+
+## 6. Testing (pytest)
+- Write code that is testable. Avoid global state.
+- Use `pytest` fixtures for setup/teardown.
+- Prefer `conftest.py` for shared fixtures.
+
+## Examples
+
+@example
+# Data Model & Type Hinting
+from pydantic import BaseModel, Field
+from uuid import UUID, uuid4
+
+class VirtualMachine(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str
+    vcpus: int = Field(ge=1, description="Number of virtual CPUs")
+    memory_gb: int
+
+    @property
+    def is_large(self) -> bool:
+        """Check if VM is considered large."""
+        return self.vcpus >= 8 or self.memory_gb >= 32
+
+@example
+# Modern File Handling & Logging
+import logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+def read_config(config_path: Path) -> dict:
+    """Reads configuration from a JSON file.
+
+    Args:
+        config_path: Path object pointing to the config file.
+
+    Returns:
+        Dictionary containing configuration data.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        json.JSONDecodeError: If the file is not valid JSON.
+    """
+    if not config_path.exists():
+        logger.error(f"Configuration file not found at {config_path}")
+        raise FileNotFoundError(f"Missing config: {config_path}")
+
+    try:
+        content = config_path.read_text(encoding="utf-8")
+        return json.loads(content)
+    except Exception as e:
+        logger.exception("Failed to parse configuration")
+        raise RuntimeError("Config parsing failed") from e

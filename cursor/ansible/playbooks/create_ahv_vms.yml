@@ -1,0 +1,242 @@
+---
+# Create one or more Nutanix AHV VMs in Prism Central using nutanix.ncp collection.
+# Variables: vm_name_prefix, vm_count, vm_vcpus, vm_memory_gib, vm_network_name,
+#            vm_image_name, prism_host, prism_username, prism_password;
+# Optional: cluster_ext_id, cluster_name, cloud_init_ssh_public_key,
+#           system_partition_size_gib, vm_categories (list of "key:value")
+
+- name: "Create AHV VMs in Prism Central"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+    vm_count: 3
+    vm_vcpus: 1
+    vm_memory_gib: 2
+  collections:
+    - nutanix.ncp
+  module_defaults:
+    group/nutanix.ncp.ntnx:
+      nutanix_host: "{{ prism_host }}"
+      nutanix_username: "{{ prism_username }}"
+      nutanix_password: "{{ prism_password }}"
+      validate_certs: false
+  tasks:
+    - name: "Validate required variables"
+      ansible.builtin.assert:
+        that:
+          - vm_name_prefix is defined and vm_name_prefix | length > 0
+          - vm_network_name is defined and vm_network_name | length > 0
+          - vm_image_name is defined and vm_image_name | length > 0
+          - prism_host is defined and prism_host | length > 0
+          - prism_username is defined and prism_username | length > 0
+          - prism_password is defined and prism_password | length > 0
+        fail_msg: "Missing required variable. Required: vm_name_prefix, vm_network_name, vm_image_name, prism_host, prism_username, prism_password"
+      check_mode: false
+
+    - name: "Resolve subnet name to UUID"
+      nutanix.ncp.ntnx_subnets_info_v2:
+        filter: "name eq '{{ vm_network_name }}'"
+      register: subnet_result
+      no_log: true
+
+    - name: "Fail when subnet not found or ambiguous"
+      ansible.builtin.fail:
+        msg: "Subnet '{{ vm_network_name }}' must match exactly one subnet. Found: {{ subnet_result.response | length }}"
+      when: subnet_result.response | default([]) | length != 1
+      no_log: true
+
+    - name: "Resolve image name to UUID"
+      nutanix.ncp.ntnx_images_info_v2:
+        filter: "name eq '{{ vm_image_name }}'"
+      register: image_result
+      no_log: true
+
+    - name: "Fail when image not found or ambiguous"
+      ansible.builtin.fail:
+        msg: "Image '{{ vm_image_name }}' must match exactly one image. Found: {{ image_result.response | default([]) | length }}"
+      when: image_result.response | default([]) | length != 1
+      no_log: true
+
+    - name: "Resolve clusters by name (fetch all, filter in playbook)"
+      block:
+        - name: "Fetch all clusters from Prism Central"
+          nutanix.ncp.ntnx_clusters_info_v2:
+          register: _cluster_fetch
+          no_log: true
+
+        - name: "Filter clusters by name and set result"
+          ansible.builtin.set_fact:
+            cluster_result:
+              response: "{{ [_cluster_fetch.response[cluster_idx]] if cluster_idx >= 0 else [] }}"
+          vars:
+            _names: "{{ _cluster_fetch.response | default([]) | map(attribute='name') | list }}"
+            cluster_idx: "{{ _names.index(cluster_name) if cluster_name in _names else -1 }}"
+      when:
+        - cluster_ext_id is not defined
+        - cluster_name is defined
+      no_log: true
+
+    - name: "Resolve first available cluster (when cluster_ext_id and cluster_name not provided)"
+      nutanix.ncp.ntnx_clusters_info_v2:
+      register: cluster_result_fallback
+      when:
+        - cluster_ext_id is not defined
+        - cluster_name is not defined
+      no_log: true
+
+    - name: "Set cluster_result from fallback when no cluster_name"
+      ansible.builtin.set_fact:
+        cluster_result:
+          response: "{{ cluster_result_fallback.response | default([]) }}"
+      when:
+        - cluster_ext_id is not defined
+        - cluster_name is not defined
+        - cluster_result_fallback is defined
+
+    - name: "Fail when cluster not found"
+      ansible.builtin.fail:
+        msg: "Cluster '{{ cluster_name }}' not found or no clusters available. Ensure the cluster exists and your user has permission to list clusters."
+      when:
+        - cluster_ext_id is not defined
+        - cluster_result is defined
+        - (cluster_result.response | default([]) | length) < 1
+      no_log: true
+
+    - name: "Set resolved cluster ext_id"
+      ansible.builtin.set_fact:
+        resolved_cluster_ext_id: "{{ cluster_ext_id }}"
+      when: cluster_ext_id is defined
+
+    - name: "Set resolved cluster ext_id from cluster lookup"
+      ansible.builtin.set_fact:
+        resolved_cluster_ext_id: "{{ cluster_result.response[0].ext_id or cluster_result.response[0].extId }}"
+      when:
+        - cluster_ext_id is not defined
+        - cluster_result.response | default([]) | length >= 1
+
+    - name: "Resolve storage container from cluster (for disk size when system_partition_size_gib set)"
+      nutanix.ncp.ntnx_storage_containers_info_v2:
+        filter: "clusterExtId eq '{{ resolved_cluster_ext_id }}'"
+      register: storage_container_result
+      when: system_partition_size_gib is defined and system_partition_size_gib | int > 0
+      no_log: true
+
+    - name: "Fail when no storage container found for cluster"
+      ansible.builtin.fail:
+        msg: "No storage container found for cluster. The disk from image uses the cluster's storage; ensure the cluster has at least one container."
+      when:
+        - system_partition_size_gib is defined and system_partition_size_gib | int > 0
+        - storage_container_result is defined
+        - storage_container_result.response | default([]) | length < 1
+      no_log: true
+
+    - name: "Set cloud-init config (base64 encoded)"
+      ansible.builtin.set_fact:
+        cloud_init_base64: "{{ lookup('template', 'templates/cloud_init_vm.j2') | b64encode }}"
+      when: cloud_init_ssh_public_key is defined and cloud_init_ssh_public_key | length > 0
+
+    - name: "Resolve category {{ cat_item | default('N/A') }} to ext_id"
+      nutanix.ncp.ntnx_categories_info_v2:
+        filter: "key eq '{{ (cat_item.split(':', 1)[0] | trim) | replace(\"'\", \"''\") }}' and value eq '{{ (cat_item.split(':', 1)[1] | trim) | replace(\"'\", \"''\") }}'"
+      loop: "{{ vm_categories }}"
+      loop_control:
+        loop_var: cat_item
+      register: category_resolve_result
+      when: vm_categories is defined and vm_categories | length > 0
+      no_log: true
+
+    - name: "Fail when category not found"
+      ansible.builtin.fail:
+        msg: "One or more categories not found: {{ vm_categories | join(', ') }}. Create them in Prism Central first."
+      when:
+        - vm_categories is defined and vm_categories | length > 0
+        - (category_resolve_result.results | default([]) | map(attribute='response') | map('default', []) | map('length') | reject('equalto', 0) | list | length) != (vm_categories | length)
+      no_log: true
+
+    - name: "Build resolved categories for VM"
+      ansible.builtin.set_fact:
+        vm_categories_resolved: "{{ vm_categories_resolved | default([]) + [{'ext_id': item.response[0].ext_id or item.response[0].extId}] }}"
+      loop: "{{ category_resolve_result.results | default([]) }}"
+      when:
+        - vm_categories is defined and vm_categories | length > 0
+        - (item.response | default([]) | length) > 0
+      no_log: true
+
+    - name: "Set boot disk configuration"
+      ansible.builtin.set_fact:
+        vm_boot_disk: "{{ vm_boot_disk_basic | combine(vm_boot_disk_size, recursive=true) }}"
+      vars:
+        vm_boot_disk_basic:
+          backing_info:
+            vm_disk:
+              data_source:
+                reference:
+                  image_reference:
+                    image_ext_id: "{{ image_result.response[0].ext_id or image_result.response[0].extId }}"
+          disk_address:
+            bus_type: SCSI
+            index: 0
+        vm_boot_disk_size: "{{ {'backing_info': {'vm_disk': {'disk_size_bytes': system_partition_size_gib | int * 1073741824, 'storage_container': {'ext_id': (storage_container_result.response[0].ext_id or storage_container_result.response[0].container_ext_id or storage_container_result.response[0].extId)}}}} if (system_partition_size_gib is defined and system_partition_size_gib | int > 0 and storage_container_result is defined and (storage_container_result.response | default([]) | length) >= 1) else {} }}"
+
+    - name: "List existing VMs by name prefix"
+      nutanix.ncp.ntnx_vms_info_v2:
+        filter: "startswith(name, '{{ vm_name_prefix }}')"
+      register: existing_vms_list
+      no_log: true
+
+    - name: "Set fact: existing VM names"
+      ansible.builtin.set_fact:
+        existing_vm_names: "{{ (existing_vms_list.response | default([]) | map(attribute='name')) | list }}"
+
+    - name: "Validate ext_ids before VM creation"
+      ansible.builtin.assert:
+        that:
+          - resolved_cluster_ext_id is match('^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
+          - (subnet_result.response[0].ext_id or subnet_result.response[0].extId) is match('^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
+          - (image_result.response[0].ext_id or image_result.response[0].extId) is match('^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
+        fail_msg: >-
+          Invalid ext_id (must be UUID format). Check: cluster={{ resolved_cluster_ext_id }},
+          subnet={{ subnet_result.response[0].ext_id or subnet_result.response[0].extId }},
+          image={{ image_result.response[0].ext_id or image_result.response[0].extId }}
+      when: not ansible_check_mode
+
+    - name: "Validate storage container ext_id when used"
+      ansible.builtin.assert:
+        that:
+          - ((storage_container_result.response[0].ext_id or storage_container_result.response[0].container_ext_id or storage_container_result.response[0].extId)) is match('^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
+        fail_msg: >-
+          Invalid storage container ext_id. ext_id={{ storage_container_result.response[0].ext_id | default('nil') }},
+          container_ext_id={{ storage_container_result.response[0].container_ext_id | default('nil') }}
+      when:
+        - not ansible_check_mode
+        - system_partition_size_gib is defined and system_partition_size_gib | int > 0
+        - storage_container_result is defined and (storage_container_result.response | default([]) | length) >= 1
+
+    - name: "Validate category ext_ids when used"
+      ansible.builtin.assert:
+        that:
+          - cat.ext_id is match('^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$')
+        fail_msg: "Invalid category ext_id: {{ cat.ext_id }}"
+      loop: "{{ vm_categories_resolved | default([]) }}"
+      loop_control:
+        loop_var: cat
+      when:
+        - not ansible_check_mode
+        - vm_categories_resolved is defined and vm_categories_resolved | length > 0
+
+    - name: "Create and power on AHV VM {{ vm_name_prefix }}{{ '%04d' | format(vm_index | default(1)) }}"
+      ansible.builtin.include_tasks: tasks/create_ahv_vm_single.yml
+      loop: "{{ range(1, vm_count | int + 1) | list }}"
+      loop_control:
+        loop_var: vm_index
+        label: "{{ vm_name_prefix }}{{ '%04d' | format(vm_index) }}"
+      when:
+        - not ansible_check_mode
+        - (vm_name_prefix + '%04d' | format(vm_index)) not in (existing_vm_names | default([]))
+
+    - name: "Report VM creation (check mode)"
+      ansible.builtin.debug:
+        msg: "Check mode: Would create {{ vm_count }} VM(s): {{ vm_name_prefix }}{{ '%04d' | format(1) }} through {{ vm_name_prefix }}{{ '%04d' | format(vm_count | int) }}"
+      when: ansible_check_mode

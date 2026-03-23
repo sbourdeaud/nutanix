@@ -1,0 +1,96 @@
+---
+description: Safety, reliability, and observability standards for production automation in Python and Ansible.
+globs: *.py, *.yml, *.yaml
+alwaysApply: true
+---
+
+# SRE Production Safety Rules
+
+## 1. Safety & Simulation (Dry Run)
+### Python
+- **Dry Run Flag**: CLI tools modifying state MUST implement a `--dry-run` argument.
+- **Logic Guard**: Wrap state-changing logic in a check: `if not args.dry_run: ...`
+- **Logging**: In dry-run mode, log the *exact* action that would have occurred at `INFO` level.
+
+### Ansible
+- **Check Mode**: All playbooks MUST be compatible with `--check` mode.
+- **Enforcement**: Use `check_mode: no` only for read-only tasks (e.g., gathering facts) needed to determine the state of subsequent tasks.
+- **Diff Mode**: Ensure tasks support `--diff` to visualize changes before application.
+
+## 2. Observability & Logging
+### Python
+- **Structured Logging**: Use the `logging` library with a JSON formatter for machine readability (Splunk/ELK).
+- **Context**: Log events with:
+  - `timestamp` (ISO 8601)
+  - `level` (INFO, ERROR)
+  - `correlation_id` (Request ID)
+  - `target_id` (UUID/Name)
+- **Sanitization**: NEVER log variables containing secrets. Use filters or explicit key exclusion.
+
+### Ansible
+- **Secret Protection**: ALWAYS apply `no_log: true` on tasks handling sensitive data (tokens, passwords, keys).
+- **Callbacks**: Configure `stdout_callback = yaml` or `json` in `ansible.cfg` for readable output.
+
+## 3. Resilience & Timeouts
+### Python
+- **Retries**: Do NOT implement `while` loops for retries manually. Use `requests.adapters.HTTPAdapter` with `urllib3.util.retry.Retry`.
+  - Configure strictly for transient errors: 429, 500, 502, 503, 504.
+- **Timeouts**: EVERY network call MUST have a `timeout=(connect, read)` tuple (e.g., `timeout=(5, 30)`).
+
+### Ansible
+- **Polling**: For long-running operations (async APIs), use the `until` / `retries` / `delay` pattern.
+- **Ignore Errors**: Avoid `ignore_errors: yes`. Instead, register the result and handle the failure condition explicitly in a `failed_when` block.
+
+## Examples
+
+@example
+# [Python] Production-Safe Request with Retries & Dry Run
+import logging
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+logger = logging.getLogger(__name__)
+
+def delete_entity_safe(url: str, token: str, dry_run: bool = False):
+    # 1. Setup Resilience
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    
+    headers = {"Authorization": "Bearer <masked>"} # Log masked, use real in request
+
+    # 2. Safety Check
+    if dry_run:
+        logger.info("DRY RUN: Would execute DELETE", extra={"url": url})
+        return
+
+    # 3. Execution with Timeout
+    try:
+        response = session.delete(url, headers={'Authorization': f'Bearer {token}'}, timeout=(3.05, 30))
+        response.raise_for_status()
+        logger.info("Delete successful", extra={"status": response.status_code})
+    except requests.exceptions.RequestException as e:
+        logger.error("Operation failed", extra={"error": str(e)})
+        raise
+
+@example
+# [Ansible] Resilient & Safe Task
+- name: "Update VM Configuration (Safe)"
+  ansible.builtin.uri:
+    url: "https://api.nutanix.com/v4/vms/{{ vm_uuid }}"
+    method: PUT
+    headers:
+      Authorization: "Basic {{ auth_token }}" # Variable from vault
+    body: "{{ payload }}"
+    status_code: [200, 202]
+    timeout: 30
+  register: update_result
+  # Resilience: Retry on 429 (Too Many Requests) or Service Unavailable
+  until: update_result.status != 429 and update_result.status != 503
+  retries: 5
+  delay: 10
+  # Safety: Prevent secrets from leaking in logs
+  no_log: true
+  # Check Mode: API calls usually shouldn't run in check mode unless they are read-only
+  when: not ansible_check_mode

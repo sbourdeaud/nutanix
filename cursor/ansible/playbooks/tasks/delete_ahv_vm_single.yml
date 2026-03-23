@@ -1,0 +1,9 @@
+---
+# Delete a single AHV VM. Called from delete_ahv_vms.yml via include_tasks with loop.
+# Expects vm_to_delete (dict with name, ext_id or extId) in scope.
+- name: "Delete AHV VM {{ vm_to_delete.name }}"
+  nutanix.ncp.ntnx_vms_v2:
+    state: absent
+    ext_id: "{{ vm_to_delete.ext_id or vm_to_delete.extId }}"
+    wait: true
+  no_log: true

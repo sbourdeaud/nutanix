@@ -1,0 +1,4 @@
+# Nutanix dynamic inventory dependencies
+requests>=2.28.0
+urllib3>=1.26.0
+PyYAML>=6.0

@@ -1,0 +1,27 @@
+# Example variables for create_ahv_vms.yml
+# Override via -e, vars_prompt, or ansible-vault encrypted file.
+# Do NOT commit real credentials.
+
+# --- Required ---
+# vm_name_prefix: web
+# vm_network_name: "Primary-VLAN"
+# vm_image_name: "Ubuntu-22.04"
+# prism_host: pc.example.com
+# prism_username: admin
+# prism_password: "{{ vault_prism_password }}"  # Use ansible-vault
+
+# --- Optional (defaults in playbook) ---
+# vm_count: 3
+# vm_vcpus: 2
+# vm_memory_gib: 4
+
+# --- Optional cluster selection ---
+# cluster_ext_id: "33dba56c-f123-4ec6-8b38-901e1cf716c2"  # Use UUID directly
+# cluster_name: "prod-cluster"  # Or resolve by name
+
+# --- Optional cloud-init ---
+# cloud_init_ssh_public_key: "ssh-rsa AAAAB3... user@host"  # Creates nutanix user with SSH key
+# system_partition_size_gib: 50  # Expand system partition to 50 GiB (storage derived from cluster)
+
+# --- Optional categories ---
+# vm_categories: ["Environment:Production", "App:Web"]  # Apply these key:value categories to created VMs (create in Prism Central first)

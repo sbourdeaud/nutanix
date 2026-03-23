@@ -1,0 +1,47 @@
+---
+# Create a single AHV VM. Called from create_ahv_vms.yml via include_tasks with loop.
+# Expects vm_index (1..vm_count) in scope.
+- name: "Create AHV VM {{ vm_name_prefix }}{{ '%04d' | format(vm_index) }}"
+  nutanix.ncp.ntnx_vms_v2:
+    state: present
+    wait: true
+    name: "{{ vm_name_prefix }}{{ '%04d' | format(vm_index) }}"
+    cluster:
+      ext_id: "{{ resolved_cluster_ext_id }}"
+    num_sockets: 1
+    num_cores_per_socket: "{{ vm_vcpus | int }}"
+    num_threads_per_core: 1
+    memory_size_bytes: "{{ vm_memory_gib | int * 1073741824 }}"
+    boot_config:
+      uefi_boot:
+        boot_device:
+          boot_device_disk:
+            disk_address:
+              bus_type: SCSI
+              index: 0
+    disks:
+      - "{{ vm_boot_disk }}"
+    nics:
+      - network_info:
+          subnet:
+            ext_id: "{{ subnet_result.response[0].ext_id or subnet_result.response[0].extId }}"
+    categories: "{{ vm_categories_resolved | default(omit) }}"
+    guest_customization: "{{ guest_customization_config if (cloud_init_ssh_public_key is defined and cloud_init_ssh_public_key | length > 0) else omit }}"
+  vars:
+    guest_customization_config:
+      config:
+        cloudinit:
+          datasource_type: "CONFIG_DRIVE_V2"
+          cloud_init_script:
+            user_data:
+              value: "{{ cloud_init_base64 }}"
+  register: create_single_result
+  no_log: true
+
+- name: "Power on created VM {{ vm_name_prefix }}{{ '%04d' | format(vm_index) }}"
+  nutanix.ncp.ntnx_vms_power_actions_v2:
+    ext_id: "{{ create_single_result.ext_id }}"
+    state: power_on
+    wait: true
+  when: create_single_result.ext_id is defined
+  no_log: true
