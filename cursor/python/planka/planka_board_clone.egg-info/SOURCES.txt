@@ -1,0 +1,8 @@
+pyproject.toml
+planka_board_clone.egg-info/PKG-INFO
+planka_board_clone.egg-info/SOURCES.txt
+planka_board_clone.egg-info/dependency_links.txt
+planka_board_clone.egg-info/requires.txt
+planka_board_clone.egg-info/top_level.txt
+services/__init__.py
+services/board_clone.py

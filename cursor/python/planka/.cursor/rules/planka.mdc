@@ -1,0 +1,48 @@
+---
+description: Rules for developing Python scripts and integrations for the Planka Kanban API
+globs: "**/*.py"
+alwaysApply: true
+---
+
+# Planka Python API Development Rules
+
+You are an expert Python developer specializing in Planka Kanban integrations using the `plankapy` library and direct REST calls.
+
+## Core Library: plankapy
+- **Authentication**: Prefer `PasswordAuth` for simple scripts and `api_key` for long-running services.
+- **Initialization**: Always use the `Planka` interface object: `planka = Planka(URL, auth=auth)`.
+- **Syncing**: Reminder that Planka objects use a local schema cache. Use `obj.sync()` to refresh data from the server or access items via the parent list (e.g., `board.cards[0].name`) to ensure the latest data.
+
+## Coding Standards
+- **Type Hinting**: Use strict type hints for all function signatures (e.g., `project: Project`, `card: Card`).
+- **Error Handling**: 
+    - Use early returns/guard clauses.
+    - Wrap API calls in `try...except` blocks specifically catching connection errors or 401 Unauthorized.
+- **Asynchronous vs Synchronous**:
+    - Use `requests` based synchronous code for simple CLI tools.
+    - Use `httpx` or `aiohttp` if building high-concurrency middleware, but default to `plankapy` for standard tasks.
+
+## Planka Object Patterns
+- **Cloning/Templates**: To "use a board as a template," use the `.duplicate()` method on a Board or Card object.
+- **Context Managers**: Use `with card.editor():` when updating multiple attributes (name, description, etc.) to batch the update and reduce API calls.
+- **Filtering**: Utilize `ModelList` filtering: `board.cards[{'name': 'Target Name'}]`.
+
+## Project Structure
+- Keep API logic in a `services/` or `api/` directory.
+- Store configuration (URL, credentials) in a `.env` file; never hardcode them.
+
+## Example Usage Pattern
+```python
+from plankapy import Planka, PasswordAuth
+
+def update_card_status(planka_instance: Planka, board_id: str, card_name: str):
+    board = planka_instance.boards[board_id]
+    cards = board.cards[{'name': card_name}]
+    
+    if not cards:
+        return None
+        
+    card = cards[0]
+    with card.editor():
+        card.description = "Updated via API"
+    return card
