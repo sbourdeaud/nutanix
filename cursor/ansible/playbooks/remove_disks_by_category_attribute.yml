@@ -1,0 +1,1315 @@
+---
+- name: "Remove VM disks by category and custom attribute"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../vars/disk_remove_defaults.yml"
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+    prism_base_url: "https://{{ pc_ip }}:9440"
+    vm_list_endpoint: "/api/vmm/v4.0/ahv/config/vms"
+    category_list_endpoint: "/api/prism/v4.0/config/categories"
+    vm_disk_list_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks"
+    vm_disk_delete_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks/%s"
+    vm_get_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s"
+    request_headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+      Cache-Control: "no-cache"
+  tasks:
+    - name: "Validate required inputs"
+      ansible.builtin.assert:
+        that:
+          - pc_ip is defined and pc_ip | length > 0
+          - pc_username is defined and pc_username | length > 0
+          - pc_password is defined and pc_password | length > 0
+          - category_key is defined and category_key | length > 0
+          - category_value is defined and category_value | length > 0
+          - disk_custom_attribute is defined and disk_custom_attribute | length > 0
+        fail_msg: >-
+          Missing required variables. Required: pc_ip, pc_username, pc_password,
+          category_key, category_value, disk_custom_attribute.
+      check_mode: false
+
+    - name: "Validate destructive-action confirmation"
+      ansible.builtin.assert:
+        that:
+          - (not require_confirmation | bool) or (delete_confirm | default('') == confirmation_value)
+        fail_msg: >-
+          Disk removal is destructive. Set -e delete_confirm={{ confirmation_value }}
+          (or set require_confirmation=false) to proceed.
+      when: not ansible_check_mode
+
+    - name: "Resolve category extId"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ category_list_endpoint }}?$filter={{ category_filter | urlencode }}&$page=0&$limit=50"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: category_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        category_filter: "key eq '{{ category_key | replace(\"'\", \"''\") }}' and value eq '{{ category_value | replace(\"'\", \"''\") }}'"
+
+    - name: "Fail when category is not unique"
+      ansible.builtin.fail:
+        msg: "Category '{{ category_key }}:{{ category_value }}' must resolve to exactly one category. Found: {{ category_lookup.json.data | default([]) | length }}"
+      when: category_lookup.json.data | default([]) | length != 1
+
+    - name: "Set resolved category extId"
+      ansible.builtin.set_fact:
+        category_ext_id: "{{ category_lookup.json.data[0].extId }}"
+
+    - name: "Fetch first page of VMs with retry backoff"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["PAGE_BASE_URL"]
+        username = os.environ["PAGE_USERNAME"]
+        password = os.environ["PAGE_PASSWORD"]
+        page_limit = int(os.environ["PAGE_LIMIT"])
+        retries = int(os.environ["PAGE_FETCH_RETRIES"])
+        backoff = int(os.environ["PAGE_FETCH_BACKOFF_SECONDS"])
+        timeout_seconds = int(os.environ["PAGE_FETCH_TIMEOUT_SECONDS"])
+
+        url = f"{base_url}/api/vmm/v4.0/ahv/config/vms?$page=0&$limit={page_limit}"
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"}
+
+        last_error = ""
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url,
+                    auth=(username, password),
+                    headers=headers,
+                    verify=False,
+                    timeout=(5, timeout_seconds),
+                )
+                if response.status_code == 200:
+                    print(response.text)
+                    sys.exit(0)
+                last_error = f"HTTP {response.status_code}: {response.text}"
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(backoff * (2 ** attempt))
+
+        print(json.dumps({"error": last_error}))
+        sys.exit(1)
+        PY
+      register: vm_page_0_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        PAGE_BASE_URL: "{{ prism_base_url }}"
+        PAGE_USERNAME: "{{ pc_username }}"
+        PAGE_PASSWORD: "{{ pc_password }}"
+        PAGE_LIMIT: "{{ api_page_limit | int }}"
+        PAGE_FETCH_RETRIES: "{{ vm_page_fetch_retries | int }}"
+        PAGE_FETCH_BACKOFF_SECONDS: "{{ vm_page_fetch_backoff_seconds | int }}"
+        PAGE_FETCH_TIMEOUT_SECONDS: "{{ vm_page_fetch_timeout_seconds | int }}"
+
+    - name: "Parse first page VM response"
+      ansible.builtin.set_fact:
+        vm_page_0_json: "{{ vm_page_0_raw.stdout | from_json }}"
+
+    - name: "Initialize VM pagination facts"
+      ansible.builtin.set_fact:
+        total_available_vms: "{{ vm_page_0_json.metadata.totalAvailableResults | default(vm_page_0_json.data | default([]) | length) | int }}"
+        all_vms: "{{ vm_page_0_json.data | default([]) }}"
+
+    - name: "Compute VM total page count"
+      ansible.builtin.set_fact:
+        total_vm_pages: "{{ ((total_available_vms | int) + (api_page_limit | int) - 1) // (api_page_limit | int) }}"
+
+    - name: "Fetch remaining VM pages concurrently with backoff"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["PAGE_BASE_URL"]
+        username = os.environ["PAGE_USERNAME"]
+        password = os.environ["PAGE_PASSWORD"]
+        page_limit = int(os.environ["PAGE_LIMIT"])
+        total_pages = int(os.environ["TOTAL_PAGES"])
+        retries = int(os.environ["PAGE_FETCH_RETRIES"])
+        backoff = int(os.environ["PAGE_FETCH_BACKOFF_SECONDS"])
+        timeout_seconds = int(os.environ["PAGE_FETCH_TIMEOUT_SECONDS"])
+        concurrency = int(os.environ["PAGE_FETCH_CONCURRENCY"])
+
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"}
+
+        def fetch_page(page_num: int):
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms?$page={page_num}&$limit={page_limit}"
+            last_error = ""
+            for attempt in range(retries):
+                try:
+                    response = requests.get(
+                        url,
+                        auth=(username, password),
+                        headers=headers,
+                        verify=False,
+                        timeout=(5, timeout_seconds),
+                    )
+                    if response.status_code == 200:
+                        payload = response.json()
+                        return {"page": page_num, "data": payload.get("data", [])}
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(backoff * (2 ** attempt))
+            return {"page": page_num, "error": last_error or "unknown error"}
+
+        pages = []
+        failed = []
+        if total_pages > 1:
+            page_numbers = list(range(1, total_pages))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [executor.submit(fetch_page, p) for p in page_numbers]
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if "error" in result:
+                        failed.append(result)
+                    else:
+                        pages.append(result)
+
+        pages.sort(key=lambda item: item["page"])
+        print(json.dumps({"pages": pages, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: vm_other_pages_raw
+      delegate_to: localhost
+      when: total_vm_pages | int > 1
+      check_mode: false
+      no_log: true
+      environment:
+        PAGE_BASE_URL: "{{ prism_base_url }}"
+        PAGE_USERNAME: "{{ pc_username }}"
+        PAGE_PASSWORD: "{{ pc_password }}"
+        PAGE_LIMIT: "{{ api_page_limit | int }}"
+        TOTAL_PAGES: "{{ total_vm_pages | int }}"
+        PAGE_FETCH_RETRIES: "{{ vm_page_fetch_retries | int }}"
+        PAGE_FETCH_BACKOFF_SECONDS: "{{ vm_page_fetch_backoff_seconds | int }}"
+        PAGE_FETCH_TIMEOUT_SECONDS: "{{ vm_page_fetch_timeout_seconds | int }}"
+        PAGE_FETCH_CONCURRENCY: "{{ vm_page_fetch_concurrency | int }}"
+
+    - name: "Parse remaining VM pages response"
+      ansible.builtin.set_fact:
+        vm_other_pages_json: "{{ vm_other_pages_raw.stdout | from_json }}"
+      when: total_vm_pages | int > 1
+
+    - name: "Merge paginated VM results"
+      ansible.builtin.set_fact:
+        all_vms: "{{ all_vms + (vm_other_pages_json.pages | default([]) | map(attribute='data') | list | flatten) }}"
+      when: total_vm_pages | int > 1
+
+    - name: "Create temporary file for VM filtering input"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_remove_vm_filtering_input.json"
+      register: remove_vm_filtering_input_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Write VM filtering input payload"
+      ansible.builtin.copy:
+        dest: "{{ remove_vm_filtering_input_file.path }}"
+        mode: "0600"
+        content: "{{ {'all_vms': all_vms | default([]), 'category_ext_id': category_ext_id} | to_json }}"
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Filter category-matched VMs in one Python pass"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload_file = os.environ["REMOVE_VM_FILTER_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        all_vms = payload.get("all_vms", [])
+        category_ext_id = payload.get("category_ext_id", "")
+
+        matched_vms = []
+        matched_vm_ext_ids = []
+
+        for vm in all_vms:
+            vm_ext_id = vm.get("extId", "")
+            if not vm_ext_id:
+                continue
+            categories = vm.get("categories", []) or []
+            vm_category_ext_ids = [cat.get("extId", "") for cat in categories if isinstance(cat, dict)]
+            if category_ext_id in vm_category_ext_ids:
+                matched_vms.append(vm)
+                matched_vm_ext_ids.append(vm_ext_id)
+
+        print(json.dumps({"matched_vms": matched_vms, "matched_vm_ext_ids": matched_vm_ext_ids}))
+        PY
+      register: remove_vm_filtering_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        REMOVE_VM_FILTER_PAYLOAD_FILE: "{{ remove_vm_filtering_input_file.path }}"
+
+    - name: "Parse VM filtering output"
+      ansible.builtin.set_fact:
+        remove_vm_filtering_json: "{{ remove_vm_filtering_raw.stdout | from_json }}"
+
+    - name: "Set matched VMs and extIds"
+      ansible.builtin.set_fact:
+        matched_vms: "{{ remove_vm_filtering_json.matched_vms | default([]) }}"
+        matched_vm_ext_ids: "{{ remove_vm_filtering_json.matched_vm_ext_ids | default([]) }}"
+
+    - name: "Remove temporary VM filtering input file"
+      ansible.builtin.file:
+        path: "{{ remove_vm_filtering_input_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Report no-op when no VM matches category"
+      ansible.builtin.debug:
+        msg: "No VMs matched category {{ category_key }}:{{ category_value }}. Nothing to do."
+      when: matched_vm_ext_ids | length == 0
+
+    - name: "Create temporary file for remove disk inventory payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_remove_disk_inventory_payload.json"
+      register: remove_disk_inventory_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Write remove disk inventory payload"
+      ansible.builtin.copy:
+        dest: "{{ remove_disk_inventory_payload_file.path }}"
+        mode: "0600"
+        content: "{{ {'matched_vms': (matched_vms | default([]))} | to_json }}"
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Build embedded disk map and fallback VM list in one Python pass"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload_file = os.environ["REMOVE_DISK_INVENTORY_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        matched_vms = payload.get("matched_vms", [])
+        embedded_disks_by_vm = {}
+        fallback_vm_ext_ids = []
+
+        for vm in matched_vms:
+            vm_ext_id = vm.get("extId", "")
+            if not vm_ext_id:
+                continue
+            vm_disks = vm.get("disks", [])
+            if isinstance(vm_disks, list) and len(vm_disks) > 0:
+                embedded_disks_by_vm[vm_ext_id] = vm_disks
+            else:
+                fallback_vm_ext_ids.append(vm_ext_id)
+
+        print(
+            json.dumps(
+                {
+                    "embedded_disks_by_vm": embedded_disks_by_vm,
+                    "fallback_vm_ext_ids": fallback_vm_ext_ids,
+                }
+            )
+        )
+        PY
+      register: remove_disk_inventory_build_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+      environment:
+        REMOVE_DISK_INVENTORY_PAYLOAD_FILE: "{{ remove_disk_inventory_payload_file.path }}"
+
+    - name: "Set remove embedded/fallback disk inventory facts"
+      ansible.builtin.set_fact:
+        embedded_disks_by_vm: "{{ (remove_disk_inventory_build_raw.stdout | from_json).embedded_disks_by_vm | default({}) }}"
+        fallback_vm_ext_ids: "{{ (remove_disk_inventory_build_raw.stdout | from_json).fallback_vm_ext_ids | default([]) }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Remove temporary remove disk inventory payload file"
+      ansible.builtin.file:
+        path: "{{ remove_disk_inventory_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Fetch fallback disks concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["FALLBACK_BASE_URL"]
+        username = os.environ["FALLBACK_USERNAME"]
+        password = os.environ["FALLBACK_PASSWORD"]
+        vm_ids = json.loads(os.environ["FALLBACK_VM_IDS"])
+        retries = int(os.environ["FALLBACK_RETRIES"])
+        retry_delay = int(os.environ["FALLBACK_RETRY_DELAY"])
+        max_workers = int(os.environ["FALLBACK_CONCURRENCY"])
+        progress_every = int(os.environ["FALLBACK_PROGRESS_EVERY"])
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+
+        def fetch_disks(vm_ext_id: str) -> tuple[str, list, str]:
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}/disks?$page=0&$limit=100"
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.get(url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        payload = response.json()
+                        return vm_ext_id, payload.get("data", []), ""
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                import time
+                time.sleep(retry_delay)
+            return vm_ext_id, [], last_error or "unknown error"
+
+        success = {}
+        failed = []
+        processed = 0
+        total = len(vm_ids)
+        print(f"PROGRESS stage=remove_fallback_disk_fetch total={total}", flush=True)
+        if vm_ids:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(fetch_disks, vm_id) for vm_id in vm_ids]
+                for future in concurrent.futures.as_completed(futures):
+                    vm_id, disks, err = future.result()
+                    processed += 1
+                    if err:
+                        failed.append({"vm_ext_id": vm_id, "error": err})
+                    else:
+                        success[vm_id] = disks
+                    if (processed % progress_every == 0) or (processed == total):
+                        print(
+                            f"PROGRESS stage=remove_fallback_disk_fetch processed={processed}/{total} success={len(success)} failed={len(failed)}",
+                            flush=True,
+                        )
+
+        print(json.dumps({"success": success, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: fallback_disk_fetch_raw
+      delegate_to: localhost
+      check_mode: false
+      when: fallback_vm_ext_ids | default([]) | length > 0
+      environment:
+        FALLBACK_BASE_URL: "{{ prism_base_url }}"
+        FALLBACK_USERNAME: "{{ pc_username }}"
+        FALLBACK_PASSWORD: "{{ pc_password }}"
+        FALLBACK_VM_IDS: "{{ fallback_vm_ext_ids | default([]) | to_json }}"
+        FALLBACK_RETRIES: "{{ api_retries | int }}"
+        FALLBACK_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        FALLBACK_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        FALLBACK_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Parse fallback disk fetch result"
+      ansible.builtin.set_fact:
+        fallback_disk_fetch_json: "{{ (fallback_disk_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json }}"
+      when: fallback_vm_ext_ids | default([]) | length > 0
+
+    - name: "Initialize empty fallback disk map when not needed"
+      ansible.builtin.set_fact:
+        fallback_disks_by_vm: {}
+      when: fallback_vm_ext_ids | default([]) | length == 0
+
+    - name: "Set fallback disk map from fetch result"
+      ansible.builtin.set_fact:
+        fallback_disks_by_vm: "{{ fallback_disk_fetch_json.success | default({}) }}"
+      when: fallback_vm_ext_ids | default([]) | length > 0
+
+    - name: "Merge embedded and fallback disk maps"
+      ansible.builtin.set_fact:
+        vm_disks_by_vm: "{{ embedded_disks_by_vm | combine(fallback_disks_by_vm) }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Create temporary file for deletion-target payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_delete_target_payload.json"
+      register: delete_target_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Write deletion-target payload"
+      ansible.builtin.copy:
+        dest: "{{ delete_target_payload_file.path }}"
+        mode: "0600"
+        content: >-
+          {{
+            {
+              'matched_vms': (matched_vms | default([])),
+              'vm_disks_by_vm': (vm_disks_by_vm | default({})),
+              'disk_custom_attribute': disk_custom_attribute
+            } | to_json
+          }}
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Build disk deletion targets in one Python pass"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload_file = os.environ["DELETE_TARGET_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        matched_vms = payload.get("matched_vms", [])
+        vm_disks_by_vm = payload.get("vm_disks_by_vm", {})
+        disk_custom_attribute = payload.get("disk_custom_attribute", "")
+
+        vm_name_by_ext_id = {}
+        for vm in matched_vms:
+            ext_id = vm.get("extId", "")
+            if ext_id:
+                vm_name_by_ext_id[ext_id] = vm.get("name") or ext_id
+
+        targets = []
+        for vm_ext_id, disks in vm_disks_by_vm.items():
+            vm_name = vm_name_by_ext_id.get(vm_ext_id, vm_ext_id)
+            for disk in disks or []:
+                disk_address = disk.get("diskAddress", {}) or {}
+                bus_type = disk_address.get("busType", "UNKNOWN")
+                index = disk_address.get("index", "?")
+                is_scsi_zero = bus_type == "SCSI" and index == 0
+                custom_attributes = disk.get("customAttributes", []) or []
+                custom_attr_matches = disk_custom_attribute in custom_attributes
+                if is_scsi_zero or not custom_attr_matches:
+                    continue
+                disk_size_bytes = (((disk.get("backingInfo", {}) or {}).get("diskSizeBytes", 0)) or 0)
+                targets.append(
+                    {
+                        "vm_ext_id": vm_ext_id,
+                        "vm_name": vm_name,
+                        "disk_ext_id": disk.get("extId", ""),
+                        "scsi_id": f"{bus_type}.{index}",
+                        "disk_size_gib": round(float(disk_size_bytes) / 1073741824, 2),
+                        "custom_attributes": custom_attributes,
+                    }
+                )
+
+        print(json.dumps({"disk_delete_targets": targets}))
+        PY
+      register: delete_target_build_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+      environment:
+        DELETE_TARGET_PAYLOAD_FILE: "{{ delete_target_payload_file.path }}"
+
+    - name: "Set deletion target list from Python result"
+      ansible.builtin.set_fact:
+        disk_delete_targets: "{{ (delete_target_build_raw.stdout | from_json).disk_delete_targets | default([]) }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Remove temporary deletion-target payload file"
+      ansible.builtin.file:
+        path: "{{ delete_target_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Initialize deletion target list when no matched VMs"
+      ansible.builtin.set_fact:
+        disk_delete_targets: []
+      when: matched_vm_ext_ids | length == 0
+
+    - name: "Show check mode delete preview"
+      ansible.builtin.debug:
+        msg:
+          matched_vm_count: "{{ matched_vm_ext_ids | length }}"
+          disk_custom_attribute: "{{ disk_custom_attribute }}"
+          would_delete_disk_count: "{{ disk_delete_targets | length }}"
+          would_delete_disks: "{{ disk_delete_targets }}"
+      when: ansible_check_mode
+
+    - name: "Create temporary file for delete submit payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_delete_submit_payload.json"
+      register: delete_submit_payload_file
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+      check_mode: false
+      no_log: true
+
+    - name: "Write delete submit payload"
+      ansible.builtin.copy:
+        dest: "{{ delete_submit_payload_file.path }}"
+        mode: "0600"
+        content: "{{ {'disk_delete_targets': (disk_delete_targets | default([]))} | to_json }}"
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+      check_mode: false
+      no_log: true
+
+    - name: "Prefetch VM ETags for delete targets concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        payload_file = os.environ["DELETE_SUBMIT_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        base_url = os.environ["DELETE_BASE_URL"]
+        username = os.environ["DELETE_USERNAME"]
+        password = os.environ["DELETE_PASSWORD"]
+        api_retries = int(os.environ["DELETE_API_RETRIES"])
+        api_retry_delay = int(os.environ["DELETE_API_RETRY_DELAY"])
+        concurrency = int(os.environ["DELETE_SUBMIT_CONCURRENCY"])
+        progress_every = int(os.environ["DELETE_PROGRESS_EVERY"])
+        rate_limit_backoff_max = int(os.environ.get("DELETE_RATE_LIMIT_BACKOFF_MAX", "30"))
+        rate_limit_retry_rounds = int(os.environ.get("DELETE_RATE_LIMIT_RETRY_ROUNDS", "2"))
+
+        targets = payload.get("disk_delete_targets", []) or []
+
+        vm_to_disks = {}
+        for target in targets:
+            vm_ext_id = target.get("vm_ext_id", "")
+            disk_ext_id = target.get("disk_ext_id", "")
+            if not vm_ext_id or not disk_ext_id:
+                continue
+            vm_to_disks.setdefault(vm_ext_id, []).append(target)
+
+        vm_targets = [{"vm_ext_id": vm_ext_id, "disks": disks} for vm_ext_id, disks in vm_to_disks.items()]
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"})
+
+        def compute_backoff_seconds(attempt_idx: int, response=None) -> float:
+            retry_after = ""
+            if response is not None:
+                retry_after = (response.headers.get("Retry-After", "") or "").strip()
+            if retry_after.isdigit():
+                return float(min(rate_limit_backoff_max, max(1, int(retry_after))))
+            base = max(1, api_retry_delay)
+            jitter = ((attempt_idx % 3) * 0.25)
+            return float(min(rate_limit_backoff_max, (base * (2 ** attempt_idx)) + jitter))
+
+        def fetch_etag(vm_ext_id: str):
+            vm_url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}"
+            last_error = ""
+            for attempt_idx in range(api_retries):
+                try:
+                    response = session.get(vm_url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        return vm_ext_id, response.headers.get("ETag", ""), ""
+                    if response.status_code == 429:
+                        last_error = f"HTTP 429: {response.text}"
+                        time.sleep(compute_backoff_seconds(attempt_idx, response))
+                        continue
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(api_retry_delay)
+            return vm_ext_id, "", last_error or "ETag fetch failed after retries"
+
+        def prefetch_vm_ids(vm_ids: list[str], stage_name: str):
+            stage_success = {}
+            stage_failed = []
+            stage_processed = 0
+            stage_total = len(vm_ids)
+            print(f"PROGRESS stage={stage_name} total={stage_total}", flush=True)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+                futures = [executor.submit(fetch_etag, vm_ext_id) for vm_ext_id in vm_ids]
+                for future in concurrent.futures.as_completed(futures):
+                    vm_ext_id, etag, err = future.result()
+                    stage_processed += 1
+                    if err or not etag:
+                        stage_failed.append({"vm_ext_id": vm_ext_id, "reason": err or "ETag header missing"})
+                    else:
+                        stage_success[vm_ext_id] = etag
+                    if (stage_processed % progress_every == 0) or (stage_processed == stage_total):
+                        print(
+                            f"PROGRESS stage={stage_name} processed={stage_processed}/{stage_total} success={len(stage_success)} failed={len(stage_failed)}",
+                            flush=True,
+                        )
+            return stage_success, stage_failed
+
+        vm_ids = sorted(vm_to_disks.keys())
+        vm_etag_by_vm, etag_failed = prefetch_vm_ids(vm_ids, "delete_etag_prefetch")
+
+        for retry_round in range(rate_limit_retry_rounds):
+            if not etag_failed:
+                break
+            retry_vm_ids = sorted({item.get("vm_ext_id", "") for item in etag_failed if item.get("vm_ext_id", "")})
+            if not retry_vm_ids:
+                break
+            print(
+                f"PROGRESS stage=delete_etag_prefetch_retry round={retry_round + 1}/{rate_limit_retry_rounds} targets={len(retry_vm_ids)}",
+                flush=True,
+            )
+            retry_success, retry_failed = prefetch_vm_ids(retry_vm_ids, "delete_etag_prefetch_retry")
+            vm_etag_by_vm.update(retry_success)
+            etag_failed = retry_failed
+
+        print(json.dumps({"vm_targets": vm_targets, "vm_etag_by_vm": vm_etag_by_vm, "etag_failed": etag_failed}))
+        PY
+      register: delete_etag_prefetch_raw
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+      check_mode: false
+      environment:
+        DELETE_SUBMIT_PAYLOAD_FILE: "{{ delete_submit_payload_file.path }}"
+        DELETE_BASE_URL: "{{ prism_base_url }}"
+        DELETE_USERNAME: "{{ pc_username }}"
+        DELETE_PASSWORD: "{{ pc_password }}"
+        DELETE_API_RETRIES: "{{ api_retries | int }}"
+        DELETE_API_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        DELETE_SUBMIT_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        DELETE_PROGRESS_EVERY: "{{ delete_progress_every | int }}"
+        DELETE_RATE_LIMIT_BACKOFF_MAX: "{{ delete_rate_limit_backoff_max_seconds | int }}"
+        DELETE_RATE_LIMIT_RETRY_ROUNDS: "{{ delete_rate_limit_retry_rounds | int }}"
+
+    - name: "Set delete prefetch facts"
+      ansible.builtin.set_fact:
+        delete_vm_targets: "{{ (((delete_etag_prefetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_targets | default([])) }}"
+        delete_vm_etag_by_vm: "{{ (((delete_etag_prefetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_etag_by_vm | default({})) }}"
+        delete_etag_prefetch_failed: "{{ (((delete_etag_prefetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).etag_failed | default([])) }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Fail when delete ETag prefetch fails"
+      ansible.builtin.fail:
+        msg: "Delete ETag prefetch failures detected: {{ delete_etag_prefetch_failed }}"
+      when:
+        - not ansible_check_mode
+        - (delete_etag_prefetch_failed | default([]) | length) > 0
+
+    - name: "Submit disk deletes using prefetched ETags"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import time
+        import uuid
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["DELETE_BASE_URL"]
+        username = os.environ["DELETE_USERNAME"]
+        password = os.environ["DELETE_PASSWORD"]
+        vm_targets = json.loads(os.environ["DELETE_VM_TARGETS"])
+        initial_etags = json.loads(os.environ["DELETE_INITIAL_ETAGS"])
+        api_retries = int(os.environ["DELETE_API_RETRIES"])
+        api_retry_delay = int(os.environ["DELETE_API_RETRY_DELAY"])
+        concurrency = int(os.environ["DELETE_SUBMIT_CONCURRENCY"])
+        progress_every = int(os.environ["DELETE_PROGRESS_EVERY"])
+        rate_limit_backoff_max = int(os.environ.get("DELETE_RATE_LIMIT_BACKOFF_MAX", "30"))
+        rate_limit_retry_rounds = int(os.environ.get("DELETE_RATE_LIMIT_RETRY_ROUNDS", "2"))
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+
+        def fetch_fresh_etag(vm_ext_id: str):
+            vm_url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}"
+            last_error = ""
+            for _ in range(api_retries):
+                try:
+                    response = session.get(vm_url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        etag = response.headers.get("ETag", "")
+                        if etag:
+                            return etag, ""
+                        last_error = "ETag header missing"
+                    else:
+                        last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(api_retry_delay)
+            return "", last_error or "ETag refresh failed after retries"
+
+        def compute_backoff_seconds(attempt_idx: int, response=None) -> float:
+            retry_after = ""
+            if response is not None:
+                retry_after = (response.headers.get("Retry-After", "") or "").strip()
+            if retry_after.isdigit():
+                return float(min(rate_limit_backoff_max, max(1, int(retry_after))))
+            # Exponential backoff with light deterministic jitter.
+            base = max(1, api_retry_delay)
+            jitter = ((attempt_idx % 3) * 0.25)
+            return float(min(rate_limit_backoff_max, (base * (2 ** attempt_idx)) + jitter))
+
+        def submit_for_vm(vm_target: dict) -> dict:
+            vm_ext_id = vm_target.get("vm_ext_id", "")
+            disks = vm_target.get("disks", []) or []
+            current_etag = initial_etags.get(vm_ext_id, "")
+            vm_deleted = []
+            vm_submit_failed = []
+            vm_task_targets = []
+
+            if not vm_ext_id:
+                return {"deleted": vm_deleted, "submit_failed": vm_submit_failed, "task_targets": vm_task_targets}
+            if not current_etag:
+                vm_submit_failed.extend(
+                    [
+                        {
+                            "vm_ext_id": vm_ext_id,
+                            "disk_ext_id": disk.get("disk_ext_id", ""),
+                            "reason": "Initial ETag not available for VM",
+                        }
+                        for disk in disks
+                    ]
+                )
+                return {"deleted": vm_deleted, "submit_failed": vm_submit_failed, "task_targets": vm_task_targets}
+
+            for disk_index, disk in enumerate(disks):
+                disk_ext_id = disk.get("disk_ext_id", "")
+                delete_url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}/disks/{disk_ext_id}"
+                headers = {"NTNX-Request-Id": str(uuid.uuid4()), "If-Match": current_etag}
+                delete_ok = False
+                delete_resp = None
+                last_error = ""
+                rate_limited = False
+
+                for attempt_idx in range(api_retries):
+                    try:
+                        delete_resp = session.delete(delete_url, headers=headers, timeout=(5, 30))
+                        if delete_resp.status_code in (200, 202):
+                            delete_ok = True
+                            break
+                        if delete_resp.status_code == 429:
+                            rate_limited = True
+                            last_error = f"HTTP 429: {delete_resp.text}"
+                            time.sleep(compute_backoff_seconds(attempt_idx, delete_resp))
+                            continue
+                        last_error = f"HTTP {delete_resp.status_code}: {delete_resp.text}"
+                    except Exception as exc:
+                        last_error = str(exc)
+                    time.sleep(api_retry_delay)
+
+                if not delete_ok or delete_resp is None:
+                    vm_submit_failed.append(
+                        {
+                            "vm_ext_id": vm_ext_id,
+                            "disk_ext_id": disk_ext_id,
+                            "reason": last_error or "Delete request failed after retries",
+                            "error_group": ("RATE_LIMIT_EXCEEDED" if rate_limited else "SUBMIT_FAILED"),
+                        }
+                    )
+                    continue
+
+                if delete_resp.status_code == 200:
+                    vm_deleted.append(
+                        {
+                            "vm_ext_id": vm_ext_id,
+                            "disk_ext_id": disk_ext_id,
+                            "task_status": "COMPLETED",
+                        }
+                    )
+                else:
+                    try:
+                        task_ext_id = delete_resp.json().get("data", {}).get("extId", "")
+                    except Exception:
+                        task_ext_id = ""
+                    if not task_ext_id:
+                        vm_submit_failed.append(
+                            {
+                                "vm_ext_id": vm_ext_id,
+                                "disk_ext_id": disk_ext_id,
+                                "reason": "Delete accepted but no task extId returned",
+                            }
+                        )
+                    else:
+                        vm_task_targets.append(
+                            {
+                                "vm_ext_id": vm_ext_id,
+                                "disk_ext_id": disk_ext_id,
+                                "task_url": f"{base_url}/api/prism/v4.0/config/tasks/{task_ext_id}",
+                            }
+                        )
+
+                # For VMs with multiple delete targets, refresh ETag after each successful delete submit.
+                if disk_index < (len(disks) - 1):
+                    fresh_etag, etag_err = fetch_fresh_etag(vm_ext_id)
+                    if not fresh_etag:
+                        vm_submit_failed.extend(
+                            [
+                                {
+                                    "vm_ext_id": vm_ext_id,
+                                    "disk_ext_id": remaining_disk.get("disk_ext_id", ""),
+                                    "reason": f"ETag refresh failed for subsequent disk deletes: {etag_err}",
+                                }
+                                for remaining_disk in disks[disk_index + 1 :]
+                            ]
+                        )
+                        break
+                    current_etag = fresh_etag
+
+            return {"deleted": vm_deleted, "submit_failed": vm_submit_failed, "task_targets": vm_task_targets}
+
+        deleted = []
+        submit_failed = []
+        task_targets = []
+        processed_vm = 0
+        total_vm = len(vm_targets)
+        total_targets = sum(len(vm_target.get("disks", []) or []) for vm_target in vm_targets)
+        print(f"PROGRESS stage=delete_submit total_vms={total_vm} total_disks={total_targets}", flush=True)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            futures = [executor.submit(submit_for_vm, vm_target) for vm_target in vm_targets]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                processed_vm += 1
+                deleted.extend(result.get("deleted", []))
+                submit_failed.extend(result.get("submit_failed", []))
+                task_targets.extend(result.get("task_targets", []))
+
+                processed_disks = len(deleted) + len(submit_failed) + len(task_targets)
+                if (processed_vm % progress_every == 0) or (processed_vm == total_vm):
+                    print(
+                        f"PROGRESS stage=delete_submit processed_vms={processed_vm}/{total_vm} processed_disks={processed_disks}/{total_targets} immediate_deleted={len(deleted)} queued_for_poll={len(task_targets)} failed={len(submit_failed)}",
+                        flush=True,
+                    )
+
+        # Controlled second-pass retries for explicit rate-limited submit failures.
+        for retry_round in range(rate_limit_retry_rounds):
+            rate_limited_failures = [item for item in submit_failed if item.get("error_group", "") == "RATE_LIMIT_EXCEEDED"]
+            if not rate_limited_failures:
+                break
+
+            print(
+                f"PROGRESS stage=delete_submit_rate_limit_retry round={retry_round + 1}/{rate_limit_retry_rounds} targets={len(rate_limited_failures)}",
+                flush=True,
+            )
+
+            # Remove rate-limited failures from current failure set for reprocessing.
+            submit_failed = [item for item in submit_failed if item.get("error_group", "") != "RATE_LIMIT_EXCEEDED"]
+
+            retry_vm_map = {}
+            for item in rate_limited_failures:
+                vm_ext_id = item.get("vm_ext_id", "")
+                disk_ext_id = item.get("disk_ext_id", "")
+                if not vm_ext_id or not disk_ext_id:
+                    continue
+                retry_vm_map.setdefault(vm_ext_id, []).append({"vm_ext_id": vm_ext_id, "disk_ext_id": disk_ext_id})
+
+            retry_vm_targets = [{"vm_ext_id": vm_ext_id, "disks": disks} for vm_ext_id, disks in retry_vm_map.items()]
+            if not retry_vm_targets:
+                break
+
+            # Refresh initial ETag per retry VM before re-submit.
+            refreshed_initial_etags = {}
+            for vm_target in retry_vm_targets:
+                vm_ext_id = vm_target.get("vm_ext_id", "")
+                fresh_etag, etag_err = fetch_fresh_etag(vm_ext_id)
+                if not fresh_etag:
+                    submit_failed.extend(
+                        [
+                            {
+                                "vm_ext_id": vm_ext_id,
+                                "disk_ext_id": disk.get("disk_ext_id", ""),
+                                "reason": f"ETag refresh failed before rate-limit retry: {etag_err}",
+                                "error_group": "ETAG_REFRESH_FAILED",
+                            }
+                            for disk in (vm_target.get("disks", []) or [])
+                        ]
+                    )
+                else:
+                    refreshed_initial_etags[vm_ext_id] = fresh_etag
+
+            effective_retry_vm_targets = [vm_target for vm_target in retry_vm_targets if vm_target.get("vm_ext_id", "") in refreshed_initial_etags]
+            if not effective_retry_vm_targets:
+                continue
+
+            original_initial_etags = initial_etags
+            initial_etags = refreshed_initial_etags
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+                    futures = [executor.submit(submit_for_vm, vm_target) for vm_target in effective_retry_vm_targets]
+                    for future in concurrent.futures.as_completed(futures):
+                        result = future.result()
+                        deleted.extend(result.get("deleted", []))
+                        submit_failed.extend(result.get("submit_failed", []))
+                        task_targets.extend(result.get("task_targets", []))
+            finally:
+                initial_etags = original_initial_etags
+
+        print(json.dumps({"deleted": deleted, "submit_failed": submit_failed, "task_targets": task_targets}))
+        PY
+      register: disk_delete_submit
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+      check_mode: false
+      environment:
+        DELETE_BASE_URL: "{{ prism_base_url }}"
+        DELETE_USERNAME: "{{ pc_username }}"
+        DELETE_PASSWORD: "{{ pc_password }}"
+        DELETE_VM_TARGETS: "{{ delete_vm_targets | default([]) | to_json }}"
+        DELETE_INITIAL_ETAGS: "{{ delete_vm_etag_by_vm | default({}) | to_json }}"
+        DELETE_API_RETRIES: "{{ api_retries | int }}"
+        DELETE_API_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        DELETE_SUBMIT_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        DELETE_PROGRESS_EVERY: "{{ delete_progress_every | int }}"
+        DELETE_RATE_LIMIT_BACKOFF_MAX: "30"
+        DELETE_RATE_LIMIT_RETRY_ROUNDS: "2"
+
+    - name: "Parse delete submit summary"
+      ansible.builtin.set_fact:
+        delete_submit_summary: "{{ (disk_delete_submit.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json }}"
+      when:
+        - not ansible_check_mode
+        - disk_delete_submit is defined
+        - disk_delete_submit.stdout is defined
+        - disk_delete_submit.stdout | length > 0
+
+    - name: "Remove temporary delete submit payload file"
+      ansible.builtin.file:
+        path: "{{ delete_submit_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+      check_mode: false
+      no_log: true
+
+    - name: "Poll delete tasks concurrently after submit"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        targets = json.loads(os.environ["DELETE_POLL_TARGETS"])
+        username = os.environ["DELETE_POLL_USERNAME"]
+        password = os.environ["DELETE_POLL_PASSWORD"]
+        retries = int(os.environ["DELETE_POLL_RETRIES"])
+        delay = int(os.environ["DELETE_POLL_DELAY"])
+        concurrency = int(os.environ["DELETE_POLL_CONCURRENCY"])
+        progress_every = int(os.environ["DELETE_PROGRESS_EVERY"])
+
+        terminal_success = {"SUCCEEDED", "COMPLETED", "COMPLETE"}
+        terminal_failure = {"FAILED", "ERROR", "CANCELLED"}
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"})
+
+        def poll_once(target: dict) -> dict:
+            vm_ext_id = target.get("vm_ext_id", "")
+            disk_ext_id = target.get("disk_ext_id", "")
+            task_url = target.get("task_url", "")
+            if not task_url:
+                return {
+                    "vm_ext_id": vm_ext_id,
+                    "disk_ext_id": disk_ext_id,
+                    "state": "FAILED",
+                    "task_status": "UNKNOWN",
+                    "reason": "missing task_url",
+                }
+            try:
+                response = session.get(task_url, timeout=(5, 30))
+                response.raise_for_status()
+                data = response.json().get("data", {}) or {}
+                status = str(data.get("status", "UNKNOWN")).upper()
+                if status in terminal_success:
+                    return {
+                        "vm_ext_id": vm_ext_id,
+                        "disk_ext_id": disk_ext_id,
+                        "state": "SUCCEEDED",
+                        "task_status": status,
+                    }
+                if status in terminal_failure:
+                    messages = data.get("errorMessages", []) or []
+                    reason = ((messages[0] or {}).get("message", "")) if messages else ""
+                    return {
+                        "vm_ext_id": vm_ext_id,
+                        "disk_ext_id": disk_ext_id,
+                        "state": "FAILED",
+                        "task_status": status,
+                        "reason": reason or f"Delete task ended with status {status}",
+                    }
+                return {
+                    "vm_ext_id": vm_ext_id,
+                    "disk_ext_id": disk_ext_id,
+                    "state": "PENDING",
+                    "task_status": status,
+                }
+            except Exception as exc:
+                return {
+                    "vm_ext_id": vm_ext_id,
+                    "disk_ext_id": disk_ext_id,
+                    "state": "PENDING",
+                    "task_status": "UNKNOWN",
+                    "reason": str(exc),
+                }
+
+        deleted = []
+        failed = []
+        total = len(targets)
+        print(f"PROGRESS stage=delete_poll total={total}", flush=True)
+        pending = [
+            {
+                "vm_ext_id": t.get("vm_ext_id", ""),
+                "disk_ext_id": t.get("disk_ext_id", ""),
+                "task_url": t.get("task_url", ""),
+                "attempts": 0,
+                "last_status": "UNKNOWN",
+                "last_reason": "",
+            }
+            for t in targets
+        ]
+        round_no = 0
+
+        while pending:
+            round_no += 1
+            for t in pending:
+                t["attempts"] += 1
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+                futures = [executor.submit(poll_once, target) for target in pending]
+                results = [future.result() for future in concurrent.futures.as_completed(futures)]
+
+            next_pending = []
+            result_by_key = {
+                f"{r.get('vm_ext_id','')}:{r.get('disk_ext_id','')}": r
+                for r in results
+            }
+
+            for target in pending:
+                key = f"{target.get('vm_ext_id','')}:{target.get('disk_ext_id','')}"
+                result = result_by_key.get(key, {})
+                state = result.get("state", "PENDING")
+                task_status = result.get("task_status", target.get("last_status", "UNKNOWN"))
+                reason = result.get("reason", target.get("last_reason", ""))
+                target["last_status"] = task_status
+                target["last_reason"] = reason
+
+                if state == "SUCCEEDED":
+                    deleted.append(
+                        {
+                            "vm_ext_id": target.get("vm_ext_id", ""),
+                            "disk_ext_id": target.get("disk_ext_id", ""),
+                            "task_status": task_status,
+                        }
+                    )
+                elif state == "FAILED":
+                    failed.append(
+                        {
+                            "vm_ext_id": target.get("vm_ext_id", ""),
+                            "disk_ext_id": target.get("disk_ext_id", ""),
+                            "task_status": task_status,
+                            "reason": reason or "Delete task failed",
+                        }
+                    )
+                else:
+                    if target["attempts"] >= retries:
+                        failed.append(
+                            {
+                                "vm_ext_id": target.get("vm_ext_id", ""),
+                                "disk_ext_id": target.get("disk_ext_id", ""),
+                                "task_status": task_status,
+                                "reason": reason or "Delete task poll retries exhausted",
+                            }
+                        )
+                    else:
+                        next_pending.append(target)
+
+            processed = len(deleted) + len(failed)
+            if (processed % progress_every == 0) or (processed == total):
+                print(
+                    f"PROGRESS stage=delete_poll processed={processed}/{total} deleted={len(deleted)} failed={len(failed)} pending={len(next_pending)} round={round_no}",
+                    flush=True,
+                )
+
+            pending = next_pending
+            if pending:
+                time.sleep(delay)
+
+        print(json.dumps({"deleted": deleted, "failed": failed}))
+        PY
+      register: disk_delete_poll
+      delegate_to: localhost
+      check_mode: false
+      when:
+        - not ansible_check_mode
+        - (delete_submit_summary.task_targets | default([]) | length) > 0
+      environment:
+        DELETE_POLL_TARGETS: "{{ delete_poll_chunk | to_json }}"
+        DELETE_POLL_USERNAME: "{{ pc_username }}"
+        DELETE_POLL_PASSWORD: "{{ pc_password }}"
+        DELETE_POLL_RETRIES: "{{ task_poll_retries | int }}"
+        DELETE_POLL_DELAY: "{{ task_poll_delay_seconds | int }}"
+        DELETE_POLL_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        DELETE_PROGRESS_EVERY: "{{ delete_progress_every | int }}"
+      loop: "{{ (not ansible_check_mode) | ternary((delete_submit_summary.task_targets | default([]) | batch(delete_chunk_size | int) | list), []) }}"
+      loop_control:
+        loop_var: delete_poll_chunk
+        index_var: delete_poll_chunk_index
+        label: "poll_chunk size={{ delete_poll_chunk | length }}"
+
+    - name: "Initialize aggregate delete poll summary"
+      ansible.builtin.set_fact:
+        delete_poll_summary:
+          deleted: []
+          failed: []
+      when:
+        - not ansible_check_mode
+        - (delete_submit_summary.task_targets | default([]) | length) > 0
+
+    - name: "Merge delete poll summary chunks"
+      ansible.builtin.set_fact:
+        delete_poll_summary:
+          deleted: "{{ (delete_poll_summary.deleted | default([])) + (poll_chunk_json.deleted | default([])) }}"
+          failed: "{{ (delete_poll_summary.failed | default([])) + (poll_chunk_json.failed | default([])) }}"
+      vars:
+        poll_chunk_json: "{{ (item.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json }}"
+      loop: "{{ disk_delete_poll.results | default([]) }}"
+      loop_control:
+        label: "poll_chunk"
+      when:
+        - not ansible_check_mode
+        - disk_delete_poll is defined
+        - disk_delete_poll.results is defined
+
+    - name: "Build final delete execution summary"
+      ansible.builtin.set_fact:
+        disk_delete_execution_summary:
+          deleted: "{{ (delete_submit_summary.deleted | default([])) + (delete_poll_summary.deleted | default([])) }}"
+          failed: "{{ (delete_submit_summary.submit_failed | default([])) + (delete_poll_summary.failed | default([])) }}"
+      when:
+        - not ansible_check_mode
+        - disk_delete_targets | default([]) | length > 0
+
+    - name: "Print delete submit/poll summary"
+      ansible.builtin.debug:
+        msg:
+          delete_total_targets: "{{ disk_delete_targets | length }}"
+          delete_immediate_deleted_count: "{{ delete_submit_summary.deleted | default([]) | length }}"
+          delete_queued_task_count: "{{ delete_submit_summary.task_targets | default([]) | length }}"
+          delete_submit_failed_count: "{{ delete_submit_summary.submit_failed | default([]) | length }}"
+          delete_polled_deleted_count: "{{ delete_poll_summary.deleted | default([]) | length }}"
+          delete_polled_failed_count: "{{ delete_poll_summary.failed | default([]) | length }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Fail when delete execution has failures"
+      ansible.builtin.fail:
+        msg: "Delete execution failures detected: {{ disk_delete_execution_summary.failed | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_execution_summary.failed | default([]) | length) > 0
+
+    - name: "Parse delete execution summary"
+      ansible.builtin.set_fact:
+        disk_delete_execution_summary: "{{ disk_delete_execution_summary | default({'deleted': [], 'failed': []}) }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Print final disk removal summary"
+      ansible.builtin.debug:
+        msg:
+          matched_vm_count: "{{ matched_vm_ext_ids | length }}"
+          disk_custom_attribute: "{{ disk_custom_attribute }}"
+          deleted_disk_count: "{{ (disk_delete_execution_summary.deleted | default([]) | length) if not ansible_check_mode else (disk_delete_targets | length) }}"
+          failed_disk_count: "{{ (disk_delete_execution_summary.failed | default([]) | length) if not ansible_check_mode else 0 }}"
+          skipped_disk_count: 0
+          deleted_disks: "{{ (disk_delete_execution_summary.deleted | default([])) if not ansible_check_mode else disk_delete_targets }}"
+          failed_disks: "{{ (disk_delete_execution_summary.failed | default([])) if not ansible_check_mode else [] }}"

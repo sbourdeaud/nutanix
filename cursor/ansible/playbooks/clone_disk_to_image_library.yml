@@ -1,0 +1,697 @@
+---
+- name: "Clone VM disk to AHV image library"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../vars/disk_to_image_defaults.yml"
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+    prism_base_url: "https://{{ pc_ip }}:9440"
+    vm_list_endpoint: "/api/vmm/v4.0/ahv/config/vms"
+    category_list_endpoint: "/api/prism/v4.0/config/categories"
+    vm_disk_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks"
+    image_list_endpoint: "/api/vmm/v4.0/content/images"
+    task_endpoint_template: "/api/prism/v4.0/config/tasks/%s"
+    request_headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+      Cache-Control: "no-cache"
+  tasks:
+    - name: "Validate required inputs"
+      ansible.builtin.assert:
+        that:
+          - pc_ip is defined and pc_ip | length > 0
+          - pc_username is defined and pc_username | length > 0
+          - pc_password is defined and pc_password | length > 0
+          - source_category_key is defined and source_category_key | length > 0
+          - source_category_value is defined and source_category_value | length > 0
+          - source_disk_custom_attribute is defined and source_disk_custom_attribute | length > 0
+        fail_msg: >-
+          Missing required variables. Required: pc_ip, pc_username, pc_password,
+          source_category_key, source_category_value, source_disk_custom_attribute.
+      check_mode: false
+
+    - name: "Resolve source category extId"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ category_list_endpoint }}?$filter={{ category_filter | urlencode }}&$page=0&$limit=50"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: source_category_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        category_filter: "key eq '{{ source_category_key | replace(\"'\", \"''\") }}' and value eq '{{ source_category_value | replace(\"'\", \"''\") }}'"
+
+    - name: "Fail when source category is not unique"
+      ansible.builtin.fail:
+        msg: "Source category '{{ source_category_key }}:{{ source_category_value }}' must resolve to exactly one category. Found: {{ source_category_lookup.json.data | default([]) | length }}"
+      when: source_category_lookup.json.data | default([]) | length != 1
+
+    - name: "Set resolved source category extId"
+      ansible.builtin.set_fact:
+        source_category_ext_id: "{{ source_category_lookup.json.data[0].extId }}"
+
+    - name: "Fetch first page of VMs with retry backoff"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["PAGE_BASE_URL"]
+        username = os.environ["PAGE_USERNAME"]
+        password = os.environ["PAGE_PASSWORD"]
+        page_limit = int(os.environ["PAGE_LIMIT"])
+        retries = int(os.environ["PAGE_FETCH_RETRIES"])
+        backoff = int(os.environ["PAGE_FETCH_BACKOFF_SECONDS"])
+        timeout_seconds = int(os.environ["PAGE_FETCH_TIMEOUT_SECONDS"])
+
+        url = f"{base_url}/api/vmm/v4.0/ahv/config/vms?$page=0&$limit={page_limit}"
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"}
+
+        last_error = ""
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url,
+                    auth=(username, password),
+                    headers=headers,
+                    verify=False,
+                    timeout=(5, timeout_seconds),
+                )
+                if response.status_code == 200:
+                    print(response.text)
+                    sys.exit(0)
+                last_error = f"HTTP {response.status_code}: {response.text}"
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(backoff * (2 ** attempt))
+
+        print(json.dumps({"error": last_error}))
+        sys.exit(1)
+        PY
+      register: vm_page_0_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        PAGE_BASE_URL: "{{ prism_base_url }}"
+        PAGE_USERNAME: "{{ pc_username }}"
+        PAGE_PASSWORD: "{{ pc_password }}"
+        PAGE_LIMIT: "{{ api_page_limit | int }}"
+        PAGE_FETCH_RETRIES: "{{ vm_page_fetch_retries | int }}"
+        PAGE_FETCH_BACKOFF_SECONDS: "{{ vm_page_fetch_backoff_seconds | int }}"
+        PAGE_FETCH_TIMEOUT_SECONDS: "{{ vm_page_fetch_timeout_seconds | int }}"
+
+    - name: "Parse first page VM response"
+      ansible.builtin.set_fact:
+        vm_page_0_json: "{{ vm_page_0_raw.stdout | from_json }}"
+
+    - name: "Initialize VM pagination facts"
+      ansible.builtin.set_fact:
+        total_available_vms: "{{ vm_page_0_json.metadata.totalAvailableResults | default(vm_page_0_json.data | default([]) | length) | int }}"
+        all_vms: "{{ vm_page_0_json.data | default([]) }}"
+
+    - name: "Compute VM total page count"
+      ansible.builtin.set_fact:
+        total_vm_pages: "{{ ((total_available_vms | int) + (api_page_limit | int) - 1) // (api_page_limit | int) }}"
+
+    - name: "Fetch remaining VM pages concurrently with backoff"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["PAGE_BASE_URL"]
+        username = os.environ["PAGE_USERNAME"]
+        password = os.environ["PAGE_PASSWORD"]
+        page_limit = int(os.environ["PAGE_LIMIT"])
+        total_pages = int(os.environ["TOTAL_PAGES"])
+        retries = int(os.environ["PAGE_FETCH_RETRIES"])
+        backoff = int(os.environ["PAGE_FETCH_BACKOFF_SECONDS"])
+        timeout_seconds = int(os.environ["PAGE_FETCH_TIMEOUT_SECONDS"])
+        concurrency = int(os.environ["PAGE_FETCH_CONCURRENCY"])
+
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"}
+
+        def fetch_page(page_num: int):
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms?$page={page_num}&$limit={page_limit}"
+            last_error = ""
+            for attempt in range(retries):
+                try:
+                    response = requests.get(
+                        url,
+                        auth=(username, password),
+                        headers=headers,
+                        verify=False,
+                        timeout=(5, timeout_seconds),
+                    )
+                    if response.status_code == 200:
+                        payload = response.json()
+                        return {"page": page_num, "data": payload.get("data", [])}
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(backoff * (2 ** attempt))
+            return {"page": page_num, "error": last_error or "unknown error"}
+
+        pages = []
+        failed = []
+        if total_pages > 1:
+            page_numbers = list(range(1, total_pages))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [executor.submit(fetch_page, p) for p in page_numbers]
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if "error" in result:
+                        failed.append(result)
+                    else:
+                        pages.append(result)
+
+        pages.sort(key=lambda item: item["page"])
+        print(json.dumps({"pages": pages, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: vm_other_pages_raw
+      delegate_to: localhost
+      when: total_vm_pages | int > 1
+      check_mode: false
+      no_log: true
+      environment:
+        PAGE_BASE_URL: "{{ prism_base_url }}"
+        PAGE_USERNAME: "{{ pc_username }}"
+        PAGE_PASSWORD: "{{ pc_password }}"
+        PAGE_LIMIT: "{{ api_page_limit | int }}"
+        TOTAL_PAGES: "{{ total_vm_pages | int }}"
+        PAGE_FETCH_RETRIES: "{{ vm_page_fetch_retries | int }}"
+        PAGE_FETCH_BACKOFF_SECONDS: "{{ vm_page_fetch_backoff_seconds | int }}"
+        PAGE_FETCH_TIMEOUT_SECONDS: "{{ vm_page_fetch_timeout_seconds | int }}"
+        PAGE_FETCH_CONCURRENCY: "{{ vm_page_fetch_concurrency | int }}"
+
+    - name: "Parse remaining VM pages response"
+      ansible.builtin.set_fact:
+        vm_other_pages_json: "{{ vm_other_pages_raw.stdout | from_json }}"
+      when: total_vm_pages | int > 1
+
+    - name: "Merge paginated VM results"
+      ansible.builtin.set_fact:
+        all_vms: "{{ all_vms + (vm_other_pages_json.pages | default([]) | map(attribute='data') | list | flatten) }}"
+      when: total_vm_pages | int > 1
+
+    - name: "Create temporary file for source VM filtering payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_source_vm_filtering_payload.json"
+      register: source_vm_filtering_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Write source VM filtering payload"
+      ansible.builtin.copy:
+        dest: "{{ source_vm_filtering_payload_file.path }}"
+        mode: "0600"
+        content: "{{ {'source_category_ext_id': source_category_ext_id, 'all_vms': all_vms} | to_json }}"
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Filter source VMs by category in one Python pass"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload_file = os.environ["SOURCE_VM_FILTER_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        source_category_ext_id = payload.get("source_category_ext_id", "")
+        all_vms = payload.get("all_vms", []) or []
+
+        source_vms = []
+        for vm in all_vms:
+            categories = vm.get("categories", []) or []
+            for category_ref in categories:
+                if category_ref.get("extId", "") == source_category_ext_id:
+                    source_vms.append(vm)
+                    break
+
+        print(json.dumps({"source_vms": source_vms}))
+        PY
+      register: source_vm_filtering_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        SOURCE_VM_FILTER_PAYLOAD_FILE: "{{ source_vm_filtering_payload_file.path }}"
+
+    - name: "Set source VM list"
+      ansible.builtin.set_fact:
+        source_vms: "{{ (source_vm_filtering_raw.stdout | from_json).source_vms | default([]) }}"
+
+    - name: "Remove temporary source VM filtering payload file"
+      ansible.builtin.file:
+        path: "{{ source_vm_filtering_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Fail when no source VMs match"
+      ansible.builtin.fail:
+        msg: "No source VMs matched category {{ source_category_key }}:{{ source_category_value }}."
+      when: source_vms | default([]) | length == 0
+
+    - name: "Auto-select source VM when exactly one match exists"
+      ansible.builtin.set_fact:
+        selected_source_vm_ext_id: "{{ (source_vms | first).extId }}"
+      when:
+        - source_vm_ext_id | default('') | length == 0
+        - source_vms | length == 1
+
+    - name: "Show source VM selection menu"
+      ansible.builtin.debug:
+        msg: "{{ vm_idx + 1 }}. {{ vm_item.name | default(vm_item.extId) }} ({{ vm_item.extId }})"
+      loop: "{{ source_vms }}"
+      loop_control:
+        loop_var: vm_item
+        index_var: vm_idx
+      when:
+        - source_vm_ext_id | default('') | length == 0
+        - source_vms | length > 1
+
+    - name: "Prompt for source VM selection"
+      ansible.builtin.pause:
+        prompt: "Enter source VM selection number (1-{{ source_vms | length }}):"
+      register: source_vm_selection_input
+      when:
+        - source_vm_ext_id | default('') | length == 0
+        - source_vms | length > 1
+
+    - name: "Validate source VM selection input"
+      ansible.builtin.assert:
+        that:
+          - source_vm_selection_input.user_input is match('^[0-9]+$')
+          - (source_vm_selection_input.user_input | int) >= 1
+          - (source_vm_selection_input.user_input | int) <= (source_vms | length)
+        fail_msg: "Invalid source VM selection number."
+      when:
+        - source_vm_ext_id | default('') | length == 0
+        - source_vms | length > 1
+
+    - name: "Set selected source VM from prompt"
+      ansible.builtin.set_fact:
+        selected_source_vm_ext_id: "{{ source_vms[(source_vm_selection_input.user_input | int) - 1].extId }}"
+      when:
+        - source_vm_ext_id | default('') | length == 0
+        - source_vms | length > 1
+
+    - name: "Set selected source VM from explicit input"
+      ansible.builtin.set_fact:
+        selected_source_vm_ext_id: "{{ source_vm_ext_id }}"
+      when: source_vm_ext_id | default('') | length > 0
+
+    - name: "Fail when explicit source VM is not in source category"
+      ansible.builtin.fail:
+        msg: "source_vm_ext_id '{{ selected_source_vm_ext_id }}' is not present in source category results."
+      when:
+        - selected_source_vm_ext_id is defined
+        - (source_vms | selectattr('extId', 'equalto', selected_source_vm_ext_id) | list | length) == 0
+
+    - name: "Set selected source VM object"
+      ansible.builtin.set_fact:
+        selected_source_vm: "{{ (source_vms | selectattr('extId', 'equalto', selected_source_vm_ext_id) | list | first) }}"
+
+    - name: "Fetch disks for selected source VM"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_disk_endpoint_template | format(selected_source_vm_ext_id) }}?$page=0&$limit=100"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: source_vm_disk_inventory
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Filter source VM disks by custom attribute"
+      ansible.builtin.set_fact:
+        source_matching_disks: "{{ source_matching_disks | default([]) + [disk_item] }}"
+      loop: "{{ source_vm_disk_inventory.json.data | default([]) }}"
+      loop_control:
+        loop_var: disk_item
+      when:
+        - disk_item.customAttributes is defined
+        - source_disk_custom_attribute in (disk_item.customAttributes | default([]))
+
+    - name: "Fail when no source disks match custom attribute"
+      ansible.builtin.fail:
+        msg: >-
+          No disks on source VM {{ selected_source_vm.name | default(selected_source_vm.extId) }}
+          matched custom attribute '{{ source_disk_custom_attribute }}'.
+      when: source_matching_disks | default([]) | length == 0
+
+    - name: "Auto-select source disk when exactly one match exists"
+      ansible.builtin.set_fact:
+        selected_source_disk_ext_id: "{{ (source_matching_disks | first).extId }}"
+      when:
+        - source_disk_ext_id | default('') | length == 0
+        - source_matching_disks | length == 1
+
+    - name: "Show source disk selection menu"
+      ansible.builtin.debug:
+        msg: >-
+          {{ disk_idx + 1 }}. {{ disk_item.extId }} ({{ disk_item.diskAddress.busType | default('UNKNOWN') }}.{{ disk_item.diskAddress.index | default('?') }},
+          {{ ((disk_item.backingInfo.diskSizeBytes | default(0) | float) / 1073741824) | round(2) }} GiB)
+      loop: "{{ source_matching_disks }}"
+      loop_control:
+        loop_var: disk_item
+        index_var: disk_idx
+      when:
+        - source_disk_ext_id | default('') | length == 0
+        - source_matching_disks | length > 1
+
+    - name: "Prompt for source disk selection"
+      ansible.builtin.pause:
+        prompt: "Enter source disk selection number (1-{{ source_matching_disks | length }}):"
+      register: source_disk_selection_input
+      when:
+        - source_disk_ext_id | default('') | length == 0
+        - source_matching_disks | length > 1
+
+    - name: "Validate source disk selection input"
+      ansible.builtin.assert:
+        that:
+          - source_disk_selection_input.user_input is match('^[0-9]+$')
+          - (source_disk_selection_input.user_input | int) >= 1
+          - (source_disk_selection_input.user_input | int) <= (source_matching_disks | length)
+        fail_msg: "Invalid source disk selection number."
+      when:
+        - source_disk_ext_id | default('') | length == 0
+        - source_matching_disks | length > 1
+
+    - name: "Set selected source disk from prompt"
+      ansible.builtin.set_fact:
+        selected_source_disk_ext_id: "{{ source_matching_disks[(source_disk_selection_input.user_input | int) - 1].extId }}"
+      when:
+        - source_disk_ext_id | default('') | length == 0
+        - source_matching_disks | length > 1
+
+    - name: "Set selected source disk from explicit input"
+      ansible.builtin.set_fact:
+        selected_source_disk_ext_id: "{{ source_disk_ext_id }}"
+      when: source_disk_ext_id | default('') | length > 0
+
+    - name: "Fail when explicit source disk is not in matching set"
+      ansible.builtin.fail:
+        msg: "source_disk_ext_id '{{ selected_source_disk_ext_id }}' is not in source VM disks filtered by '{{ source_disk_custom_attribute }}'."
+      when:
+        - selected_source_disk_ext_id is defined
+        - (source_matching_disks | selectattr('extId', 'equalto', selected_source_disk_ext_id) | list | length) == 0
+
+    - name: "Set selected source disk object"
+      ansible.builtin.set_fact:
+        selected_source_disk: "{{ (source_matching_disks | selectattr('extId', 'equalto', selected_source_disk_ext_id) | list | first) }}"
+
+    - name: "Build image naming parts from custom attribute"
+      ansible.builtin.set_fact:
+        custom_attr_name_raw: "{{ (source_disk_custom_attribute.split(':', 1) | first) | default('attribute') }}"
+        custom_attr_value_raw: "{{ (source_disk_custom_attribute.split(':', 1) | last) if (':' in source_disk_custom_attribute) else (source_disk_custom_attribute | default('value')) }}"
+        source_vm_name_raw: "{{ selected_source_vm.name | default(selected_source_vm.extId) }}"
+        image_description_timestamp: "{{ lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ') }}"
+
+    - name: "Normalize image naming parts"
+      ansible.builtin.set_fact:
+        custom_attr_name_normalized: "{{ custom_attr_name_raw | regex_replace('[^A-Za-z0-9._-]+', '_') | regex_replace('_+', '_') | regex_replace('^_|_$', '') }}"
+        custom_attr_value_normalized: "{{ custom_attr_value_raw | regex_replace('[^A-Za-z0-9._-]+', '_') | regex_replace('_+', '_') | regex_replace('^_|_$', '') }}"
+        source_vm_name_normalized: "{{ source_vm_name_raw | regex_replace('[^A-Za-z0-9._-]+', '_') | regex_replace('_+', '_') | regex_replace('^_|_$', '') }}"
+
+    - name: "Build target image name"
+      ansible.builtin.set_fact:
+        target_image_name: >-
+          {{
+            (
+              (custom_attr_name_normalized | default('attribute', true)) ~ '_' ~
+              (custom_attr_value_normalized | default('value', true))
+            )[:(image_name_max_length | int)]
+          }}
+        target_image_description: >-
+          {{
+            (custom_attr_name_raw | default('attribute', true)) ~ ' ' ~
+            (custom_attr_value_raw | default('value', true)) ~ ' vdisk from ' ~
+            (source_vm_name_raw | default(selected_source_vm_ext_id, true)) ~ ' on ' ~
+            (image_description_timestamp | default('unknown-time', true))
+          }}
+
+    - name: "Resolve existing images by target name"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ image_list_endpoint }}?$filter={{ image_filter | urlencode }}&$page=0&$limit=20"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: existing_image_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        image_filter: "name eq '{{ target_image_name | replace(\"'\", \"''\") }}'"
+
+    - name: "Set existing image facts"
+      ansible.builtin.set_fact:
+        existing_images: "{{ existing_image_lookup.json.data | default([]) }}"
+        overwrite_image_targets: "{{ existing_image_lookup.json.data | default([]) }}"
+
+    - name: "Show check mode image creation preview"
+      ansible.builtin.debug:
+        msg:
+          action: "Would overwrite existing image(s) and create image from VM disk"
+          image_name: "{{ target_image_name }}"
+          source_vm_ext_id: "{{ selected_source_vm_ext_id }}"
+          source_disk_ext_id: "{{ selected_source_disk_ext_id }}"
+          existing_image_count: "{{ overwrite_image_targets | default([]) | length }}"
+      when:
+        - ansible_check_mode
+
+    - name: "Delete existing images with same name before recreate"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ image_list_endpoint }}/{{ existing_image.extId }}"
+        method: DELETE
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers | combine({'NTNX-Request-Id': request_id}) }}"
+        validate_certs: false
+        return_content: true
+        status_code: [200, 202, 204]
+      vars:
+        request_id: "{{ lookup('pipe', 'uuidgen') | lower }}"
+      loop: "{{ overwrite_image_targets | default([]) }}"
+      loop_control:
+        loop_var: existing_image
+        label: "{{ existing_image.extId }}"
+      register: overwrite_delete_submit
+      delegate_to: localhost
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (overwrite_image_targets | default([]) | length) > 0
+
+    - name: "Set overwrite delete task extIds"
+      ansible.builtin.set_fact:
+        overwrite_delete_task_ext_ids: >-
+          {{
+            overwrite_delete_submit.results
+            | default([])
+            | map(attribute='json')
+            | select('defined')
+            | map(attribute='data')
+            | select('defined')
+            | map(attribute='extId')
+            | select('defined')
+            | list
+          }}
+      when:
+        - not ansible_check_mode
+        - (overwrite_image_targets | default([]) | length) > 0
+
+    - name: "Poll overwrite delete tasks until terminal state"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ task_endpoint_template | format(delete_task_ext_id) }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: overwrite_delete_task_poll
+      delegate_to: localhost
+      loop: "{{ overwrite_delete_task_ext_ids | default([]) }}"
+      loop_control:
+        loop_var: delete_task_ext_id
+        label: "{{ delete_task_ext_id }}"
+      until: "(overwrite_delete_task_poll.json.data.status | default(overwrite_delete_task_poll.json.status | default('UNKNOWN')) | upper) in ['SUCCEEDED', 'COMPLETED', 'COMPLETE', 'FAILED', 'ERROR', 'CANCELLED']"
+      retries: "{{ task_poll_retries | int }}"
+      delay: "{{ task_poll_delay_seconds | int }}"
+      failed_when: "(overwrite_delete_task_poll.json.data.status | default(overwrite_delete_task_poll.json.status | default('UNKNOWN')) | upper) in ['FAILED', 'ERROR', 'CANCELLED']"
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (overwrite_delete_task_ext_ids | default([]) | length) > 0
+
+    - name: "Create image from selected source disk"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ image_list_endpoint }}"
+        method: POST
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers | combine({'NTNX-Request-Id': request_id}) }}"
+        validate_certs: false
+        body_format: json
+        body:
+          "$objectType": "vmm.v4.content.Image"
+          name: "{{ target_image_name }}"
+          description: "{{ target_image_description }}"
+          type: "DISK_IMAGE"
+          source:
+            "$objectType": "vmm.v4.content.VmDiskSource"
+            extId: "{{ selected_source_disk_ext_id }}"
+        return_content: true
+        status_code: [200, 201, 202]
+      vars:
+        request_id: "{{ lookup('pipe', 'uuidgen') | lower }}"
+      register: create_image_result
+      delegate_to: localhost
+      no_log: true
+      when:
+        - not ansible_check_mode
+
+    - name: "Set created image task extId"
+      ansible.builtin.set_fact:
+        created_image_task_ext_id: "{{ create_image_result.json.data.extId | default('') }}"
+      when:
+        - not ansible_check_mode
+
+    - name: "Fail when image creation does not return task id"
+      ansible.builtin.fail:
+        msg: "Image creation accepted but no task extId was returned."
+      when:
+        - not ansible_check_mode
+        - (created_image_task_ext_id | default('') | length) == 0
+
+    - name: "Poll image creation task until terminal state"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ task_endpoint_template | format(created_image_task_ext_id) }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: image_create_task_poll
+      delegate_to: localhost
+      until: "(image_create_task_poll.json.data.status | default(image_create_task_poll.json.status | default('UNKNOWN')) | upper) in ['SUCCEEDED', 'COMPLETED', 'COMPLETE', 'FAILED', 'ERROR', 'CANCELLED']"
+      retries: "{{ task_poll_retries | int }}"
+      delay: "{{ task_poll_delay_seconds | int }}"
+      failed_when: "(image_create_task_poll.json.data.status | default(image_create_task_poll.json.status | default('UNKNOWN')) | upper) in ['FAILED', 'ERROR', 'CANCELLED']"
+      no_log: true
+      when:
+        - not ansible_check_mode
+
+    - name: "Fetch created image by name"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ image_list_endpoint }}?$filter={{ image_filter | urlencode }}&$page=0&$limit=20"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: created_image_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        image_filter: "name eq '{{ target_image_name | replace(\"'\", \"''\") }}'"
+      when: not ansible_check_mode
+
+    - name: "Set final created image object"
+      ansible.builtin.set_fact:
+        created_image_object: >-
+          {{
+            (
+              (created_image_lookup.json.data | default([]))
+              | selectattr('source.extId', 'defined')
+              | selectattr('source.extId', 'equalto', selected_source_disk_ext_id)
+              | list
+              | first
+            )
+            | default(
+              (
+                created_image_lookup.json.data | default([]) | first
+              ),
+              true
+            )
+          }}
+      when: not ansible_check_mode
+
+    - name: "Print final clone-to-image summary"
+      ansible.builtin.debug:
+        msg:
+          source_category: "{{ source_category_key }}:{{ source_category_value }}"
+          source_vm_name: "{{ selected_source_vm.name | default(selected_source_vm.extId) }}"
+          source_vm_ext_id: "{{ selected_source_vm_ext_id }}"
+          source_disk_ext_id: "{{ selected_source_disk_ext_id }}"
+          source_disk_custom_attribute: "{{ source_disk_custom_attribute }}"
+          image_name: "{{ target_image_name }}"
+          image_description: "{{ target_image_description }}"
+          image_ext_id: "{{ (created_image_object | default({})).extId | default('') }}"
+          overwritten_image_count: "{{ overwrite_image_targets | default([]) | length }}"
+          image_status: >-
+            {{
+              'CHECK_MODE_PREVIEW'
+              if ansible_check_mode
+              else (
+                image_create_task_poll.json.data.status
+                | default(image_create_task_poll.json.status | default('UNKNOWN'))
+              )
+            }}

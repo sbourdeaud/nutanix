@@ -1,0 +1,1473 @@
+---
+- name: "Attach vDisk to VMs by category"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../vars/disk_attach_defaults.yml"
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+    prism_base_url: "https://{{ pc_ip }}:9440"
+    vm_list_endpoint: "/api/vmm/v4.0/ahv/config/vms"
+    category_list_endpoint: "/api/prism/v4.0/config/categories"
+    vm_disk_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks"
+    vm_get_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s"
+    storage_container_list_endpoint: "/api/vmm/v4.0/ahv/config/storage-containers"
+    request_headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+      Cache-Control: "no-cache"
+  tasks:
+    - name: "Validate required inputs"
+      ansible.builtin.assert:
+        that:
+          - pc_ip is defined and pc_ip | length > 0
+          - pc_username is defined and pc_username | length > 0
+          - pc_password is defined and pc_password | length > 0
+          - category_key is defined and category_key | length > 0
+          - category_value is defined and category_value | length > 0
+        fail_msg: >-
+          Missing required variables. Required: pc_ip, pc_username, pc_password,
+          category_key, category_value.
+      check_mode: false
+
+    - name: "Validate storage-container resolution settings"
+      ansible.builtin.assert:
+        that:
+          - (storage_container_ext_id | default('') | length > 0) or (storage_container_name | default('') | length > 0) or (use_vm_scsi0_container | bool)
+        fail_msg: >-
+          No storage container resolution path available. Set storage_container_ext_id,
+          or storage_container_name, or enable use_vm_scsi0_container=true.
+      check_mode: false
+
+    - name: "Normalize custom attributes input to list"
+      ansible.builtin.set_fact:
+        custom_attributes_effective: >-
+          {{
+            (
+              custom_attributes
+              if (custom_attributes is sequence and custom_attributes is not string)
+              else
+              (
+                (custom_attributes | from_yaml)
+                if (custom_attributes is string)
+                else []
+              )
+            )
+            if (
+              (
+                custom_attributes is sequence and custom_attributes is not string
+              )
+              or
+              (
+                (custom_attributes is string) and
+                ((custom_attributes | from_yaml) is sequence) and
+                ((custom_attributes | from_yaml) is not string)
+              )
+            )
+            else
+            (
+              [custom_attributes]
+              if (custom_attributes is string and custom_attributes | length > 0)
+              else []
+            )
+          }}
+
+    - name: "Resolve category extId"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ category_list_endpoint }}?$filter={{ category_filter | urlencode }}&$page=0&$limit=50"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: category_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        category_filter: "key eq '{{ category_key | replace(\"'\", \"''\") }}' and value eq '{{ category_value | replace(\"'\", \"''\") }}'"
+
+    - name: "Fail when category is not unique"
+      ansible.builtin.fail:
+        msg: "Category '{{ category_key }}:{{ category_value }}' must resolve to exactly one category. Found: {{ category_lookup.json.data | default([]) | length }}"
+      when: category_lookup.json.data | default([]) | length != 1
+
+    - name: "Set resolved category extId"
+      ansible.builtin.set_fact:
+        category_ext_id: "{{ category_lookup.json.data[0].extId }}"
+
+    - name: "Fetch first page of VMs with retry backoff"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["PAGE_BASE_URL"]
+        username = os.environ["PAGE_USERNAME"]
+        password = os.environ["PAGE_PASSWORD"]
+        page_limit = int(os.environ["PAGE_LIMIT"])
+        retries = int(os.environ["PAGE_FETCH_RETRIES"])
+        backoff = int(os.environ["PAGE_FETCH_BACKOFF_SECONDS"])
+        timeout_seconds = int(os.environ["PAGE_FETCH_TIMEOUT_SECONDS"])
+
+        url = f"{base_url}/api/vmm/v4.0/ahv/config/vms?$page=0&$limit={page_limit}"
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"}
+
+        last_error = ""
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url,
+                    auth=(username, password),
+                    headers=headers,
+                    verify=False,
+                    timeout=(5, timeout_seconds),
+                )
+                if response.status_code == 200:
+                    print(response.text)
+                    sys.exit(0)
+                last_error = f"HTTP {response.status_code}: {response.text}"
+            except Exception as exc:
+                last_error = str(exc)
+            time.sleep(backoff * (2 ** attempt))
+
+        print(json.dumps({"error": last_error}))
+        sys.exit(1)
+        PY
+      register: vm_page_0_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        PAGE_BASE_URL: "{{ prism_base_url }}"
+        PAGE_USERNAME: "{{ pc_username }}"
+        PAGE_PASSWORD: "{{ pc_password }}"
+        PAGE_LIMIT: "{{ api_page_limit | int }}"
+        PAGE_FETCH_RETRIES: "{{ vm_page_fetch_retries | int }}"
+        PAGE_FETCH_BACKOFF_SECONDS: "{{ vm_page_fetch_backoff_seconds | int }}"
+        PAGE_FETCH_TIMEOUT_SECONDS: "{{ vm_page_fetch_timeout_seconds | int }}"
+
+    - name: "Parse first page VM response"
+      ansible.builtin.set_fact:
+        vm_page_0_json: "{{ vm_page_0_raw.stdout | from_json }}"
+
+    - name: "Initialize base VM pagination facts"
+      ansible.builtin.set_fact:
+        total_available_vms: "{{ vm_page_0_json.metadata.totalAvailableResults | default(vm_page_0_json.data | default([]) | length) | int }}"
+        all_vms: "{{ vm_page_0_json.data | default([]) }}"
+
+    - name: "Compute VM total page count"
+      ansible.builtin.set_fact:
+        total_vm_pages: "{{ ((total_available_vms | int) + (api_page_limit | int) - 1) // (api_page_limit | int) }}"
+
+    - name: "Fetch remaining VM pages concurrently with backoff"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["PAGE_BASE_URL"]
+        username = os.environ["PAGE_USERNAME"]
+        password = os.environ["PAGE_PASSWORD"]
+        page_limit = int(os.environ["PAGE_LIMIT"])
+        total_pages = int(os.environ["TOTAL_PAGES"])
+        retries = int(os.environ["PAGE_FETCH_RETRIES"])
+        backoff = int(os.environ["PAGE_FETCH_BACKOFF_SECONDS"])
+        timeout_seconds = int(os.environ["PAGE_FETCH_TIMEOUT_SECONDS"])
+        concurrency = int(os.environ["PAGE_FETCH_CONCURRENCY"])
+
+        headers = {"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"}
+
+        def fetch_page(page_num: int):
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms?$page={page_num}&$limit={page_limit}"
+            last_error = ""
+            for attempt in range(retries):
+                try:
+                    response = requests.get(
+                        url,
+                        auth=(username, password),
+                        headers=headers,
+                        verify=False,
+                        timeout=(5, timeout_seconds),
+                    )
+                    if response.status_code == 200:
+                        payload = response.json()
+                        return {"page": page_num, "data": payload.get("data", [])}
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(backoff * (2 ** attempt))
+            return {"page": page_num, "error": last_error or "unknown error"}
+
+        pages = []
+        failed = []
+        if total_pages > 1:
+            page_numbers = list(range(1, total_pages))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = [executor.submit(fetch_page, p) for p in page_numbers]
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if "error" in result:
+                        failed.append(result)
+                    else:
+                        pages.append(result)
+
+        pages.sort(key=lambda item: item["page"])
+        print(json.dumps({"pages": pages, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: vm_other_pages_raw
+      delegate_to: localhost
+      when: total_vm_pages | int > 1
+      check_mode: false
+      no_log: true
+      environment:
+        PAGE_BASE_URL: "{{ prism_base_url }}"
+        PAGE_USERNAME: "{{ pc_username }}"
+        PAGE_PASSWORD: "{{ pc_password }}"
+        PAGE_LIMIT: "{{ api_page_limit | int }}"
+        TOTAL_PAGES: "{{ total_vm_pages | int }}"
+        PAGE_FETCH_RETRIES: "{{ vm_page_fetch_retries | int }}"
+        PAGE_FETCH_BACKOFF_SECONDS: "{{ vm_page_fetch_backoff_seconds | int }}"
+        PAGE_FETCH_TIMEOUT_SECONDS: "{{ vm_page_fetch_timeout_seconds | int }}"
+        PAGE_FETCH_CONCURRENCY: "{{ vm_page_fetch_concurrency | int }}"
+
+    - name: "Parse remaining VM pages response"
+      ansible.builtin.set_fact:
+        vm_other_pages_json: "{{ vm_other_pages_raw.stdout | from_json }}"
+      when: total_vm_pages | int > 1
+
+    - name: "Merge paginated VM results"
+      ansible.builtin.set_fact:
+        all_vms: "{{ all_vms + (vm_other_pages_json.pages | default([]) | map(attribute='data') | list | flatten) }}"
+      when: total_vm_pages | int > 1
+
+    - name: "Create temporary file for VM filtering input"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_vm_filtering_input.json"
+      register: vm_filtering_input_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Write VM filtering input payload"
+      ansible.builtin.copy:
+        dest: "{{ vm_filtering_input_file.path }}"
+        mode: "0600"
+        content: "{{ {'all_vms': all_vms | default([]), 'category_ext_id': category_ext_id} | to_json }}"
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Filter category-matched VMs in one Python pass"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload_file = os.environ["VM_FILTER_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        all_vms = payload.get("all_vms", [])
+        category_ext_id = payload.get("category_ext_id", "")
+        matched_vms = []
+        matched_vm_ext_ids = []
+
+        for vm in all_vms:
+            vm_ext_id = vm.get("extId", "")
+            if not vm_ext_id:
+                continue
+            categories = vm.get("categories", []) or []
+            vm_category_ext_ids = [cat.get("extId", "") for cat in categories if isinstance(cat, dict)]
+            if category_ext_id in vm_category_ext_ids:
+                matched_vms.append(vm)
+                matched_vm_ext_ids.append(vm_ext_id)
+
+        print(json.dumps({"matched_vms": matched_vms, "matched_vm_ext_ids": matched_vm_ext_ids}))
+        PY
+      register: vm_filtering_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        VM_FILTER_PAYLOAD_FILE: "{{ vm_filtering_input_file.path }}"
+
+    - name: "Parse VM filtering output"
+      ansible.builtin.set_fact:
+        vm_filtering_json: "{{ vm_filtering_raw.stdout | from_json }}"
+
+    - name: "Set matched VMs and extIds"
+      ansible.builtin.set_fact:
+        matched_vms: "{{ vm_filtering_json.matched_vms | default([]) }}"
+        matched_vm_ext_ids: "{{ vm_filtering_json.matched_vm_ext_ids | default([]) }}"
+
+    - name: "Remove temporary VM filtering input file"
+      ansible.builtin.file:
+        path: "{{ vm_filtering_input_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+
+    - name: "Report no-op when no VM matches category"
+      ansible.builtin.debug:
+        msg: "No VMs matched category {{ category_key }}:{{ category_value }}. Nothing to do."
+      when: matched_vm_ext_ids | length == 0
+
+    - name: "Initialize hybrid disk inventory maps"
+      ansible.builtin.set_fact:
+        embedded_disks_by_vm: {}
+        fallback_vm_ext_ids: []
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Build embedded disk map and fallback VM list"
+      ansible.builtin.set_fact:
+        embedded_disks_by_vm: "{{ embedded_disks_by_vm | combine({vm_item.extId: (vm_item.disks | default([]))}) if has_embedded_disks else embedded_disks_by_vm }}"
+        fallback_vm_ext_ids: "{{ fallback_vm_ext_ids + ([vm_item.extId] if not has_embedded_disks else []) }}"
+      loop: "{{ matched_vms | default([]) }}"
+      loop_control:
+        loop_var: vm_item
+        label: "{{ vm_item.name | default(vm_item.extId | default('unknown-vm')) }}"
+      vars:
+        has_embedded_disks: "{{ (vm_item.disks is defined) and ((vm_item.disks | length) > 0) }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Fetch fallback disks concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        base_url = os.environ["FALLBACK_BASE_URL"]
+        username = os.environ["FALLBACK_USERNAME"]
+        password = os.environ["FALLBACK_PASSWORD"]
+        vm_ids = json.loads(os.environ["FALLBACK_VM_IDS"])
+        retries = int(os.environ["FALLBACK_RETRIES"])
+        retry_delay = int(os.environ["FALLBACK_RETRY_DELAY"])
+        max_workers = int(os.environ["FALLBACK_CONCURRENCY"])
+        progress_every = int(os.environ["FALLBACK_PROGRESS_EVERY"])
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+
+        def fetch_disks(vm_ext_id: str) -> tuple[str, list, str]:
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}/disks?$page=0&$limit=100"
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.get(url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        payload = response.json()
+                        return vm_ext_id, payload.get("data", []), ""
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                import time
+                time.sleep(retry_delay)
+            return vm_ext_id, [], last_error or "unknown error"
+
+        success = {}
+        failed = []
+        processed = 0
+        total = len(vm_ids)
+        print(f"PROGRESS stage=fallback_disk_fetch total={total}", flush=True)
+        if vm_ids:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(fetch_disks, vm_id) for vm_id in vm_ids]
+                for future in concurrent.futures.as_completed(futures):
+                    vm_id, disks, err = future.result()
+                    processed += 1
+                    if err:
+                        failed.append({"vm_ext_id": vm_id, "error": err})
+                    else:
+                        success[vm_id] = disks
+                    if (processed % progress_every == 0) or (processed == total):
+                        print(
+                            f"PROGRESS stage=fallback_disk_fetch processed={processed}/{total} success={len(success)} failed={len(failed)}",
+                            flush=True,
+                        )
+
+        print(json.dumps({"success": success, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: fallback_disk_fetch_raw
+      delegate_to: localhost
+      check_mode: false
+      when: fallback_vm_ext_ids | default([]) | length > 0
+      environment:
+        FALLBACK_BASE_URL: "{{ prism_base_url }}"
+        FALLBACK_USERNAME: "{{ pc_username }}"
+        FALLBACK_PASSWORD: "{{ pc_password }}"
+        FALLBACK_VM_IDS: "{{ fallback_vm_ext_ids | default([]) | to_json }}"
+        FALLBACK_RETRIES: "{{ api_retries | int }}"
+        FALLBACK_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        FALLBACK_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        FALLBACK_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Parse fallback disk fetch result"
+      ansible.builtin.set_fact:
+        fallback_disk_fetch_json: "{{ (fallback_disk_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json }}"
+      when: fallback_vm_ext_ids | default([]) | length > 0
+
+    - name: "Initialize empty fallback disk map when not needed"
+      ansible.builtin.set_fact:
+        fallback_disks_by_vm: {}
+      when: fallback_vm_ext_ids | default([]) | length == 0
+
+    - name: "Set fallback disk map from fetch result"
+      ansible.builtin.set_fact:
+        fallback_disks_by_vm: "{{ fallback_disk_fetch_json.success | default({}) }}"
+      when: fallback_vm_ext_ids | default([]) | length > 0
+
+    - name: "Merge embedded and fallback disk maps"
+      ansible.builtin.set_fact:
+        vm_disks_by_vm: "{{ embedded_disks_by_vm | combine(fallback_disks_by_vm) }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Initialize decision lists"
+      ansible.builtin.set_fact:
+        vm_attach_candidates: []
+        vm_attach_final: []
+        vm_attach_skipped: []
+        vm_skipped_reasons: []
+
+    - name: "Build per-VM disk and cluster context"
+      ansible.builtin.set_fact:
+        vm_resolution_contexts: "{{ vm_resolution_contexts | default([]) + [vm_context] }}"
+      loop: "{{ matched_vms | default([]) }}"
+      loop_control:
+        loop_var: vm_obj
+        label: "{{ vm_obj.name | default(vm_obj.extId | default('unknown-vm')) }}"
+      vars:
+        vm_cluster_ext_id_value: >-
+          {{
+            vm_obj.cluster.extId
+            | default(vm_obj.clusterReference.extId
+            | default(vm_obj.clusterExtId | default('')))
+          }}
+        vm_scsi0_container_ext_id_value: >-
+          {{
+            (vm_disks_by_vm[vm_obj.extId] | default([])) |
+            selectattr('diskAddress.busType', 'defined') |
+            selectattr('diskAddress.busType', 'equalto', 'SCSI') |
+            selectattr('diskAddress.index', 'defined') |
+            selectattr('diskAddress.index', 'equalto', 0) |
+            selectattr('backingInfo.storageContainer.extId', 'defined') |
+            map(attribute='backingInfo.storageContainer.extId') |
+            list | first | default('')
+          }}
+        vm_context:
+          vm_ext_id: "{{ vm_obj.extId }}"
+          vm_name: "{{ vm_obj.name | default(vm_obj.extId) }}"
+          vm_cluster_ext_id: "{{ vm_cluster_ext_id_value }}"
+          vm_scsi0_container_ext_id: "{{ vm_scsi0_container_ext_id_value }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Initialize per-VM name-resolution maps"
+      ansible.builtin.set_fact:
+        vm_named_container_by_vm: {}
+        vm_name_resolution_error_by_vm: {}
+
+    - name: "Create temporary file for container-name lookup payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_container_lookup_payload.json"
+      register: container_lookup_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - storage_container_ext_id | default('') | length == 0
+        - storage_container_name | default('') | length > 0
+
+    - name: "Write container-name lookup payload"
+      ansible.builtin.copy:
+        dest: "{{ container_lookup_payload_file.path }}"
+        mode: "0600"
+        content: >-
+          {{
+            {
+              'vm_resolution_contexts': (vm_resolution_contexts | default([])),
+              'storage_container_name': storage_container_name
+            } | to_json
+          }}
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - storage_container_ext_id | default('') | length == 0
+        - storage_container_name | default('') | length > 0
+
+    - name: "Resolve storage container name by cluster concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        payload_file = os.environ["CONTAINER_LOOKUP_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        base_url = os.environ["CONTAINER_LOOKUP_BASE_URL"]
+        username = os.environ["CONTAINER_LOOKUP_USERNAME"]
+        password = os.environ["CONTAINER_LOOKUP_PASSWORD"]
+        retries = int(os.environ["CONTAINER_LOOKUP_RETRIES"])
+        retry_delay = int(os.environ["CONTAINER_LOOKUP_RETRY_DELAY"])
+        concurrency = int(os.environ["CONTAINER_LOOKUP_CONCURRENCY"])
+        progress_every = int(os.environ["CONTAINER_LOOKUP_PROGRESS_EVERY"])
+        vm_contexts = payload.get("vm_resolution_contexts", [])
+        storage_container_name = payload.get("storage_container_name", "")
+
+        unique_clusters = sorted(
+            {
+                ctx.get("vm_cluster_ext_id", "")
+                for ctx in vm_contexts
+                if isinstance(ctx, dict) and ctx.get("vm_cluster_ext_id", "")
+            }
+        )
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"})
+
+        def resolve_cluster(cluster_ext_id: str) -> tuple[str, str, str]:
+            escaped_name = storage_container_name.replace("'", "''")
+            escaped_cluster = cluster_ext_id.replace("'", "''")
+            filter_str = f"name eq '{escaped_name}' and clusterExtId eq '{escaped_cluster}'"
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/storage-containers?$filter={requests.utils.quote(filter_str, safe='')}&$page=0&$limit=50"
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.get(url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        data = response.json().get("data", []) or []
+                        if len(data) == 1:
+                            return cluster_ext_id, data[0].get("extId", ""), ""
+                        if len(data) == 0:
+                            return cluster_ext_id, "", f'No storage container named "{storage_container_name}" found in VM cluster {cluster_ext_id}'
+                        return cluster_ext_id, "", f'Storage container name "{storage_container_name}" is ambiguous in VM cluster {cluster_ext_id}'
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(retry_delay)
+            return cluster_ext_id, "", last_error or f"Failed to resolve container for cluster {cluster_ext_id}"
+
+        cluster_ext_id_to_container = {}
+        cluster_ext_id_to_error = {}
+        processed = 0
+        total = len(unique_clusters)
+        print(f"PROGRESS stage=container_lookup total={total}", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            futures = [executor.submit(resolve_cluster, cluster) for cluster in unique_clusters]
+            for future in concurrent.futures.as_completed(futures):
+                cluster_ext_id, container_ext_id, error = future.result()
+                processed += 1
+                if container_ext_id:
+                    cluster_ext_id_to_container[cluster_ext_id] = container_ext_id
+                else:
+                    cluster_ext_id_to_error[cluster_ext_id] = error
+                if (processed % progress_every == 0) or (processed == total):
+                    print(
+                        f"PROGRESS stage=container_lookup processed={processed}/{total} success={len(cluster_ext_id_to_container)} failed={len(cluster_ext_id_to_error)}",
+                        flush=True,
+                    )
+
+        vm_named_container_by_vm = {}
+        vm_name_resolution_error_by_vm = {}
+        for ctx in vm_contexts:
+            if not isinstance(ctx, dict):
+                continue
+            vm_ext_id = ctx.get("vm_ext_id", "")
+            cluster_ext_id = ctx.get("vm_cluster_ext_id", "")
+            if not vm_ext_id:
+                continue
+            if not cluster_ext_id:
+                vm_name_resolution_error_by_vm[vm_ext_id] = "Storage container name resolution skipped because VM cluster extId was not found"
+                continue
+            resolved = cluster_ext_id_to_container.get(cluster_ext_id, "")
+            if resolved:
+                vm_named_container_by_vm[vm_ext_id] = resolved
+            else:
+                vm_name_resolution_error_by_vm[vm_ext_id] = cluster_ext_id_to_error.get(
+                    cluster_ext_id, f"Failed to resolve storage container for cluster {cluster_ext_id}"
+                )
+
+        print(
+            json.dumps(
+                {
+                    "vm_named_container_by_vm": vm_named_container_by_vm,
+                    "vm_name_resolution_error_by_vm": vm_name_resolution_error_by_vm,
+                    "cluster_count": len(unique_clusters),
+                }
+            )
+        )
+        PY
+      register: container_lookup_raw
+      delegate_to: localhost
+      check_mode: false
+      when:
+        - storage_container_ext_id | default('') | length == 0
+        - storage_container_name | default('') | length > 0
+      environment:
+        CONTAINER_LOOKUP_PAYLOAD_FILE: "{{ container_lookup_payload_file.path }}"
+        CONTAINER_LOOKUP_BASE_URL: "{{ prism_base_url }}"
+        CONTAINER_LOOKUP_USERNAME: "{{ pc_username }}"
+        CONTAINER_LOOKUP_PASSWORD: "{{ pc_password }}"
+        CONTAINER_LOOKUP_RETRIES: "{{ api_retries | int }}"
+        CONTAINER_LOOKUP_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        CONTAINER_LOOKUP_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        CONTAINER_LOOKUP_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Set per-VM name-resolution maps from concurrent lookup"
+      ansible.builtin.set_fact:
+        vm_named_container_by_vm: "{{ (((container_lookup_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_named_container_by_vm | default({})) }}"
+        vm_name_resolution_error_by_vm: "{{ (((container_lookup_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_name_resolution_error_by_vm | default({})) }}"
+      when:
+        - storage_container_ext_id | default('') | length == 0
+        - storage_container_name | default('') | length > 0
+
+    - name: "Print concise container-name resolution summary"
+      ansible.builtin.debug:
+        msg:
+          container_name_lookup_cluster_count: "{{ ((((container_lookup_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).cluster_count | default(0)) | int) }}"
+          container_name_lookup_vm_success_count: "{{ ((((container_lookup_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_named_container_by_vm | default({})).keys() | list | length) }}"
+          container_name_lookup_vm_error_count: "{{ ((((container_lookup_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_name_resolution_error_by_vm | default({})).keys() | list | length) }}"
+      when:
+        - storage_container_ext_id | default('') | length == 0
+        - storage_container_name | default('') | length > 0
+
+    - name: "Remove temporary container-name lookup payload file"
+      ansible.builtin.file:
+        path: "{{ container_lookup_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - storage_container_ext_id | default('') | length == 0
+        - storage_container_name | default('') | length > 0
+
+    - name: "Build attach targets and unresolved VM skips"
+      ansible.builtin.set_fact:
+        vm_attach_candidates: "{{ vm_attach_candidates + ([candidate_item] if target_container_ext_id | length > 0 else []) }}"
+        vm_attach_skipped: "{{ vm_attach_skipped + ([vm_ctx.vm_ext_id] if target_container_ext_id | length == 0 else []) }}"
+        vm_skipped_reasons: "{{ vm_skipped_reasons + ([skip_item] if target_container_ext_id | length == 0 else []) }}"
+      loop: "{{ vm_resolution_contexts | default([]) }}"
+      loop_control:
+        loop_var: vm_ctx
+      vars:
+        named_container_ext_id: "{{ vm_named_container_by_vm[vm_ctx.vm_ext_id] | default('') }}"
+        target_container_ext_id: >-
+          {{
+            storage_container_ext_id
+            if (storage_container_ext_id | default('') | length > 0) else
+            (named_container_ext_id
+             if (storage_container_name | default('') | length > 0)
+             else (vm_ctx.vm_scsi0_container_ext_id if (use_vm_scsi0_container | bool) else ''))
+          }}
+        unresolved_reason: >-
+          {{
+            (
+              vm_name_resolution_error_by_vm[vm_ctx.vm_ext_id]
+              | default('Storage container name resolution skipped because VM cluster extId was not found')
+            )
+            if (storage_container_name | default('') | length > 0)
+            else 'No SCSI.0 storage container found and no storage_container_name available for fallback'
+          }}
+        candidate_item:
+          vm_ext_id: "{{ vm_ctx.vm_ext_id }}"
+          vm_name: "{{ vm_ctx.vm_name }}"
+          target_storage_container_ext_id: "{{ target_container_ext_id }}"
+        skip_item:
+          vm_ext_id: "{{ vm_ctx.vm_ext_id }}"
+          vm_name: "{{ vm_ctx.vm_name }}"
+          reason: "{{ unresolved_reason }}"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Apply idempotency check to resolved targets"
+      ansible.builtin.set_fact:
+        vm_attach_final: "{{ vm_attach_final | default([]) + ([candidate] if (not vm_disk_already_present) else []) }}"
+        vm_attach_skipped: "{{ vm_attach_skipped + ([candidate.vm_ext_id] if vm_disk_already_present else []) }}"
+        vm_skipped_reasons: "{{ vm_skipped_reasons + ([skip_existing] if vm_disk_already_present else []) }}"
+      loop: "{{ vm_attach_candidates }}"
+      loop_control:
+        loop_var: candidate
+      vars:
+        vm_disks_for_candidate: >-
+          {{
+            vm_disks_by_vm[candidate.vm_ext_id] | default([])
+          }}
+        matching_disks: >-
+          {{
+            vm_disks_for_candidate |
+            selectattr('backingInfo.diskSizeBytes', 'defined') |
+            selectattr('backingInfo.diskSizeBytes', 'equalto', disk_size_bytes | int) |
+            selectattr('backingInfo.storageContainer.extId', 'defined') |
+            selectattr('backingInfo.storageContainer.extId', 'equalto', candidate.target_storage_container_ext_id) |
+            list
+          }}
+        marker_matches: >-
+          {{
+            matching_disks |
+            selectattr('customAttributes', 'defined') |
+            map(attribute='customAttributes') |
+            map('sort') |
+            select('equalto', (custom_attributes_effective | sort)) |
+            list | length
+          }}
+        empty_attr_matches: >-
+          {{
+            matching_disks |
+            rejectattr('customAttributes', 'defined') |
+            list | length
+            +
+            (
+              matching_disks |
+              selectattr('customAttributes', 'defined') |
+              map(attribute='customAttributes') |
+              select('equalto', []) |
+              list | length
+            )
+          }}
+        vm_disk_already_present: >-
+          {{
+            (matching_disks | length > 0) and
+            (
+              (
+                (custom_attributes_effective | length > 0) and
+                (marker_matches | int > 0)
+              )
+              or
+              (
+                (custom_attributes_effective | length == 0) and
+                (empty_attr_matches | int > 0)
+              )
+            )
+          }}
+        skip_existing:
+          vm_ext_id: "{{ candidate.vm_ext_id }}"
+          vm_name: "{{ candidate.vm_name }}"
+          reason: "Equivalent disk already exists (size/container/custom attributes)"
+      when: matched_vm_ext_ids | length > 0
+
+    - name: "Show check mode attach preview"
+      ansible.builtin.debug:
+        msg:
+          matched_vm_count: "{{ matched_vm_ext_ids | length }}"
+          would_attach_vm_count: "{{ vm_attach_final | default([]) | length }}"
+          skipped_vm_count: "{{ vm_attach_skipped | length }}"
+          would_attach_vm_ext_ids: "{{ vm_attach_final | default([]) | map(attribute='vm_ext_id') | list }}"
+          skipped_vm_details: "{{ vm_skipped_reasons }}"
+      when: ansible_check_mode
+
+    - name: "Create temporary file for attach ETag payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_attach_etag_payload.json"
+      register: attach_etag_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Write attach ETag payload"
+      ansible.builtin.copy:
+        dest: "{{ attach_etag_payload_file.path }}"
+        mode: "0600"
+        content: "{{ {'vm_attach_final': (vm_attach_final | default([]))} | to_json }}"
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Fetch VM ETags for attach concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        payload_file = os.environ["ATTACH_ETAG_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        base_url = os.environ["ATTACH_ETAG_BASE_URL"]
+        username = os.environ["ATTACH_ETAG_USERNAME"]
+        password = os.environ["ATTACH_ETAG_PASSWORD"]
+        retries = int(os.environ["ATTACH_ETAG_RETRIES"])
+        retry_delay = int(os.environ["ATTACH_ETAG_RETRY_DELAY"])
+        concurrency = int(os.environ["ATTACH_ETAG_CONCURRENCY"])
+        progress_every = int(os.environ["ATTACH_ETAG_PROGRESS_EVERY"])
+        targets = payload.get("vm_attach_final", [])
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+
+        def fetch_etag(target: dict) -> tuple[str, str, str]:
+            vm_ext_id = target.get("vm_ext_id", "")
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}"
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.get(url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        return vm_ext_id, response.headers.get("ETag", ""), ""
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(retry_delay)
+            return vm_ext_id, "", last_error or "unknown error"
+
+        vm_etag_by_vm = {}
+        failed = []
+        processed = 0
+        total = len(targets)
+        print(f"PROGRESS stage=attach_etag_fetch total={total}", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            futures = [executor.submit(fetch_etag, target) for target in targets]
+            for future in concurrent.futures.as_completed(futures):
+                vm_ext_id, etag, err = future.result()
+                processed += 1
+                if err:
+                    failed.append({"vm_ext_id": vm_ext_id, "error": err})
+                else:
+                    vm_etag_by_vm[vm_ext_id] = etag
+                if (processed % progress_every == 0) or (processed == total):
+                    print(
+                        f"PROGRESS stage=attach_etag_fetch processed={processed}/{total} success={len(vm_etag_by_vm)} failed={len(failed)}",
+                        flush=True,
+                    )
+
+        print(json.dumps({"vm_etag_by_vm": vm_etag_by_vm, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: attach_etag_fetch_raw
+      delegate_to: localhost
+      check_mode: false
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+      environment:
+        ATTACH_ETAG_PAYLOAD_FILE: "{{ attach_etag_payload_file.path }}"
+        ATTACH_ETAG_BASE_URL: "{{ prism_base_url }}"
+        ATTACH_ETAG_USERNAME: "{{ pc_username }}"
+        ATTACH_ETAG_PASSWORD: "{{ pc_password }}"
+        ATTACH_ETAG_RETRIES: "{{ api_retries | int }}"
+        ATTACH_ETAG_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        ATTACH_ETAG_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        ATTACH_ETAG_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Set VM ETag map for attach"
+      ansible.builtin.set_fact:
+        vm_etag_by_vm: "{{ (((attach_etag_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_etag_by_vm | default({})) }}"
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Print concise attach ETag fetch summary"
+      ansible.builtin.debug:
+        msg:
+          attach_etag_target_vm_count: "{{ vm_attach_final | default([]) | length }}"
+          attach_etag_success_vm_count: "{{ ((((attach_etag_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_etag_by_vm | default({})).keys() | list | length) }}"
+          attach_etag_failed_vm_count: "{{ ((((attach_etag_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).failed | default([])) | length) }}"
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Remove temporary attach ETag payload file"
+      ansible.builtin.file:
+        path: "{{ attach_etag_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Create temporary file for attach submit payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_attach_submit_payload.json"
+      register: attach_submit_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Write attach submit payload"
+      ansible.builtin.copy:
+        dest: "{{ attach_submit_payload_file.path }}"
+        mode: "0600"
+        content: >-
+          {{
+            {
+              'vm_attach_final': (vm_attach_final | default([])),
+              'vm_etag_by_vm': (vm_etag_by_vm | default({})),
+              'custom_attributes': (custom_attributes_effective | default([])),
+              'disk_size_bytes': (disk_size_bytes | int),
+              'flash_mode_enabled': (flash_mode_enabled | bool),
+              'disk_bus_type': disk_bus_type
+            } | to_json
+          }}
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Attach disk to eligible VMs concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import uuid
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        payload_file = os.environ["ATTACH_SUBMIT_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        base_url = os.environ["ATTACH_SUBMIT_BASE_URL"]
+        username = os.environ["ATTACH_SUBMIT_USERNAME"]
+        password = os.environ["ATTACH_SUBMIT_PASSWORD"]
+        retries = int(os.environ["ATTACH_SUBMIT_RETRIES"])
+        retry_delay = int(os.environ["ATTACH_SUBMIT_RETRY_DELAY"])
+        concurrency = int(os.environ["ATTACH_SUBMIT_CONCURRENCY"])
+        progress_every = int(os.environ["ATTACH_SUBMIT_PROGRESS_EVERY"])
+
+        vm_attach_final = payload.get("vm_attach_final", [])
+        vm_etag_by_vm = payload.get("vm_etag_by_vm", {})
+        custom_attributes = payload.get("custom_attributes", []) or []
+        disk_size_bytes = int(payload.get("disk_size_bytes", 0))
+        flash_mode_enabled = bool(payload.get("flash_mode_enabled", False))
+        disk_bus_type = payload.get("disk_bus_type", "SCSI")
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+
+        def submit_attach(target: dict) -> tuple[str, str, str]:
+            vm_ext_id = target.get("vm_ext_id", "")
+            container_ext_id = target.get("target_storage_container_ext_id", "")
+            attach_url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}/disks"
+            if_match = vm_etag_by_vm.get(vm_ext_id, "")
+
+            request_id = str(uuid.uuid4())
+            payload_body = {
+                "$objectType": "vmm.v4.ahv.config.Disk",
+                "$backingInfoItemDiscriminator": "vmm.v4.ahv.config.VmDisk",
+                "diskAddress": {"$objectType": "vmm.v4.ahv.config.DiskAddress", "busType": disk_bus_type},
+                "customAttributes": custom_attributes,
+                "backingInfo": {
+                    "$objectType": "vmm.v4.ahv.config.VmDisk",
+                    "diskSizeBytes": disk_size_bytes,
+                    "storageContainer": {
+                        "$objectType": "vmm.v4.ahv.config.VmDiskContainerReference",
+                        "extId": container_ext_id,
+                    },
+                    "storageConfig": {"isFlashModeEnabled": flash_mode_enabled},
+                },
+            }
+
+            headers = {"Accept": "application/json", "Content-Type": "application/json", "NTNX-Request-Id": request_id}
+            if if_match:
+                headers["If-Match"] = if_match
+
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.post(attach_url, headers=headers, json=payload_body, timeout=(5, 30))
+                    if response.status_code in (200, 201, 202):
+                        task_ext_id = (response.json().get("data", {}) or {}).get("extId", "")
+                        if task_ext_id:
+                            return vm_ext_id, f"{base_url}/api/prism/v4.0/config/tasks/{task_ext_id}", ""
+                        last_error = "attach accepted but no task extId returned"
+                    else:
+                        last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(retry_delay)
+            return vm_ext_id, "", last_error or "unknown error"
+
+        disk_attach_task_urls = {}
+        changed_vm_ext_ids = []
+        failed = []
+        processed = 0
+        total = len(vm_attach_final)
+        print(f"PROGRESS stage=attach_submit total={total}", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            futures = [executor.submit(submit_attach, target) for target in vm_attach_final]
+            for future in concurrent.futures.as_completed(futures):
+                vm_ext_id, task_url, err = future.result()
+                processed += 1
+                if err:
+                    failed.append({"vm_ext_id": vm_ext_id, "error": err})
+                else:
+                    disk_attach_task_urls[vm_ext_id] = task_url
+                    changed_vm_ext_ids.append(vm_ext_id)
+                if (processed % progress_every == 0) or (processed == total):
+                    print(
+                        f"PROGRESS stage=attach_submit processed={processed}/{total} success={len(changed_vm_ext_ids)} failed={len(failed)}",
+                        flush=True,
+                    )
+
+        print(
+            json.dumps(
+                {
+                    "disk_attach_task_urls": disk_attach_task_urls,
+                    "changed_vm_ext_ids": changed_vm_ext_ids,
+                    "failed": failed,
+                }
+            )
+        )
+        if failed:
+            sys.exit(1)
+        PY
+      register: attach_submit_raw
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+      check_mode: false
+      environment:
+        ATTACH_SUBMIT_PAYLOAD_FILE: "{{ attach_submit_payload_file.path }}"
+        ATTACH_SUBMIT_BASE_URL: "{{ prism_base_url }}"
+        ATTACH_SUBMIT_USERNAME: "{{ pc_username }}"
+        ATTACH_SUBMIT_PASSWORD: "{{ pc_password }}"
+        ATTACH_SUBMIT_RETRIES: "{{ api_retries | int }}"
+        ATTACH_SUBMIT_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        ATTACH_SUBMIT_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        ATTACH_SUBMIT_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Set attach submit result facts"
+      ansible.builtin.set_fact:
+        attach_submit_json: "{{ (attach_submit_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json }}"
+        disk_attach_task_urls: "{{ (((attach_submit_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).disk_attach_task_urls | default({})) }}"
+        changed_vm_ext_ids: "{{ (((attach_submit_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).changed_vm_ext_ids | default([])) }}"
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Print concise attach submit summary"
+      ansible.builtin.debug:
+        msg:
+          attach_submit_target_vm_count: "{{ vm_attach_final | default([]) | length }}"
+          attach_submit_success_vm_count: "{{ changed_vm_ext_ids | default([]) | length }}"
+          attach_submit_failed_vm_count: "{{ (attach_submit_json.failed | default([])) | length }}"
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Remove temporary attach submit payload file"
+      ansible.builtin.file:
+        path: "{{ attach_submit_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_attach_final | default([]) | length) > 0
+
+    - name: "Create temporary file for attach task poll payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_attach_poll_payload.json"
+      register: attach_poll_payload_file
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_attach_task_urls | default({}) | length) > 0
+
+    - name: "Write attach task poll payload"
+      ansible.builtin.copy:
+        dest: "{{ attach_poll_payload_file.path }}"
+        mode: "0600"
+        content: "{{ {'disk_attach_task_urls': (disk_attach_task_urls | default({}))} | to_json }}"
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_attach_task_urls | default({}) | length) > 0
+
+    - name: "Poll disk attach tasks concurrently until terminal state"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import sys
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        payload_file = os.environ["ATTACH_POLL_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        username = os.environ["ATTACH_POLL_USERNAME"]
+        password = os.environ["ATTACH_POLL_PASSWORD"]
+        retries = int(os.environ["ATTACH_POLL_RETRIES"])
+        delay = int(os.environ["ATTACH_POLL_DELAY"])
+        concurrency = int(os.environ["ATTACH_POLL_CONCURRENCY"])
+        progress_every = int(os.environ["ATTACH_POLL_PROGRESS_EVERY"])
+        disk_attach_task_urls = payload.get("disk_attach_task_urls", {})
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json", "Cache-Control": "no-cache"})
+
+        def poll_task(vm_ext_id: str, task_url: str) -> tuple[str, str, str]:
+            last_status = "UNKNOWN"
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.get(task_url, timeout=(5, 30))
+                    if response.status_code != 200:
+                        last_error = f"HTTP {response.status_code}: {response.text}"
+                        time.sleep(delay)
+                        continue
+                    data = (response.json().get("data", {}) or {})
+                    last_status = data.get("status", "UNKNOWN")
+                    if last_status in ("SUCCEEDED", "COMPLETED", "COMPLETE"):
+                        return vm_ext_id, last_status, ""
+                    if last_status in ("FAILED", "ERROR", "CANCELLED"):
+                        return vm_ext_id, last_status, "Task ended unsuccessfully"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(delay)
+            if last_error:
+                return vm_ext_id, last_status, last_error
+            return vm_ext_id, last_status, "Task poll retries exhausted"
+
+        succeeded = []
+        failed = []
+        processed = 0
+        total = len(disk_attach_task_urls)
+        print(f"PROGRESS stage=attach_poll total={total}", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            futures = [executor.submit(poll_task, vm_ext_id, task_url) for vm_ext_id, task_url in disk_attach_task_urls.items()]
+            for future in concurrent.futures.as_completed(futures):
+                vm_ext_id, status, err = future.result()
+                processed += 1
+                if err:
+                    failed.append({"vm_ext_id": vm_ext_id, "status": status, "error": err})
+                else:
+                    succeeded.append({"vm_ext_id": vm_ext_id, "status": status})
+                if (processed % progress_every == 0) or (processed == total):
+                    print(
+                        f"PROGRESS stage=attach_poll processed={processed}/{total} success={len(succeeded)} failed={len(failed)}",
+                        flush=True,
+                    )
+
+        print(json.dumps({"succeeded": succeeded, "failed": failed}))
+        if failed:
+            sys.exit(1)
+        PY
+      register: attach_poll_raw
+      delegate_to: localhost
+      check_mode: false
+      when:
+        - not ansible_check_mode
+        - (disk_attach_task_urls | default({}) | length) > 0
+      environment:
+        ATTACH_POLL_PAYLOAD_FILE: "{{ attach_poll_payload_file.path }}"
+        ATTACH_POLL_USERNAME: "{{ pc_username }}"
+        ATTACH_POLL_PASSWORD: "{{ pc_password }}"
+        ATTACH_POLL_RETRIES: "{{ task_poll_retries | default(40) | int }}"
+        ATTACH_POLL_DELAY: "{{ task_poll_delay_seconds | default(5) | int }}"
+        ATTACH_POLL_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        ATTACH_POLL_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Set attach poll result facts"
+      ansible.builtin.set_fact:
+        attach_poll_json: "{{ (attach_poll_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json }}"
+      when:
+        - not ansible_check_mode
+        - (disk_attach_task_urls | default({}) | length) > 0
+
+    - name: "Print concise attach poll summary"
+      ansible.builtin.debug:
+        msg:
+          attach_poll_target_vm_count: "{{ (disk_attach_task_urls | default({})).keys() | list | length }}"
+          attach_poll_success_vm_count: "{{ (attach_poll_json.succeeded | default([])) | length }}"
+          attach_poll_failed_vm_count: "{{ (attach_poll_json.failed | default([])) | length }}"
+      when:
+        - not ansible_check_mode
+        - (disk_attach_task_urls | default({}) | length) > 0
+
+    - name: "Remove temporary attach task poll payload file"
+      ansible.builtin.file:
+        path: "{{ attach_poll_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_attach_task_urls | default({}) | length) > 0
+
+    - name: "Collect changed and skipped VM extIds for disk reporting"
+      ansible.builtin.set_fact:
+        vm_ext_ids_for_report: >-
+          {{
+            (
+              (vm_attach_final | default([]) | map(attribute='vm_ext_id') | list)
+              +
+              (vm_attach_skipped | default([]))
+            ) | unique
+          }}
+      when: not ansible_check_mode
+
+    - name: "Create temporary file for report disk fetch payload"
+      ansible.builtin.tempfile:
+        state: file
+        suffix: "_attach_report_disk_payload.json"
+      register: attach_report_disk_payload_file
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (vm_ext_ids_for_report | default([]) | length) > 0
+      check_mode: false
+      no_log: true
+
+    - name: "Write report disk fetch payload"
+      ansible.builtin.copy:
+        dest: "{{ attach_report_disk_payload_file.path }}"
+        mode: "0600"
+        content: >-
+          {{
+            {
+              'vm_ext_ids_for_report': (vm_ext_ids_for_report | default([])),
+              'matched_vms': (matched_vms | default([]))
+            } | to_json
+          }}
+      delegate_to: localhost
+      when:
+        - not ansible_check_mode
+        - (vm_ext_ids_for_report | default([]) | length) > 0
+      check_mode: false
+      no_log: true
+
+    - name: "Fetch attached disks and build report rows concurrently"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import concurrent.futures
+        import json
+        import os
+        import time
+        import requests
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+        payload_file = os.environ["ATTACH_REPORT_PAYLOAD_FILE"]
+        with open(payload_file, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        base_url = os.environ["ATTACH_REPORT_BASE_URL"]
+        username = os.environ["ATTACH_REPORT_USERNAME"]
+        password = os.environ["ATTACH_REPORT_PASSWORD"]
+        retries = int(os.environ["ATTACH_REPORT_RETRIES"])
+        retry_delay = int(os.environ["ATTACH_REPORT_RETRY_DELAY"])
+        concurrency = int(os.environ["ATTACH_REPORT_CONCURRENCY"])
+        progress_every = int(os.environ["ATTACH_REPORT_PROGRESS_EVERY"])
+        vm_ids = payload.get("vm_ext_ids_for_report", [])
+        matched_vms = payload.get("matched_vms", [])
+
+        vm_name_by_id = {}
+        for vm in matched_vms:
+            if isinstance(vm, dict):
+                vm_ext_id = vm.get("extId", "")
+                if vm_ext_id:
+                    vm_name_by_id[vm_ext_id] = vm.get("name", vm_ext_id)
+
+        session = requests.Session()
+        session.auth = (username, password)
+        session.verify = False
+        session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+
+        def fetch_one(vm_ext_id: str):
+            url = f"{base_url}/api/vmm/v4.0/ahv/config/vms/{vm_ext_id}/disks?$page=0&$limit=100"
+            last_error = ""
+            for _ in range(retries):
+                try:
+                    response = session.get(url, timeout=(5, 30))
+                    if response.status_code == 200:
+                        return vm_ext_id, (response.json().get("data", []) or []), ""
+                    last_error = f"HTTP {response.status_code}: {response.text}"
+                except Exception as exc:
+                    last_error = str(exc)
+                time.sleep(retry_delay)
+            return vm_ext_id, [], last_error or "unknown error"
+
+        rows = []
+        failed = []
+        processed = 0
+        total = len(vm_ids)
+        print(f"PROGRESS stage=attach_report_disk_fetch total={total}", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            futures = [executor.submit(fetch_one, vm_ext_id) for vm_ext_id in vm_ids]
+            for future in concurrent.futures.as_completed(futures):
+                vm_ext_id, disks, err = future.result()
+                processed += 1
+                if err:
+                    failed.append({"vm_ext_id": vm_ext_id, "error": err})
+                else:
+                    vm_name = vm_name_by_id.get(vm_ext_id, vm_ext_id)
+                    for disk in disks:
+                        backing = disk.get("backingInfo", {}) or {}
+                        disk_address = disk.get("diskAddress", {}) or {}
+                        storage_container = backing.get("storageContainer", {}) or {}
+                        disk_size_bytes = float(backing.get("diskSizeBytes", 0) or 0)
+                        rows.append(
+                            {
+                                "vm_ext_id": vm_ext_id,
+                                "vm_name": vm_name,
+                                "scsi_id": f"{disk_address.get('busType', 'UNKNOWN')}.{disk_address.get('index', '?')}",
+                                "disk_size_gib": round(disk_size_bytes / 1073741824, 2),
+                                "storage_container_ext_id": storage_container.get("extId", ""),
+                                "custom_attributes": disk.get("customAttributes", []) or [],
+                            }
+                        )
+                if (processed % progress_every == 0) or (processed == total):
+                    print(
+                        f"PROGRESS stage=attach_report_disk_fetch processed={processed}/{total} success={processed - len(failed)} failed={len(failed)}",
+                        flush=True,
+                    )
+
+        print(json.dumps({"vm_disk_report_rows": rows, "failed": failed}))
+        PY
+      register: attach_report_disk_fetch_raw
+      delegate_to: localhost
+      check_mode: false
+      when:
+        - not ansible_check_mode
+        - (vm_ext_ids_for_report | default([]) | length) > 0
+      environment:
+        ATTACH_REPORT_PAYLOAD_FILE: "{{ attach_report_disk_payload_file.path }}"
+        ATTACH_REPORT_BASE_URL: "{{ prism_base_url }}"
+        ATTACH_REPORT_USERNAME: "{{ pc_username }}"
+        ATTACH_REPORT_PASSWORD: "{{ pc_password }}"
+        ATTACH_REPORT_RETRIES: "{{ api_retries | int }}"
+        ATTACH_REPORT_RETRY_DELAY: "{{ api_retry_delay_seconds | int }}"
+        ATTACH_REPORT_CONCURRENCY: "{{ disk_fetch_concurrency | int }}"
+        ATTACH_REPORT_PROGRESS_EVERY: "{{ operation_progress_every | int }}"
+
+    - name: "Set report rows from concurrent disk fetch"
+      ansible.builtin.set_fact:
+        vm_disk_report_rows: "{{ (((attach_report_disk_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).vm_disk_report_rows | default([])) }}"
+        attach_report_disk_fetch_failed: "{{ (((attach_report_disk_fetch_raw.stdout_lines | default([]) | select('match', '^\\{') | list | last | default('{}')) | from_json).failed | default([])) }}"
+      when:
+        - not ansible_check_mode
+        - (vm_ext_ids_for_report | default([]) | length) > 0
+
+    - name: "Fail when report disk fetch has failures"
+      ansible.builtin.fail:
+        msg: "Failed to fetch attached disks for report VMs: {{ attach_report_disk_fetch_failed }}"
+      when:
+        - not ansible_check_mode
+        - (attach_report_disk_fetch_failed | default([]) | length) > 0
+
+    - name: "Remove temporary report disk fetch payload file"
+      ansible.builtin.file:
+        path: "{{ attach_report_disk_payload_file.path }}"
+        state: absent
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (vm_ext_ids_for_report | default([]) | length) > 0
+
+    - name: "Report attached disks for changed and skipped VMs"
+      ansible.builtin.debug:
+        msg: "{{ vm_disk_report_rows }}"
+      when:
+        - not ansible_check_mode
+        - (vm_disk_report_rows | default([]) | length) > 0
+
+    - name: "Print final operation summary"
+      ansible.builtin.debug:
+        msg:
+          matched_vm_count: "{{ matched_vm_ext_ids | length }}"
+          changed_vm_count: "{{ (changed_vm_ext_ids | default([]) | length) if not ansible_check_mode else (vm_attach_final | default([]) | length) }}"
+          skipped_vm_count: "{{ vm_attach_skipped | length }}"
+          failed_vm_count: 0
+          skipped_vm_details: "{{ vm_skipped_reasons }}"

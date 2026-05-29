@@ -1,0 +1,29 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+# category_key: "app"
+# category_value: "oracle"
+# disk_custom_attribute: "release:v1.0.0"
+
+# API behavior
+api_page_limit: 50
+api_retries: 5
+api_retry_delay_seconds: 10
+vm_page_fetch_concurrency: 8
+vm_page_fetch_retries: 6
+vm_page_fetch_backoff_seconds: 1
+vm_page_fetch_timeout_seconds: 45
+disk_fetch_concurrency: 12
+operation_progress_every: 25
+task_poll_retries: 40
+task_poll_delay_seconds: 5
+delete_progress_every: 10
+delete_chunk_size: 10
+delete_rate_limit_backoff_max_seconds: 30
+delete_rate_limit_retry_rounds: 2
+
+# Safety controls
+require_confirmation: true
+confirmation_value: "DELETE"

@@ -1,0 +1,311 @@
+---
+- name: "Remove VM disks by VM name and custom attribute"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../vars/disk_remove_vm_defaults.yml"
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+    prism_base_url: "https://{{ pc_ip }}:9440"
+    vm_list_endpoint: "/api/vmm/v4.0/ahv/config/vms"
+    vm_disk_list_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks"
+    vm_disk_delete_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks/%s"
+    task_endpoint_template: "/api/prism/v4.0/config/tasks/%s"
+    request_headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+      Cache-Control: "no-cache"
+
+  tasks:
+    - name: "Validate required inputs"
+      ansible.builtin.assert:
+        that:
+          - pc_ip is defined and pc_ip | length > 0
+          - pc_username is defined and pc_username | length > 0
+          - pc_password is defined and pc_password | length > 0
+          - target_vm_name is defined and target_vm_name | length > 0
+          - disk_custom_attribute is defined and disk_custom_attribute | length > 0
+        fail_msg: >-
+          Missing required variables. Required: pc_ip, pc_username, pc_password,
+          target_vm_name, disk_custom_attribute.
+      check_mode: false
+
+    - name: "Validate destructive-action confirmation"
+      ansible.builtin.assert:
+        that:
+          - (not require_confirmation | bool) or (delete_confirm | default('') == confirmation_value)
+        fail_msg: >-
+          Disk removal is destructive. Set -e delete_confirm={{ confirmation_value }}
+          (or set require_confirmation=false) to proceed.
+      when: not ansible_check_mode
+
+    - name: "Resolve target VM by name"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_list_endpoint }}?$filter={{ vm_filter | urlencode }}&$page=0&$limit=20"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: target_vm_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        vm_filter: "name eq '{{ target_vm_name | replace(\"'\", \"''\") }}'"
+
+    - name: "Fail when target VM lookup is not unique"
+      ansible.builtin.fail:
+        msg: "Target VM '{{ target_vm_name }}' must resolve to exactly one VM. Found: {{ target_vm_lookup.json.data | default([]) | length }}"
+      when: target_vm_lookup.json.data | default([]) | length != 1
+
+    - name: "Set target VM facts"
+      ansible.builtin.set_fact:
+        target_vm: "{{ target_vm_lookup.json.data[0] }}"
+        target_vm_ext_id: "{{ target_vm_lookup.json.data[0].extId }}"
+
+    - name: "Initialize embedded disk inventory"
+      ansible.builtin.set_fact:
+        vm_disks: "{{ target_vm.disks | default([]) }}"
+
+    - name: "Fetch target VM disks when embedded inventory is empty"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_disk_list_endpoint_template | format(target_vm_ext_id) }}?$page=0&$limit=100"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: target_vm_disks_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      when: vm_disks | length == 0
+
+    - name: "Set fetched disk inventory"
+      ansible.builtin.set_fact:
+        vm_disks: "{{ target_vm_disks_lookup.json.data | default([]) }}"
+      when: vm_disks | length == 0
+
+    - name: "Build disk deletion targets"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload = json.loads(os.environ["DELETE_TARGET_PAYLOAD"])
+        vm_disks = payload.get("vm_disks", []) or []
+        vm_ext_id = payload.get("vm_ext_id", "")
+        vm_name = payload.get("vm_name", vm_ext_id)
+        disk_custom_attribute = payload.get("disk_custom_attribute", "")
+
+        targets = []
+        for disk in vm_disks:
+            disk_address = disk.get("diskAddress", {}) or {}
+            bus_type = disk_address.get("busType", "UNKNOWN")
+            index = disk_address.get("index", "?")
+            is_scsi_zero = (bus_type == "SCSI") and (index == 0)
+            custom_attributes = disk.get("customAttributes", []) or []
+            custom_attr_matches = disk_custom_attribute in custom_attributes
+            if is_scsi_zero or not custom_attr_matches:
+                continue
+            disk_size_bytes = (((disk.get("backingInfo", {}) or {}).get("diskSizeBytes", 0)) or 0)
+            targets.append(
+                {
+                    "vm_ext_id": vm_ext_id,
+                    "vm_name": vm_name,
+                    "disk_ext_id": disk.get("extId", ""),
+                    "scsi_id": f"{bus_type}.{index}",
+                    "disk_size_gib": round(float(disk_size_bytes) / 1073741824, 2),
+                    "custom_attributes": custom_attributes,
+                }
+            )
+
+        print(json.dumps({"disk_delete_targets": targets}))
+        PY
+      register: delete_target_build_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        DELETE_TARGET_PAYLOAD: "{{ {'vm_disks': vm_disks, 'vm_ext_id': target_vm_ext_id, 'vm_name': target_vm.name | default(target_vm_ext_id), 'disk_custom_attribute': disk_custom_attribute} | to_json }}"
+
+    - name: "Set deletion target list"
+      ansible.builtin.set_fact:
+        disk_delete_targets: "{{ (delete_target_build_raw.stdout | from_json).disk_delete_targets | default([]) }}"
+
+    - name: "Show check mode delete preview"
+      ansible.builtin.debug:
+        msg:
+          target_vm_name: "{{ target_vm.name | default(target_vm_name) }}"
+          target_vm_ext_id: "{{ target_vm_ext_id }}"
+          disk_custom_attribute: "{{ disk_custom_attribute }}"
+          would_delete_disk_count: "{{ disk_delete_targets | length }}"
+          would_delete_disks: "{{ disk_delete_targets }}"
+      when: ansible_check_mode
+
+    - name: "Get target VM details for ETag"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_list_endpoint }}/{{ target_vm_ext_id }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: target_vm_details
+      delegate_to: localhost
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Initialize delete execution state"
+      ansible.builtin.set_fact:
+        delete_current_etag: "{{ target_vm_details.etag | default(target_vm_details.headers.ETag | default('')) }}"
+        disk_delete_execution_summary:
+          deleted: []
+          failed: []
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Delete matching disks from target VM"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_disk_delete_endpoint_template | format(target_vm_ext_id, delete_target.disk_ext_id) }}"
+        method: DELETE
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers | combine({'NTNX-Request-Id': request_id, 'If-Match': delete_current_etag}) }}"
+        validate_certs: false
+        return_content: true
+        status_code: [200, 202]
+      vars:
+        request_id: "{{ lookup('pipe', 'uuidgen') | lower }}"
+      loop: "{{ disk_delete_targets | default([]) }}"
+      loop_control:
+        loop_var: delete_target
+        label: "{{ delete_target.scsi_id }} {{ delete_target.disk_ext_id }}"
+      register: delete_submit_results
+      delegate_to: localhost
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Refresh ETag after each delete submit"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_list_endpoint }}/{{ target_vm_ext_id }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: refreshed_vm_details
+      delegate_to: localhost
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Set refreshed ETag"
+      ansible.builtin.set_fact:
+        delete_current_etag: "{{ refreshed_vm_details.etag | default(refreshed_vm_details.headers.ETag | default(delete_current_etag)) }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Build delete task target list"
+      ansible.builtin.set_fact:
+        delete_task_targets: "{{ delete_task_targets | default([]) + [ {'vm_ext_id': target_vm_ext_id, 'disk_ext_id': item.delete_target.disk_ext_id, 'task_ext_id': (item.json.data.extId | default('')), 'status_code': (item.status | int)} ] }}"
+      loop: "{{ delete_submit_results.results | default([]) }}"
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+
+    - name: "Append immediate deletes to summary"
+      ansible.builtin.set_fact:
+        disk_delete_execution_summary:
+          deleted: "{{ (disk_delete_execution_summary.deleted | default([])) + [ {'vm_ext_id': target_vm_ext_id, 'disk_ext_id': item.disk_ext_id, 'task_status': 'COMPLETED'} ] }}"
+          failed: "{{ disk_delete_execution_summary.failed | default([]) }}"
+      loop: "{{ delete_task_targets | default([]) }}"
+      loop_control:
+        label: "{{ item.disk_ext_id }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+        - (item.status_code | int) == 200
+
+    - name: "Poll async delete tasks"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ task_endpoint_template | format(delete_task.task_ext_id) }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: delete_task_poll
+      loop: "{{ (delete_task_targets | default([])) | selectattr('status_code', 'equalto', 202) | list }}"
+      loop_control:
+        loop_var: delete_task
+        label: "{{ delete_task.disk_ext_id }}"
+      delegate_to: localhost
+      until: "(delete_task_poll.json.data.status | default(delete_task_poll.json.status | default('UNKNOWN')) | upper) in ['SUCCEEDED', 'COMPLETED', 'COMPLETE', 'FAILED', 'ERROR', 'CANCELLED']"
+      retries: "{{ task_poll_retries | int }}"
+      delay: "{{ task_poll_delay_seconds | int }}"
+      failed_when: false
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - (disk_delete_targets | default([]) | length) > 0
+        - ((delete_task_targets | default([])) | selectattr('status_code', 'equalto', 202) | list | length) > 0
+
+    - name: "Merge async poll results into summary"
+      ansible.builtin.set_fact:
+        disk_delete_execution_summary:
+          deleted: "{{ (disk_delete_execution_summary.deleted | default([])) + ([{'vm_ext_id': target_vm_ext_id, 'disk_ext_id': poll_item.delete_task.disk_ext_id, 'task_status': (poll_item.json.data.status | default('UNKNOWN'))}] if ((poll_item.json.data.status | default(poll_item.json.status | default('UNKNOWN')) | upper) in ['SUCCEEDED', 'COMPLETED', 'COMPLETE']) else []) }}"
+          failed: "{{ (disk_delete_execution_summary.failed | default([])) + ([{'vm_ext_id': target_vm_ext_id, 'disk_ext_id': poll_item.delete_task.disk_ext_id, 'task_status': (poll_item.json.data.status | default('UNKNOWN')), 'reason': 'Delete task failed'}] if ((poll_item.json.data.status | default(poll_item.json.status | default('UNKNOWN')) | upper) in ['FAILED', 'ERROR', 'CANCELLED']) else []) }}"
+      loop: "{{ delete_task_poll.results | default([]) }}"
+      loop_control:
+        loop_var: poll_item
+        label: "{{ poll_item.delete_task.disk_ext_id | default('unknown-disk') }}"
+      when:
+        - not ansible_check_mode
+        - delete_task_poll is defined
+        - delete_task_poll.results is defined
+
+    - name: "Fail when delete execution has failures"
+      ansible.builtin.fail:
+        msg: "Delete execution failures detected: {{ disk_delete_execution_summary.failed | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - (disk_delete_execution_summary.failed | default([]) | length) > 0
+
+    - name: "Print final disk removal summary"
+      ansible.builtin.debug:
+        msg:
+          target_vm_name: "{{ target_vm.name | default(target_vm_name) }}"
+          target_vm_ext_id: "{{ target_vm_ext_id }}"
+          disk_custom_attribute: "{{ disk_custom_attribute }}"
+          deleted_disk_count: "{{ (disk_delete_execution_summary.deleted | default([]) | length) if not ansible_check_mode else (disk_delete_targets | length) }}"
+          failed_disk_count: "{{ (disk_delete_execution_summary.failed | default([]) | length) if not ansible_check_mode else 0 }}"
+          deleted_disks: "{{ (disk_delete_execution_summary.deleted | default([])) if not ansible_check_mode else disk_delete_targets }}"
+          failed_disks: "{{ (disk_delete_execution_summary.failed | default([])) if not ansible_check_mode else [] }}"

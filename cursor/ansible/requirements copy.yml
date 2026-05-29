@@ -1,0 +1,7 @@
+# Ansible collection dependencies for Nutanix automation
+# Install: ansible-galaxy collection install -r requirements.yml
+# Python deps: pip install -r ~/.ansible/collections/ansible_collections/nutanix/ncp/requirements.txt
+
+collections:
+  - name: nutanix.ncp
+    version: ">=2.2.0"

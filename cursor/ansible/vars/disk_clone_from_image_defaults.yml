@@ -1,0 +1,23 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+# target_category_key: "app"
+# target_category_value: "oracle-clone-target"
+# source_disk_custom_attribute: "release:v1.1.0"
+
+# Optional behavior
+clone_disk_bus_type: "SCSI"
+
+# API behavior
+api_page_limit: 100
+api_retries: 5
+api_retry_delay_seconds: 10
+vm_page_fetch_concurrency: 8
+vm_page_fetch_retries: 6
+vm_page_fetch_backoff_seconds: 1
+vm_page_fetch_timeout_seconds: 45
+disk_fetch_concurrency: 12
+task_poll_retries: 40
+task_poll_delay_seconds: 5

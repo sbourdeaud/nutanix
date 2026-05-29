@@ -1,0 +1,32 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+category_key: "odt"
+category_value: "reference"
+# storage_container_ext_id: "00000000-0000-0000-0000-000000000000"  # Optional, highest precedence
+# storage_container_name: "default-container"                        # Optional, cluster-scoped lookup
+
+# API behavior
+api_page_limit: 50
+api_retries: 5
+api_retry_delay_seconds: 10
+vm_page_fetch_concurrency: 8
+vm_page_fetch_retries: 6
+vm_page_fetch_backoff_seconds: 1
+vm_page_fetch_timeout_seconds: 45
+disk_fetch_concurrency: 12
+operation_progress_every: 25
+task_poll_retries: 40
+task_poll_delay_seconds: 5
+use_vm_scsi0_container: true
+storage_container_ext_id: ""
+storage_container_name: ""
+
+# Disk payload defaults (overridable with -e)
+disk_size_bytes: 107374182400
+disk_bus_type: "SCSI"
+custom_attributes:
+  - "release:v1.0.0"
+flash_mode_enabled: false

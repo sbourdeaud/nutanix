@@ -1,0 +1,26 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+# source_category_key: "app"
+# source_category_value: "oracle"
+# source_disk_custom_attribute: "release:v1.0.0"
+
+# Optional direct selectors (skip prompts when provided)
+source_vm_ext_id: ""
+source_disk_ext_id: ""
+
+# API behavior
+api_page_limit: 50
+api_retries: 5
+api_retry_delay_seconds: 10
+vm_page_fetch_concurrency: 8
+vm_page_fetch_retries: 6
+vm_page_fetch_backoff_seconds: 1
+vm_page_fetch_timeout_seconds: 45
+task_poll_retries: 40
+task_poll_delay_seconds: 5
+
+# Image naming behavior
+image_name_max_length: 256

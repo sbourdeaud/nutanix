@@ -1,0 +1,17 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+# target_vm_name: "my-target-vm"
+# disk_custom_attribute: "release:v1.0.0"
+
+# API behavior
+api_retries: 5
+api_retry_delay_seconds: 10
+task_poll_retries: 40
+task_poll_delay_seconds: 5
+
+# Safety controls
+require_confirmation: true
+confirmation_value: "DELETE"

@@ -1,0 +1,16 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+# target_vm_name: "my-target-vm"
+# source_disk_custom_attribute: "release:v1.1.0"
+
+# Optional behavior
+clone_disk_bus_type: "SCSI"
+
+# API behavior
+api_retries: 5
+api_retry_delay_seconds: 10
+task_poll_retries: 40
+task_poll_delay_seconds: 5

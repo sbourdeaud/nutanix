@@ -1,0 +1,262 @@
+---
+- name: "Clone image-backed disk to a single target VM"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../vars/disk_clone_image_to_vm_defaults.yml"
+  vars:
+    ansible_python_interpreter: "{{ (playbook_dir | dirname) + '/.venv/bin/python' }}"
+    prism_base_url: "https://{{ pc_ip }}:9440"
+    vm_list_endpoint: "/api/vmm/v4.0/ahv/config/vms"
+    image_list_endpoint: "/api/vmm/v4.0/content/images"
+    vm_get_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s"
+    vm_disk_endpoint_template: "/api/vmm/v4.0/ahv/config/vms/%s/disks"
+    task_endpoint_template: "/api/prism/v4.0/config/tasks/%s"
+    request_headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+      Cache-Control: "no-cache"
+
+  tasks:
+    - name: "Validate required inputs"
+      ansible.builtin.assert:
+        that:
+          - pc_ip is defined and pc_ip | length > 0
+          - pc_username is defined and pc_username | length > 0
+          - pc_password is defined and pc_password | length > 0
+          - target_vm_name is defined and target_vm_name | length > 0
+          - source_disk_custom_attribute is defined and source_disk_custom_attribute | length > 0
+        fail_msg: >-
+          Missing required variables. Required: pc_ip, pc_username, pc_password,
+          target_vm_name, source_disk_custom_attribute.
+      check_mode: false
+
+    - name: "Build image naming parts from custom attribute"
+      ansible.builtin.set_fact:
+        custom_attr_name_raw: "{{ (source_disk_custom_attribute.split(':', 1) | first) | default('attribute') }}"
+        custom_attr_value_raw: "{{ (source_disk_custom_attribute.split(':', 1) | last) if (':' in source_disk_custom_attribute) else (source_disk_custom_attribute | default('value')) }}"
+
+    - name: "Normalize image naming parts"
+      ansible.builtin.set_fact:
+        custom_attr_name_normalized: "{{ custom_attr_name_raw | regex_replace('[^A-Za-z0-9._-]+', '_') | regex_replace('_+', '_') | regex_replace('^_|_$', '') }}"
+        custom_attr_value_normalized: "{{ custom_attr_value_raw | regex_replace('[^A-Za-z0-9._-]+', '_') | regex_replace('_+', '_') | regex_replace('^_|_$', '') }}"
+
+    - name: "Build source image name from custom attribute"
+      ansible.builtin.set_fact:
+        source_image_name: "{{ (custom_attr_name_normalized | default('attribute', true)) ~ '_' ~ (custom_attr_value_normalized | default('value', true)) }}"
+
+    - name: "Resolve source image by derived name"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ image_list_endpoint }}?$filter={{ image_filter | urlencode }}&$page=0&$limit=20"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: source_image_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        image_filter: "name eq '{{ source_image_name | replace(\"'\", \"''\") }}'"
+
+    - name: "Fail when source image lookup is not unique"
+      ansible.builtin.fail:
+        msg: "Image '{{ source_image_name }}' must resolve to exactly one image. Found: {{ source_image_lookup.json.data | default([]) | length }}"
+      when: source_image_lookup.json.data | default([]) | length != 1
+
+    - name: "Set source image object"
+      ansible.builtin.set_fact:
+        source_image: "{{ source_image_lookup.json.data[0] }}"
+        source_image_ext_id: "{{ source_image_lookup.json.data[0].extId }}"
+
+    - name: "Resolve target VM by name"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_list_endpoint }}?$filter={{ vm_filter | urlencode }}&$page=0&$limit=20"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: target_vm_lookup
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      vars:
+        vm_filter: "name eq '{{ target_vm_name | replace(\"'\", \"''\") }}'"
+
+    - name: "Fail when target VM lookup is not unique"
+      ansible.builtin.fail:
+        msg: "Target VM '{{ target_vm_name }}' must resolve to exactly one VM. Found: {{ target_vm_lookup.json.data | default([]) | length }}"
+      when: target_vm_lookup.json.data | default([]) | length != 1
+
+    - name: "Set target VM object"
+      ansible.builtin.set_fact:
+        target_vm: "{{ target_vm_lookup.json.data[0] }}"
+        target_vm_ext_id: "{{ target_vm_lookup.json.data[0].extId }}"
+
+    - name: "Build single-VM disk inventory from VM payload"
+      ansible.builtin.set_fact:
+        target_vm_disks: "{{ target_vm.disks | default([]) }}"
+
+    - name: "Classify single-VM idempotency state"
+      ansible.builtin.shell: |
+        set -o pipefail
+        python3 - <<'PY'
+        import json
+        import os
+
+        payload = json.loads(os.environ["IDEMPOTENCY_PAYLOAD"])
+        source_image_ext_id = payload.get("source_image_ext_id", "")
+        source_disk_custom_attribute = payload.get("source_disk_custom_attribute", "")
+        vm_disks = payload.get("vm_disks", []) or []
+
+        found_from_image = None
+        found_from_image_with_attr = None
+        for disk in vm_disks:
+            backing_info = disk.get("backingInfo", {}) or {}
+            data_source = backing_info.get("dataSource", {}) or {}
+            reference = data_source.get("reference", {}) or {}
+            image_ext_id = reference.get("imageExtId", "")
+            if image_ext_id != source_image_ext_id:
+                continue
+            found_from_image = disk
+            attrs = disk.get("customAttributes", []) or []
+            if source_disk_custom_attribute in attrs:
+                found_from_image_with_attr = disk
+                break
+
+        result = {
+            "clone_required": found_from_image is None,
+            "existing_image_disk_ext_id": (found_from_image.get("extId", "") if found_from_image else ""),
+            "already_compliant": found_from_image_with_attr is not None,
+        }
+        print(json.dumps(result))
+        PY
+      register: single_vm_idempotency_raw
+      delegate_to: localhost
+      check_mode: false
+      no_log: true
+      environment:
+        IDEMPOTENCY_PAYLOAD: "{{ {'source_image_ext_id': source_image_ext_id, 'source_disk_custom_attribute': source_disk_custom_attribute, 'vm_disks': target_vm_disks} | to_json }}"
+
+    - name: "Set idempotency facts for single VM"
+      ansible.builtin.set_fact:
+        clone_required: "{{ (single_vm_idempotency_raw.stdout | from_json).clone_required | default(true) }}"
+        existing_image_disk_ext_id: "{{ (single_vm_idempotency_raw.stdout | from_json).existing_image_disk_ext_id | default('') }}"
+        already_compliant: "{{ (single_vm_idempotency_raw.stdout | from_json).already_compliant | default(false) }}"
+
+    - name: "Fetch target VM details to collect ETag"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_get_endpoint_template | format(target_vm_ext_id) }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: target_vm_details
+      delegate_to: localhost
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - clone_required | bool
+
+    - name: "Submit clone request to target VM"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ vm_disk_endpoint_template | format(target_vm_ext_id) }}"
+        method: POST
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers | combine({'NTNX-Request-Id': request_id, 'If-Match': vm_etag}) }}"
+        validate_certs: false
+        body_format: json
+        body:
+          "$objectType": "vmm.v4.ahv.config.Disk"
+          "$backingInfoItemDiscriminator": "vmm.v4.ahv.config.VmDisk"
+          customAttributes:
+            - "{{ source_disk_custom_attribute }}"
+          diskAddress:
+            "$objectType": "vmm.v4.ahv.config.DiskAddress"
+            busType: "{{ clone_disk_bus_type }}"
+          backingInfo:
+            "$objectType": "vmm.v4.ahv.config.VmDisk"
+            dataSource:
+              "$objectType": "vmm.v4.ahv.config.DataSource"
+              reference:
+                "$objectType": "vmm.v4.ahv.config.ImageReference"
+                imageExtId: "{{ source_image_ext_id }}"
+        return_content: true
+        status_code: [200, 201, 202]
+      register: clone_submit
+      delegate_to: localhost
+      vars:
+        request_id: "{{ lookup('pipe', 'uuidgen') | lower }}"
+        vm_etag: "{{ target_vm_details.etag | default(target_vm_details.headers.ETag | default('')) }}"
+      until: (clone_submit.status | int) in [200, 201, 202]
+      retries: "{{ api_retries | int }}"
+      delay: "{{ api_retry_delay_seconds | int }}"
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - clone_required | bool
+
+    - name: "Set clone task extId"
+      ansible.builtin.set_fact:
+        clone_task_ext_id: "{{ clone_submit.json.data.extId | default('') }}"
+      when:
+        - not ansible_check_mode
+        - clone_required | bool
+
+    - name: "Fail when clone submit returns no task extId"
+      ansible.builtin.fail:
+        msg: "Clone submit for VM '{{ target_vm_name }}' returned no task extId."
+      when:
+        - not ansible_check_mode
+        - clone_required | bool
+        - clone_task_ext_id | default('') | length == 0
+
+    - name: "Poll clone task until terminal state"
+      ansible.builtin.uri:
+        url: "{{ prism_base_url }}{{ task_endpoint_template | format(clone_task_ext_id) }}"
+        method: GET
+        url_username: "{{ pc_username }}"
+        url_password: "{{ pc_password }}"
+        force_basic_auth: true
+        headers: "{{ request_headers }}"
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: clone_task_poll
+      delegate_to: localhost
+      until: "(clone_task_poll.json.data.status | default(clone_task_poll.json.status | default('UNKNOWN')) | upper) in ['SUCCEEDED', 'COMPLETED', 'COMPLETE', 'FAILED', 'ERROR', 'CANCELLED']"
+      retries: "{{ task_poll_retries | int }}"
+      delay: "{{ task_poll_delay_seconds | int }}"
+      failed_when: "(clone_task_poll.json.data.status | default(clone_task_poll.json.status | default('UNKNOWN')) | upper) in ['FAILED', 'ERROR', 'CANCELLED']"
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - clone_required | bool
+
+    - name: "Print final single-VM clone summary"
+      ansible.builtin.debug:
+        msg:
+          target_vm_name: "{{ target_vm_name }}"
+          target_vm_ext_id: "{{ target_vm_ext_id }}"
+          source_image_name: "{{ source_image_name }}"
+          source_image_ext_id: "{{ source_image_ext_id }}"
+          requested_custom_attribute: "{{ source_disk_custom_attribute }}"
+          clone_required: "{{ clone_required | bool }}"
+          already_compliant: "{{ already_compliant | bool }}"
+          existing_image_disk_ext_id: "{{ existing_image_disk_ext_id }}"
+          clone_task_ext_id: "{{ clone_task_ext_id | default('') }}"

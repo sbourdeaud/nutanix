@@ -1,0 +1,18 @@
+---
+# Required values (set via vault, inventory, or -e):
+# pc_ip: "10.10.10.10"
+# pc_username: "admin"
+# pc_password: "REPLACE_ME"
+# category_key: "app"
+# category_value: "oracle"
+
+# API behavior
+api_page_limit: 50
+api_retries: 5
+api_retry_delay_seconds: 10
+disk_fetch_concurrency: 12
+operation_progress_every: 50
+vm_page_fetch_concurrency: 8
+vm_page_fetch_retries: 6
+vm_page_fetch_backoff_seconds: 1
+vm_page_fetch_timeout_seconds: 45
