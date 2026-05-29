@@ -29,7 +29,7 @@ jsonschema-specifications==2025.4.1
 jupyter_client==8.6.3
 jupyter_core==5.8.1
 keyring==25.6.0
-lxml==4.9.4
+lxml==6.1.0
 MarkupSafe==3.0.2
 matplotlib-inline==0.1.7
 micawber==0.5.6
