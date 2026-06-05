@@ -60,7 +60,7 @@ prompt_toolkit==3.0.51
 psutil==7.0.0
 ptyprocess==0.7.0
 pure_eval==0.2.3
-pyarrow==20.0.0
+pyarrow==23.0.1
 Pygments==2.20.0
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
