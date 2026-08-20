@@ -128,7 +128,7 @@ def main(api_server,username,secret,secure=False):
         """Returns disk size in bytes when available."""
         return getattr(getattr(disk, 'backing_info', None), 'disk_size_bytes', None)
 
-    def write_interactive_html_report(data_rows, output_file, origin):
+    def write_interactive_html_report(data_rows, output_file, origin, csv_download_name, inventory_download_name):
         """Writes an interactive HTML report with SQL filtering and CSV export."""
         data_json = json.dumps(data_rows, default=str)
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -321,6 +321,24 @@ def main(api_server,username,secret,secure=False):
       font-size: var(--ec-font-size-sm);
       margin: var(--ec-space-2) 0 var(--ec-space-3);
     }
+    .hint-row {
+      display: flex;
+      align-items: center;
+      gap: var(--ec-space-3);
+      margin: var(--ec-space-2) 0 var(--ec-space-3);
+      flex-wrap: wrap;
+    }
+    .matched-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: var(--ec-radius-pill);
+      padding: 1px var(--ec-space-2);
+      font-size: var(--ec-font-size-sm);
+      font-weight: var(--ec-font-weight-strong);
+      color: var(--ec-status-info);
+      background: var(--ec-status-info-bg);
+      white-space: nowrap;
+    }
     code {
       font-family: var(--ec-font-mono);
       background: var(--ec-bg-surface-alt);
@@ -433,10 +451,13 @@ def main(api_server,username,secret,secure=False):
             <button class="btn" id="downloadCsv">Export CSV</button>
             <button class="btn" id="downloadInventory">Export inventory.ini</button>
           </div>
-          <div class="hint">
-            SQL examples:
-            <code>SELECT * FROM ? WHERE ngt_effective_status = 'not_connected'</code> |
-            <code>SELECT name, cluster, ngt_status FROM ? WHERE power_state = 'ON'</code>
+          <div class="hint-row">
+            <span id="matchedRowsTop" class="matched-pill">Matched rows: 0</span>
+            <div class="hint">
+              SQL examples:
+              <code>SELECT * FROM ? WHERE ngt_effective_status = 'not_connected'</code> |
+              <code>SELECT name, cluster, ngt_status FROM ? WHERE power_state = 'ON'</code>
+            </div>
           </div>
           <div id="table"></div>
           <div id="status"></div>
@@ -453,6 +474,7 @@ def main(api_server,username,secret,secure=False):
     const statusEl = document.getElementById("status");
     const sqlInput = document.getElementById("sql");
     const contextMenuEl = document.getElementById("cellContextMenu");
+    const matchedRowsTopEl = document.getElementById("matchedRowsTop");
     let currentData = [...originalData];
     let contextCell = null;
     let lastSqlResultCount = null;
@@ -472,6 +494,7 @@ def main(api_server,username,secret,secure=False):
         }
       }));
     };
+    const baseColumns = inferColumns(originalData);
 
     let table = new Tabulator("#table", {
       data: currentData,
@@ -481,7 +504,7 @@ def main(api_server,username,secret,secure=False):
       movableColumns: true,
       clipboard: true,
       headerVisible: true,
-      columns: inferColumns(currentData),
+      columns: baseColumns,
     });
 
     const updateStatus = (msg) => {
@@ -494,7 +517,10 @@ def main(api_server,username,secret,secure=False):
       const count = explicitCount !== null
         ? explicitCount
         : (lastSqlResultCount !== null ? lastSqlResultCount : getActiveRowData().length);
-      updateStatus(`${prefix}: ${count} (scroll inside table to view all)`);
+      updateStatus(`${prefix}: ${count}`);
+      if (matchedRowsTopEl) {
+        matchedRowsTopEl.textContent = `Matched rows: ${count}`;
+      }
     };
 
     const escapeSqlValue = (value) => String(value).replace(/'/g, "''");
@@ -577,7 +603,6 @@ def main(api_server,username,secret,secure=False):
 
     const applyData = (rows, messagePrefix) => {
       currentData = rows;
-      table.setColumns(inferColumns(currentData));
       table.setData(currentData);
       // Let Tabulator finish applying internal filters/sort before counting.
       setTimeout(() => refreshMatchedStatus(messagePrefix), 0);
@@ -603,9 +628,20 @@ def main(api_server,username,secret,secure=False):
     });
 
     document.getElementById("resetSql").addEventListener("click", () => {
-      sqlInput.value = "SELECT * FROM ? WHERE 1=1";
-      lastSqlResultCount = null;
-      applyData([...originalData], "Reset");
+      const resetQuery = "SELECT * FROM ? WHERE 1=1";
+      sqlInput.value = resetQuery;
+      previousHeaderFilterCount = 0;
+      table.clearHeaderFilter();
+      table.clearFilter();
+      const { normalizedQuery, result } = runQueryAgainstOriginalData(resetQuery);
+      if (normalizedQuery !== resetQuery) {
+        sqlInput.value = normalizedQuery;
+      }
+      const rows = Array.isArray(result) ? result : [...originalData];
+      lastSqlResultCount = rows.length;
+      currentData = rows;
+      table.setData(rows);
+      refreshMatchedStatus("Matched rows", lastSqlResultCount);
     });
 
     const toCsv = (rows) => {
@@ -638,7 +674,7 @@ def main(api_server,username,secret,secure=False):
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "get_vm_report.csv";
+      anchor.download = "__CSV_DOWNLOAD_NAME__";
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
@@ -721,7 +757,7 @@ def main(api_server,username,secret,secure=False):
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "inventory.ini";
+      anchor.download = "__INVENTORY_DOWNLOAD_NAME__";
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
@@ -821,6 +857,8 @@ def main(api_server,username,secret,secure=False):
         html_content = html_content.replace("__ORCHESTRATOR_CSS__", orchestrator_css)
         html_content = html_content.replace("__ORIGIN__", str(origin or "unknown"))
         html_content = html_content.replace("__GENERATED_AT__", generated_at)
+        html_content = html_content.replace("__CSV_DOWNLOAD_NAME__", str(csv_download_name))
+        html_content = html_content.replace("__INVENTORY_DOWNLOAD_NAME__", str(inventory_download_name))
         with open(output_file, "w", encoding="utf-8") as html_file:
             html_file.write(html_content)
 
@@ -1153,11 +1191,15 @@ def main(api_server,username,secret,secure=False):
 
     #region html report
     #* exporting to html and csv
-    html_file_name = "get_vm_report.html"
-    csv_file_name = "get_vm_report.csv"
+    safe_origin = "".join(char if (char.isalnum() or char in ("-", "_")) else "_" for char in str(api_server or "unknown"))
+    report_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    report_base_name = f"{safe_origin}_{report_timestamp}_get_vm_report"
+    html_file_name = f"{report_base_name}.html"
+    csv_file_name = f"{report_base_name}.csv"
+    inventory_file_name = f"{report_base_name}_inventory.ini"
     df = pandas.DataFrame(vm_list_output)
     print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting {len(df)} results to file {html_file_name}.{PrintColors.RESET}")
-    write_interactive_html_report(vm_list_output, html_file_name, api_server)
+    write_interactive_html_report(vm_list_output, html_file_name, api_server, csv_file_name, inventory_file_name)
     print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting {len(df)} results to file {csv_file_name}.{PrintColors.RESET}")
     df.to_csv(csv_file_name, index=False)
     #endregion html report
