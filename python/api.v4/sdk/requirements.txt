@@ -1,6 +1,5 @@
-getpass
 pandas
-datapane
+numpy<2
 keyring
 
 ntnx_iam_py_client
