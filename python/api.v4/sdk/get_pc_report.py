@@ -1049,10 +1049,27 @@ def main(api_server,username,secret,secure=False):
         #getting ip_addresses and subnets
         if entity.nics:
             for vnic in entity.nics:
-                if hasattr(vnic.network_info.ipv4_info, "learned_ip_addresses"):
-                    for ip_address in vnic.network_info.ipv4_info.learned_ip_addresses:
-                        entity_output['learned_ip_addresses'].append(ip_address.value)
-                entity_output['subnets'].append(next(iter({ subnet['name'] for subnet in subnet_list_output if subnet['ext_id'] == vnic.network_info.subnet.ext_id }),''))
+                network_info = getattr(vnic, 'network_info', None)
+                ipv4_info = getattr(network_info, 'ipv4_info', None)
+                learned_ip_addresses = getattr(ipv4_info, 'learned_ip_addresses', None)
+                if learned_ip_addresses:
+                    for ip_address in learned_ip_addresses:
+                        ip_value = getattr(ip_address, 'value', None)
+                        if ip_value:
+                            entity_output['learned_ip_addresses'].append(ip_value)
+                # Fall back to configured NIC IPs when learned IPs are not populated.
+                for info_obj in [network_info, getattr(vnic, 'nic_network_info', None)]:
+                    ipv4_config = getattr(info_obj, 'ipv4_config', None) if info_obj else None
+                    primary_ip = getattr(getattr(ipv4_config, 'ip_address', None), 'value', None) if ipv4_config else None
+                    if primary_ip:
+                        entity_output['learned_ip_addresses'].append(primary_ip)
+                    for secondary_ip in (getattr(ipv4_config, 'secondary_ip_address_list', None) or []):
+                        secondary_value = getattr(secondary_ip, 'value', None)
+                        if secondary_value:
+                            entity_output['learned_ip_addresses'].append(secondary_value)
+
+                subnet_ext_id = getattr(getattr(network_info, 'subnet', None), 'ext_id', None)
+                entity_output['subnets'].append(next(iter({ subnet['name'] for subnet in subnet_list_output if subnet['ext_id'] == subnet_ext_id }),''))
         
         vm_list_output.append(entity_output)
     #endregion vms
