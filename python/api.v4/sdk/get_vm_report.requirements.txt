@@ -1,0 +1,9 @@
+pandas
+numpy<2
+keyring
+urllib3
+ntnx_iam_py_client
+ntnx-clustermgmt-py-client
+ntnx-networking-py-client
+ntnx-prism-py-client
+ntnx-vmm-py-client

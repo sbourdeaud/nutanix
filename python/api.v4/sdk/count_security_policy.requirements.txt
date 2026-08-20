@@ -1,0 +1,8 @@
+humanfriendly
+keyring
+tqdm
+urllib3
+tabulate
+colorama
+termcolor
+ntnx-microseg-py-client

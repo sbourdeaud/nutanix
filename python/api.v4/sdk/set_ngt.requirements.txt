@@ -1,0 +1,7 @@
+pandas
+numpy<2
+humanfriendly
+keyring
+tqdm
+urllib3
+ntnx-vmm-py-client

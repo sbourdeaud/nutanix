@@ -1,0 +1,7 @@
+humanfriendly
+keyring
+tqdm
+urllib3
+ntnx-microseg-py-client
+ntnx-networking-py-client
+ntnx-prism-py-client
