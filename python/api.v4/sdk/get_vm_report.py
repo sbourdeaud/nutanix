@@ -18,6 +18,7 @@ from urllib.parse import parse_qs
 import argparse
 import getpass
 import json
+from pathlib import Path
 import urllib3
 import pandas
 import keyring
@@ -131,52 +132,292 @@ def main(api_server,username,secret,secure=False):
     def write_interactive_html_report(data_rows, output_file):
         """Writes an interactive HTML report with SQL filtering and CSV export."""
         data_json = json.dumps(data_rows, default=str)
+        orchestrator_css = ""
+        orchestrator_css_candidates = [
+            Path("/Users/stephan.bourdea/Documents/github/hybrid-cloud-infra-automation/nvd_x_iac/orchestrator/web/ui/tokens.css"),
+            Path("/Users/stephan.bourdea/Documents/github/hybrid-cloud-infra-automation/nvd_x_iac/orchestrator/web/ui/style.css"),
+        ]
+        for css_path in orchestrator_css_candidates:
+            try:
+                if css_path.exists():
+                    orchestrator_css += f"\n/* Source: {css_path} */\n"
+                    orchestrator_css += css_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
         html_content = """<!doctype html>
-<html lang="en">
+<html lang="en" data-theme="iris">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Nutanix VM Report</title>
   <link href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css" rel="stylesheet">
   <style>
-    body { font-family: Arial, sans-serif; margin: 16px; color: #222; }
-    h2 { margin: 0 0 12px; }
-    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
-    .toolbar input { min-width: 540px; max-width: 100%%; flex: 1; padding: 7px; }
-    .toolbar button { padding: 7px 12px; cursor: pointer; }
-    .hint { color: #666; font-size: 12px; margin: 8px 0 10px; }
+    __ORCHESTRATOR_CSS__
+
+    /* Report-specific overrides */
+    :root {
+      --ec-grey-00: #ffffff;
+      --ec-grey-50: #f5f7f9;
+      --ec-grey-100: #edf0f2;
+      --ec-grey-200: #d0d4d9;
+      --ec-grey-300: #b8bfca;
+      --ec-grey-650: #5b6168;
+      --ec-grey-800: #2a2f36;
+      --ec-grey-995: #131313;
+      --ec-purple-400: #9c84fc;
+      --ec-purple-500: #7855fa;
+      --ec-purple-600: #6740ee;
+      --ec-purple-700: #5530d2;
+      --ec-green-200: #d7f6e1;
+      --ec-green-700: #20973e;
+      --ec-red-200: #fddddd;
+      --ec-red-800: #d02550;
+      --ec-yellow-200: #fff2ce;
+      --ec-yellow-750: #b85c00;
+      --ec-blue-200: #cfe4f8;
+      --ec-blue-600: #2778ce;
+
+      --ec-bg-body: var(--ec-grey-00);
+      --ec-bg-surface: var(--ec-grey-00);
+      --ec-bg-surface-alt: var(--ec-grey-50);
+      --ec-bg-nav: var(--ec-grey-995);
+      --ec-fg-body: var(--ec-grey-995);
+      --ec-fg-muted: var(--ec-grey-650);
+      --ec-fg-on-nav: var(--ec-grey-00);
+      --ec-border-card: var(--ec-grey-200);
+      --ec-border-table-row: var(--ec-grey-200);
+      --ec-border-input: var(--ec-grey-300);
+      --ec-action-primary: var(--ec-purple-500);
+      --ec-action-primary-hover: var(--ec-purple-600);
+      --ec-action-primary-active: var(--ec-purple-700);
+      --ec-action-on-primary: var(--ec-grey-00);
+      --ec-focus-ring: var(--ec-purple-400);
+      --ec-status-ok: var(--ec-green-700);
+      --ec-status-ok-bg: var(--ec-green-200);
+      --ec-status-warn: var(--ec-yellow-750);
+      --ec-status-warn-bg: var(--ec-yellow-200);
+      --ec-status-error: var(--ec-red-800);
+      --ec-status-error-bg: var(--ec-red-200);
+      --ec-status-info: var(--ec-blue-600);
+      --ec-status-info-bg: var(--ec-blue-200);
+
+      --ec-space-1: 0.25rem;
+      --ec-space-2: 0.5rem;
+      --ec-space-3: 0.75rem;
+      --ec-space-4: 1rem;
+      --ec-space-5: 1.5rem;
+      --ec-radius-card: 4px;
+      --ec-radius-pill: 10px;
+      --ec-radius-input: 3px;
+      --ec-nav-height: 56px;
+      --ec-content-max: 1600px;
+      --ec-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+      --ec-font-mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      --ec-font-size-base: 14px;
+      --ec-font-size-sm: 12px;
+      --ec-font-size-h1: 20px;
+      --ec-font-weight-strong: 600;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font-family: var(--ec-font-sans);
+      font-size: var(--ec-font-size-base);
+      color: var(--ec-fg-body);
+      background: var(--ec-bg-body);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .topbar {
+      flex: none;
+      height: var(--ec-nav-height);
+      background: var(--ec-bg-nav);
+      color: var(--ec-fg-on-nav);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 var(--ec-space-5);
+    }
+    .brand {
+      font-weight: var(--ec-font-weight-strong);
+      letter-spacing: 0.02em;
+    }
+    .small-muted {
+      font-size: var(--ec-font-size-sm);
+      color: var(--ec-grey-300);
+    }
+
+    .content { flex: 1; min-height: 0; overflow-y: auto; }
+    .wrap {
+      max-width: var(--ec-content-max);
+      margin: 0 auto;
+      padding: var(--ec-space-5);
+    }
+    .card {
+      background: var(--ec-bg-surface);
+      border: 1px solid var(--ec-border-card);
+      border-radius: var(--ec-radius-card);
+    }
+    .card > .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--ec-space-3) var(--ec-space-4);
+      border-bottom: 1px solid var(--ec-border-card);
+    }
+    .card > .card-head h1 {
+      margin: 0;
+      font-size: var(--ec-font-size-h1);
+      font-weight: var(--ec-font-weight-strong);
+    }
+    .card > .card-body { padding: var(--ec-space-4); }
+
+    .toolbar { display: flex; gap: var(--ec-space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--ec-space-3); }
+    .input {
+      flex: 1 1 640px;
+      min-width: 280px;
+      padding: var(--ec-space-2);
+      border: 1px solid var(--ec-border-input);
+      border-radius: var(--ec-radius-input);
+      background: var(--ec-bg-surface);
+      color: var(--ec-fg-body);
+      font-family: var(--ec-font-mono);
+      font-size: var(--ec-font-size-sm);
+    }
+    .input:focus-visible {
+      outline: 2px solid var(--ec-focus-ring);
+      outline-offset: 0;
+      border-color: var(--ec-focus-ring);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font: inherit;
+      font-weight: var(--ec-font-weight-strong);
+      border: 1px solid var(--ec-border-input);
+      background: var(--ec-bg-surface);
+      color: var(--ec-fg-body);
+      border-radius: var(--ec-radius-input);
+      padding: var(--ec-space-2) var(--ec-space-4);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--ec-bg-surface-alt); }
+    .btn.primary {
+      background: var(--ec-action-primary);
+      border-color: var(--ec-action-primary);
+      color: var(--ec-action-on-primary);
+    }
+    .btn.primary:hover { background: var(--ec-action-primary-hover); border-color: var(--ec-action-primary-hover); }
+    .btn.primary:active { background: var(--ec-action-primary-active); border-color: var(--ec-action-primary-active); }
+    .hint {
+      color: var(--ec-fg-muted);
+      font-size: var(--ec-font-size-sm);
+      margin: var(--ec-space-2) 0 var(--ec-space-3);
+    }
+    code {
+      font-family: var(--ec-font-mono);
+      background: var(--ec-bg-surface-alt);
+      border: 1px solid var(--ec-border-card);
+      border-radius: var(--ec-radius-input);
+      padding: 0 5px;
+    }
+
     #table {
-      border: 1px solid #ddd;
+      border: 1px solid var(--ec-border-card);
       height: 70vh;
       min-height: 420px;
+      border-radius: var(--ec-radius-card);
+      overflow: hidden;
     }
     .tabulator {
-      overflow: hidden;
+      border: 0;
+      background: var(--ec-bg-surface);
+      color: var(--ec-fg-body);
     }
     .tabulator .tabulator-header {
       position: sticky;
       top: 0;
       z-index: 20;
+      background: var(--ec-bg-surface);
+      border-bottom: 1px solid var(--ec-border-table-row);
     }
-    #status { margin-top: 8px; font-size: 12px; color: #444; }
+    .tabulator .tabulator-col {
+      border-right: 1px solid var(--ec-border-table-row);
+      background: var(--ec-bg-surface);
+    }
+    .tabulator .tabulator-col .tabulator-col-title {
+      color: var(--ec-fg-muted);
+      font-size: var(--ec-font-size-sm);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-weight: var(--ec-font-weight-strong);
+    }
+    .tabulator .tabulator-header .tabulator-col input {
+      border: 1px solid var(--ec-border-input);
+      border-radius: var(--ec-radius-input);
+      padding: 4px 6px;
+      background: var(--ec-bg-surface);
+      color: var(--ec-fg-body);
+      font-size: var(--ec-font-size-sm);
+    }
+    .tabulator .tabulator-row {
+      border-bottom: 1px solid var(--ec-border-table-row);
+    }
+    .tabulator .tabulator-row:hover {
+      background: var(--ec-bg-surface-alt);
+    }
+    .tabulator .tabulator-cell {
+      border-right: 1px solid var(--ec-border-table-row);
+      padding: var(--ec-space-2) var(--ec-space-3);
+    }
+    .tabulator .tabulator-footer {
+      background: var(--ec-bg-surface);
+      border-top: 1px solid var(--ec-border-table-row);
+    }
+
+    #status {
+      margin-top: var(--ec-space-3);
+      font-size: var(--ec-font-size-sm);
+      color: var(--ec-fg-muted);
+    }
   </style>
 </head>
 <body>
-  <h2>Nutanix VM Report</h2>
-  <div class="toolbar">
-    <input id="sql" type="text" value="SELECT * FROM ? WHERE 1=1" />
-    <button id="runSql">Run SQL</button>
-    <button id="resetSql">Reset</button>
-    <button id="downloadCsv">Export CSV</button>
-    <button id="downloadInventory">Export inventory.ini</button>
-  </div>
-  <div class="hint">
-    SQL examples:
-    <code>SELECT * FROM ? WHERE ngt_status = 'not_connected'</code> |
-    <code>SELECT name, cluster, ngt_status FROM ? WHERE power_state = 'ON'</code>
-  </div>
-  <div id="table"></div>
-  <div id="status"></div>
+  <header class="topbar">
+    <span class="brand">NVD VM Report</span>
+    <span class="small-muted">Generated by get_vm_report.py</span>
+  </header>
+  <main class="content">
+    <div class="wrap">
+      <div class="card">
+        <div class="card-head">
+          <h1>Virtual Machines</h1>
+        </div>
+        <div class="card-body">
+          <div class="toolbar">
+            <input id="sql" class="input" type="text" value="SELECT * FROM ? WHERE 1=1" />
+            <button class="btn primary" id="runSql">Run SQL</button>
+            <button class="btn" id="resetSql">Reset</button>
+            <button class="btn" id="downloadCsv">Export CSV</button>
+            <button class="btn" id="downloadInventory">Export inventory.ini</button>
+          </div>
+          <div class="hint">
+            SQL examples:
+            <code>SELECT * FROM ? WHERE ngt_effective_status = 'not_connected'</code> |
+            <code>SELECT name, cluster, ngt_status FROM ? WHERE power_state = 'ON'</code>
+          </div>
+          <div id="table"></div>
+          <div id="status"></div>
+        </div>
+      </div>
+    </div>
+  </main>
 
   <script src="https://cdn.jsdelivr.net/npm/alasql@4.6/dist/alasql.min.js"></script>
   <script src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
@@ -206,8 +447,7 @@ def main(api_server,username,secret,secure=False):
       data: currentData,
       layout: "fitDataTable",
       height: "100%",
-      pagination: true,
-      paginationSize: 50,
+      pagination: false,
       movableColumns: true,
       clipboard: true,
       headerVisible: true,
@@ -216,6 +456,27 @@ def main(api_server,username,secret,secure=False):
 
     const updateStatus = (msg) => {
       statusEl.textContent = msg;
+    };
+
+    const escapeSqlValue = (value) => String(value).replace(/'/g, "''");
+    const escapeSqlField = (field) => String(field).replace(/`/g, "``");
+    let previousHeaderFilterCount = 0;
+
+    const buildSqlFromHeaderFilters = (headerFilters) => {
+      if (!headerFilters.length) {
+        return "SELECT * FROM ? WHERE 1=1";
+      }
+      const whereClauses = headerFilters
+        .filter((flt) => flt && flt.field && flt.value !== null && flt.value !== undefined && String(flt.value).trim() !== "")
+        .map((flt) => {
+          const field = escapeSqlField(flt.field);
+          const value = escapeSqlValue(String(flt.value).trim());
+          return `CAST(\`${field}\` AS STRING) LIKE '%${value}%'`;
+        });
+      if (!whereClauses.length) {
+        return "SELECT * FROM ? WHERE 1=1";
+      }
+      return `SELECT * FROM ? WHERE ${whereClauses.join(" AND ")}`;
     };
 
     const applyData = (rows, messagePrefix) => {
@@ -329,12 +590,27 @@ def main(api_server,username,secret,secure=False):
       updateStatus(`Exported inventory.ini from ${currentData.length} row(s)`);
     });
 
+    table.on("dataFiltered", () => {
+      const headerFilters = table.getHeaderFilters() || [];
+      const activeRows = table.getData("active") || [];
+      currentData = activeRows;
+
+      if (headerFilters.length > 0) {
+        sqlInput.value = buildSqlFromHeaderFilters(headerFilters);
+      } else if (previousHeaderFilterCount > 0) {
+        sqlInput.value = "SELECT * FROM ? WHERE 1=1";
+      }
+      previousHeaderFilterCount = headerFilters.length;
+      updateStatus(`Visible rows: ${currentData.length}`);
+    });
+
     updateStatus(`Loaded: ${currentData.length} row(s)`);
   </script>
 </body>
 </html>
 """
         html_content = html_content.replace("__DATA_JSON__", data_json)
+        html_content = html_content.replace("__ORCHESTRATOR_CSS__", orchestrator_css)
         with open(output_file, "w", encoding="utf-8") as html_file:
             html_file.write(html_content)
 
