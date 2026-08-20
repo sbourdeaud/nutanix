@@ -12,16 +12,17 @@
 #region IMPORT
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 
 import math
 import argparse
 import getpass
+import json
 
 from humanfriendly import format_timespan
 
 import urllib3
 import pandas
-import datapane
 import keyring
 import tqdm
 
@@ -64,6 +65,435 @@ def fetch_entities(client,module,entity_api,function,page,limit):
     list_function = getattr(entity_api, function)
     response = list_function(_page=page,_limit=limit)
     return response
+
+
+def write_interactive_html_report(data_sets, output_file, origin, generated_at, csv_base_name):
+    """Writes a styled interactive HTML report without datapane."""
+    data_sets_json = json.dumps(data_sets, default=str)
+
+    orchestrator_css = ""
+    orchestrator_css_candidates = [
+        Path("/Users/stephan.bourdea/Documents/github/hybrid-cloud-infra-automation/nvd_x_iac/orchestrator/web/ui/tokens.css"),
+        Path("/Users/stephan.bourdea/Documents/github/hybrid-cloud-infra-automation/nvd_x_iac/orchestrator/web/ui/style.css"),
+    ]
+    for css_path in orchestrator_css_candidates:
+        try:
+            if css_path.exists():
+                orchestrator_css += f"\n/* Source: {css_path} */\n"
+                orchestrator_css += css_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+    html_content = """<!doctype html>
+<html lang="en" data-theme="iris">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nutanix PC Report</title>
+  <link href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css" rel="stylesheet">
+  <style>
+    __ORCHESTRATOR_CSS__
+    .wrap { max-width: none; width: 100%; margin: 0; padding: var(--ec-space-4); }
+    .toolbar { display: flex; gap: var(--ec-space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--ec-space-3); }
+    .input {
+      padding: var(--ec-space-2);
+      border: 1px solid var(--ec-border-input);
+      border-radius: var(--ec-radius-input);
+      background: var(--ec-bg-surface);
+      color: var(--ec-fg-body);
+      font-family: var(--ec-font-mono);
+      font-size: var(--ec-font-size-sm);
+      min-width: 240px;
+    }
+    .input.sql { flex: 1 1 640px; min-width: 320px; }
+    #table { border: 1px solid var(--ec-border-card); height: 70vh; min-height: 420px; border-radius: var(--ec-radius-card); overflow: hidden; }
+    .tabulator .tabulator-header { position: sticky; top: 0; z-index: 20; }
+    .hint-row { display: flex; align-items: center; gap: var(--ec-space-3); margin: var(--ec-space-2) 0 var(--ec-space-3); flex-wrap: wrap; }
+    .matched-pill { display: inline-flex; align-items: center; border-radius: var(--ec-radius-pill); padding: 1px var(--ec-space-2); font-size: var(--ec-font-size-sm); font-weight: var(--ec-font-weight-strong); color: var(--ec-status-info); background: var(--ec-status-info-bg); }
+    .hint { color: var(--ec-fg-muted); font-size: var(--ec-font-size-sm); }
+    .context-menu {
+      position: fixed;
+      z-index: 10000;
+      min-width: 260px;
+      background: var(--ec-bg-surface);
+      border: 1px solid var(--ec-border-card);
+      border-radius: var(--ec-radius-input);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+      padding: 4px 0;
+      display: none;
+    }
+    .context-menu.open { display: block; }
+    .context-menu button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--ec-fg-body);
+      text-align: left;
+      padding: 8px 12px;
+      font-size: var(--ec-font-size-sm);
+      cursor: pointer;
+    }
+    .context-menu button:hover { background: var(--ec-bg-surface-alt); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">NVD PC Report</span>
+    <span class="small-muted">Origin: __ORIGIN__ | Generated: __GENERATED_AT__</span>
+  </header>
+  <main class="content">
+    <div class="wrap">
+      <div class="card">
+        <div class="card-head"><h1>Prism Central Entities</h1></div>
+        <div class="card-body">
+          <div class="toolbar">
+            <select id="datasetSelect" class="input"></select>
+            <input id="sql" class="input sql" type="text" value="SELECT * FROM ? WHERE 1=1" />
+            <button class="btn primary" id="runSql">Run SQL</button>
+            <button class="btn" id="resetSql">Reset</button>
+            <button class="btn" id="downloadCsv">Export CSV</button>
+            <button class="btn" id="downloadInventory" style="display:none">Export inventory.ini</button>
+          </div>
+          <div class="hint-row">
+            <span id="matchedRowsTop" class="matched-pill">Matched rows: 0</span>
+            <div class="hint">
+              SQL examples:
+              <code>SELECT * FROM ? WHERE `name` LIKE '%az01%'</code> |
+              <code>SELECT name, ext_id FROM ? WHERE `cluster` LIKE '%az01app01%'</code>
+            </div>
+          </div>
+          <div id="table"></div>
+          <div id="status" class="hint"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div id="cellContextMenu" class="context-menu" role="menu" aria-hidden="true"></div>
+  <script src="https://cdn.jsdelivr.net/npm/alasql@4.6/dist/alasql.min.js"></script>
+  <script src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
+  <script>
+    const dataSets = __DATASETS_JSON__;
+    const datasetKeys = Object.keys(dataSets);
+    const datasetSelect = document.getElementById("datasetSelect");
+    const sqlInput = document.getElementById("sql");
+    const statusEl = document.getElementById("status");
+    const matchedRowsTopEl = document.getElementById("matchedRowsTop");
+    const contextMenuEl = document.getElementById("cellContextMenu");
+    const downloadInventoryBtn = document.getElementById("downloadInventory");
+    const csvBaseName = "__CSV_BASE_NAME__";
+    const defaultQuery = "SELECT * FROM ? WHERE 1=1";
+    let currentDatasetKey = datasetKeys[0] || "";
+    let originalData = currentDatasetKey ? [...dataSets[currentDatasetKey]] : [];
+    let currentData = [...originalData];
+    let contextCell = null;
+    let previousHeaderFilterCount = 0;
+    const sqlByDataset = {};
+    let isSwitchingDataset = false;
+
+    const updateStatus = (text) => {
+      statusEl.textContent = text;
+      matchedRowsTopEl.textContent = text.startsWith("Matched rows:") ? text : matchedRowsTopEl.textContent;
+    };
+    const refreshMatchedStatus = (count) => updateStatus(`Matched rows: ${count}`);
+    const toComparableString = (value) => Array.isArray(value) ? value.join(", ") : String(value ?? "");
+    const normalizeSqlQuery = (query) => query.replace(/CAST\\(\\s*`([^`]+)`\\s+AS\\s+STRING\\s*\\)/gi, "`$1`");
+
+    const runDeterministicLikeQuery = (query) => {
+      const normalized = normalizeSqlQuery(query).trim();
+      const match = normalized.match(/^SELECT\\s+\\*\\s+FROM\\s+\\?\\s+WHERE\\s+(.+)$/i);
+      if (!match) return null;
+      const conditions = match[1].split(/\\s+AND\\s+/i).map((x) => x.trim()).filter(Boolean);
+      const parsed = [];
+      for (const condition of conditions) {
+        if (condition === "1=1") continue;
+        const condMatch = condition.match(/^`([^`]+)`\\s+LIKE\\s+'%(.*)%'$/i);
+        if (!condMatch) return null;
+        parsed.push({ field: condMatch[1], needle: condMatch[2].replace(/''/g, "'").toLowerCase() });
+      }
+      return originalData.filter((row) => parsed.every(({ field, needle }) => toComparableString(row[field]).toLowerCase().includes(needle)));
+    };
+
+    const runQuery = (query) => {
+      const normalized = normalizeSqlQuery(query);
+      let result = runDeterministicLikeQuery(normalized);
+      if (result === null) result = alasql(normalized, [originalData]);
+      return { normalized, result };
+    };
+
+    const escapeSqlValue = (value) => String(value).replace(/'/g, "''");
+    const escapeSqlField = (field) => String(field).replace(/`/g, "``");
+    const buildSqlFromHeaderFilters = (headerFilters) => {
+      if (!headerFilters.length) return "SELECT * FROM ? WHERE 1=1";
+      const whereClauses = headerFilters
+        .filter((flt) => flt && flt.field && flt.value !== null && flt.value !== undefined && String(flt.value).trim() !== "")
+        .map((flt) => {
+          const field = escapeSqlField(flt.field);
+          const value = escapeSqlValue(String(flt.value).trim());
+          return `CAST(\`${field}\` AS STRING) LIKE '%${value}%'`;
+        });
+      if (!whereClauses.length) return "SELECT * FROM ? WHERE 1=1";
+      return `SELECT * FROM ? WHERE ${whereClauses.join(" AND ")}`;
+    };
+
+    const inferColumns = (rows) => {
+      if (!rows.length) return [];
+      return Object.keys(rows[0]).map((key) => ({
+        title: key,
+        field: key,
+        headerFilter: true,
+        sorter: "string",
+        formatter: (cell) => toComparableString(cell.getValue()),
+      }));
+    };
+
+    let table = new Tabulator("#table", {
+      data: currentData,
+      layout: "fitDataTable",
+      height: "100%",
+      movableColumns: true,
+      columns: inferColumns(currentData),
+    });
+
+    const applySqlForCurrentDataset = (queryText) => {
+      const query = (queryText || defaultQuery).trim();
+      try {
+        const { normalized, result } = runQuery(query);
+        if (!Array.isArray(result)) {
+          updateStatus("SQL executed, but result is not a row set.");
+          return;
+        }
+        sqlInput.value = normalized;
+        sqlByDataset[currentDatasetKey] = normalized;
+        currentData = result;
+        table.setData(result);
+        refreshMatchedStatus(result.length);
+      } catch (err) {
+        updateStatus(`SQL error: ${err.message}`);
+      }
+    };
+
+    const rebuildTableForDataset = () => {
+      isSwitchingDataset = true;
+      table.clearHeaderFilter();
+      table.clearFilter();
+      originalData = currentDatasetKey ? [...dataSets[currentDatasetKey]] : [];
+      currentData = [...originalData];
+      table.setColumns(inferColumns(originalData));
+      table.setData(originalData);
+      const restoredQuery = sqlByDataset[currentDatasetKey] || defaultQuery;
+      sqlInput.value = restoredQuery;
+      previousHeaderFilterCount = 0;
+      downloadInventoryBtn.style.display = currentDatasetKey === "vms" ? "inline-flex" : "none";
+      applySqlForCurrentDataset(restoredQuery);
+      isSwitchingDataset = false;
+    };
+
+    const toCsv = (rows) => {
+      if (!rows.length) return "";
+      const headers = Object.keys(rows[0]);
+      const escapeCsv = (value) => {
+        const normalized = toComparableString(value);
+        return /[",\\n]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
+      };
+      const lines = [headers.join(",")];
+      for (const row of rows) lines.push(headers.map((h) => escapeCsv(row[h])).join(","));
+      return lines.join("\\n");
+    };
+
+    datasetKeys.forEach((key) => {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = `${key} (${(dataSets[key] || []).length})`;
+      datasetSelect.appendChild(option);
+    });
+    datasetSelect.value = currentDatasetKey;
+    sqlByDataset[currentDatasetKey] = defaultQuery;
+    downloadInventoryBtn.style.display = currentDatasetKey === "vms" ? "inline-flex" : "none";
+    datasetSelect.addEventListener("change", () => {
+      sqlByDataset[currentDatasetKey] = sqlInput.value.trim() || defaultQuery;
+      currentDatasetKey = datasetSelect.value;
+      rebuildTableForDataset();
+    });
+
+    document.getElementById("runSql").addEventListener("click", () => {
+      applySqlForCurrentDataset(sqlInput.value);
+    });
+
+    document.getElementById("resetSql").addEventListener("click", () => {
+      sqlInput.value = defaultQuery;
+      sqlByDataset[currentDatasetKey] = defaultQuery;
+      table.clearHeaderFilter();
+      table.clearFilter();
+      currentData = [...originalData];
+      table.setData(currentData);
+      refreshMatchedStatus(currentData.length);
+    });
+
+    document.getElementById("downloadCsv").addEventListener("click", () => {
+      const rows = table.getRows("active").map((row) => row.getData());
+      const exportRows = rows.length ? rows : currentData;
+      const content = toCsv(exportRows);
+      const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${csvBaseName}_${currentDatasetKey}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      updateStatus(`Matched rows: ${exportRows.length}`);
+    });
+
+    const toArray = (value) => {
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string" && value.trim().startsWith("[") && value.trim().endsWith("]")) {
+        try {
+          const parsed = JSON.parse(value.replace(/'/g, '"'));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+          return [];
+        }
+      }
+      return [];
+    };
+
+    const inferVmGroup = (row) => {
+      const name = String(row.name || "").toLowerCase();
+      if (/w\\d+$/.test(name) || name.includes("windows")) return "windows_vms";
+      if (/l\\d+$/.test(name) || name.includes("linux")) return "linux_vms";
+      return "other_vms";
+    };
+
+    const toInventoryIni = (rows) => {
+      const groups = { linux_vms: [], windows_vms: [], other_vms: [] };
+      rows.forEach((row) => {
+        const vmName = String(row.name || "").trim();
+        if (!vmName) return;
+        const learnedIps = toArray(row.learned_ip_addresses).map((ip) => String(ip || "").trim()).filter(Boolean);
+        const ansibleHost = learnedIps.length ? learnedIps[0] : "";
+        const inventoryLine = ansibleHost ? `${vmName} ansible_host=${ansibleHost}` : vmName;
+        groups[inferVmGroup(row)].push(inventoryLine);
+      });
+      return [
+        "# Generated from current report filter",
+        `# Total VMs: ${rows.length}`,
+        "",
+        "[linux_vms]", ...groups.linux_vms, "",
+        "[windows_vms]", ...groups.windows_vms, "",
+        "[other_vms]", ...groups.other_vms, "",
+        "[nutanix_vms:children]",
+        "linux_vms",
+        "windows_vms",
+        "other_vms",
+        "",
+      ].join("\\n");
+    };
+
+    downloadInventoryBtn.addEventListener("click", () => {
+      const rows = table.getRows("active").map((row) => row.getData());
+      const exportRows = rows.length ? rows : currentData;
+      const iniContent = toInventoryIni(exportRows);
+      const blob = new Blob([iniContent], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${csvBaseName}_vms_inventory.ini`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+      updateStatus(`Matched rows: ${exportRows.length}`);
+    });
+
+    const hideContextMenu = () => {
+      contextMenuEl.classList.remove("open");
+      contextMenuEl.setAttribute("aria-hidden", "true");
+      contextMenuEl.innerHTML = "";
+      contextCell = null;
+    };
+
+    const showContextMenu = (event, cell) => {
+      event.preventDefault();
+      const field = cell.getField();
+      const rawValue = cell.getValue();
+      const value = Array.isArray(rawValue) ? rawValue.join(", ") : String(rawValue ?? "");
+      const safeValue = value.length > 80 ? `${value.slice(0, 77)}...` : value;
+      contextCell = { field, value };
+      contextMenuEl.innerHTML = `
+        <button type="button" data-action="add-column-filter" title="Set ${field} filter to this value">
+          Filter \`${field}\` by "${safeValue}"
+        </button>
+      `;
+      const menuWidth = 320;
+      const menuHeight = 44;
+      const left = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+      const top = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+      contextMenuEl.style.left = `${Math.max(8, left)}px`;
+      contextMenuEl.style.top = `${Math.max(8, top)}px`;
+      contextMenuEl.classList.add("open");
+      contextMenuEl.setAttribute("aria-hidden", "false");
+    };
+
+    contextMenuEl.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!target || !target.dataset || target.dataset.action !== "add-column-filter") return;
+      if (!contextCell) {
+        hideContextMenu();
+        return;
+      }
+      table.setHeaderFilterValue(contextCell.field, contextCell.value);
+      hideContextMenu();
+    });
+    document.addEventListener("click", () => hideContextMenu());
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape") hideContextMenu(); });
+    window.addEventListener("resize", () => hideContextMenu());
+    window.addEventListener("scroll", () => hideContextMenu(), true);
+    table.on("cellContext", (event, cell) => showContextMenu(event, cell));
+
+    table.on("dataFiltered", () => {
+      if (isSwitchingDataset) {
+        return;
+      }
+      const headerFilters = table.getHeaderFilters() || [];
+      if (headerFilters.length > 0) {
+        sqlInput.value = buildSqlFromHeaderFilters(headerFilters);
+      } else if (previousHeaderFilterCount > 0) {
+        sqlInput.value = defaultQuery;
+      }
+      previousHeaderFilterCount = headerFilters.length;
+
+      try {
+        const { normalized, result } = runQuery(sqlInput.value.trim());
+        if (Array.isArray(result)) {
+          if (normalized !== sqlInput.value.trim()) {
+            sqlInput.value = normalized;
+          }
+          sqlByDataset[currentDatasetKey] = sqlInput.value.trim() || defaultQuery;
+          refreshMatchedStatus(result.length);
+          return;
+        }
+      } catch (err) {
+        // Keep UI responsive while query text is temporarily invalid.
+      }
+
+      const rows = table.getRows("active").map((row) => row.getData());
+      refreshMatchedStatus(rows.length);
+    });
+
+    refreshMatchedStatus(currentData.length);
+  </script>
+</body>
+</html>
+"""
+
+    html_content = html_content.replace("__DATASETS_JSON__", data_sets_json)
+    html_content = html_content.replace("__ORCHESTRATOR_CSS__", orchestrator_css)
+    html_content = html_content.replace("__ORIGIN__", str(origin or "unknown"))
+    html_content = html_content.replace("__GENERATED_AT__", generated_at)
+    html_content = html_content.replace("__CSV_BASE_NAME__", csv_base_name)
+    with open(output_file, "w", encoding="utf-8") as html_file:
+        html_file.write(html_content)
 
 def main(api_server,username,secret,secure=False):
     '''main function.
@@ -628,41 +1058,36 @@ def main(api_server,username,secret,secure=False):
     #endregion vms
 
     #region html report
-    #* exporting to html
-    html_file_name = f"{api_server}_get_pc_report.html"
-    
-    vm_df = pandas.DataFrame(vm_list_output)
-    cluster_df = pandas.DataFrame(cluster_list_output)
-    host_df = pandas.DataFrame(host_list_output)
-    storage_container_df = pandas.DataFrame(storage_container_list_output)
-    subnet_df = pandas.DataFrame(subnet_list_output)
-    category_df = pandas.DataFrame(category_list_output)
-    user_df = pandas.DataFrame(user_list_output)
-    
+    #* exporting to html and csv
+    safe_origin = "".join(char if (char.isalnum() or char in ("-", "_")) else "_" for char in str(api_server or "unknown"))
+    report_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    report_base_name = f"{safe_origin}_{report_timestamp}_get_pc_report"
+    html_file_name = f"{report_base_name}.html"
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    data_sets = {
+        "vms": vm_list_output,
+        "clusters": cluster_list_output,
+        "hosts": host_list_output,
+        "storage_containers": storage_container_list_output,
+        "subnets": subnet_list_output,
+        "categories": category_list_output,
+        "users": user_list_output,
+    }
+
     print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting results to file {html_file_name}.{PrintColors.RESET}")
-    
-    """ df.style \
-        .format(thousands=" ", decimal=",") \
-        .format_index(str.upper, axis=1)
-    
-    html_content = df.to_html(index=False)
-    html_file= open(html_file_name,"w")
-    html_file.write(html_content)
-    html_file.close() """
-    
-    #datapane_app = datapane.App(datapane.DataTable(df))
-    datapane_app = datapane.App(
-        datapane.Select(
-        datapane.DataTable(vm_df,label="vms"),
-        datapane.DataTable(cluster_df,label="clusters"),
-        datapane.DataTable(host_df,label="hosts"),
-        datapane.DataTable(storage_container_df,label="storage_containers"),
-        datapane.DataTable(subnet_df,label="subnets"),
-        datapane.DataTable(category_df,label="categories"),
-        datapane.DataTable(user_df,label="users"),
-        )
+    write_interactive_html_report(
+        data_sets=data_sets,
+        output_file=html_file_name,
+        origin=api_server,
+        generated_at=generated_at,
+        csv_base_name=report_base_name,
     )
-    datapane_app.save(html_file_name)
+
+    for dataset_name, dataset_rows in data_sets.items():
+        csv_file_name = f"{report_base_name}_{dataset_name}.csv"
+        pandas.DataFrame(dataset_rows).to_csv(csv_file_name, index=False)
+        print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exported {len(dataset_rows)} {dataset_name} rows to file {csv_file_name}.{PrintColors.RESET}")
     #endregion html report
 #endregion FUNCTIONS
 

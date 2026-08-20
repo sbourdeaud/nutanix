@@ -1,6 +1,8 @@
 pandas
 numpy<2
 keyring
+humanfriendly
+tqdm
 
 ntnx_iam_py_client
 ntnx-aiops-py-client
