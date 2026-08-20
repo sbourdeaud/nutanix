@@ -70,7 +70,7 @@ referencing==0.36.2
 rpds-py==0.25.1
 six==1.17.0
 stack-data==0.6.3
-tornado==6.5.5
+tornado==6.5.7
 tqdm==4.67.1
 traitlets==5.14.3
 typing_extensions==4.14.0
