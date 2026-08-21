@@ -1,3 +1,17 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "keyring>=25.7.0",
+#     "ntnx-clustermgmt-py-client>=4.1.1",
+#     "ntnx-iam-py-client>=4.0.1",
+#     "ntnx-networking-py-client>=4.1.1",
+#     "ntnx-prism-py-client>=4.1.1",
+#     "ntnx-vmm-py-client>=4.1.1",
+#     "numpy<2",
+#     "pandas>=2.3.3",
+#     "urllib3>=1.26.20",
+# ]
+# ///
 """ gets virtual machines list from Prism Central using v4 API and python SDK
 
     Args:
@@ -9,7 +23,6 @@
 """
 
 
-#region IMPORT
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.parse import parse_qs
@@ -27,20 +40,16 @@ import ntnx_clustermgmt_py_client
 import ntnx_networking_py_client
 import ntnx_prism_py_client
 import ntnx_iam_py_client
-#endregion IMPORT
 
 
-# region HEADERS
 """
 # * author:       stephane.bourdeaud@nutanix.com
 # * version:      2024/12/17
 
 # description:
 """
-# endregion HEADERS
 
 
-#region CLASS
 class PrintColors:
     """Used for colored output formatting.
     """
@@ -51,10 +60,8 @@ class PrintColors:
     FAIL = '\033[91m' #RED
     STEP = '\033[95m' #PURPLE
     RESET = '\033[0m' #RESET COLOR
-#endregion CLASS
 
 
-#region FUNCTIONS
 def ntnx_api_pagination_get_page_links(response):
     '''retrieves self, next and last page links from metadata section of a response.
         Args:
@@ -145,7 +152,7 @@ def main(api_server,username,secret,secure=False):
             except Exception:
                 continue
 
-        html_content = """<!doctype html>
+        html_content = r"""<!doctype html>
 <html lang="en" data-theme="iris">
 <head>
   <meta charset="utf-8" />
@@ -153,283 +160,7 @@ def main(api_server,username,secret,secure=False):
   <title>Nutanix VM Report</title>
   <link href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css" rel="stylesheet">
   <style>
-    __ORCHESTRATOR_CSS__
-
-    /* Report-specific overrides */
-    :root {
-      --ec-grey-00: #ffffff;
-      --ec-grey-50: #f5f7f9;
-      --ec-grey-100: #edf0f2;
-      --ec-grey-200: #d0d4d9;
-      --ec-grey-300: #b8bfca;
-      --ec-grey-650: #5b6168;
-      --ec-grey-800: #2a2f36;
-      --ec-grey-995: #131313;
-      --ec-purple-400: #9c84fc;
-      --ec-purple-500: #7855fa;
-      --ec-purple-600: #6740ee;
-      --ec-purple-700: #5530d2;
-      --ec-green-200: #d7f6e1;
-      --ec-green-700: #20973e;
-      --ec-red-200: #fddddd;
-      --ec-red-800: #d02550;
-      --ec-yellow-200: #fff2ce;
-      --ec-yellow-750: #b85c00;
-      --ec-blue-200: #cfe4f8;
-      --ec-blue-600: #2778ce;
-
-      --ec-bg-body: var(--ec-grey-00);
-      --ec-bg-surface: var(--ec-grey-00);
-      --ec-bg-surface-alt: var(--ec-grey-50);
-      --ec-bg-nav: var(--ec-grey-995);
-      --ec-fg-body: var(--ec-grey-995);
-      --ec-fg-muted: var(--ec-grey-650);
-      --ec-fg-on-nav: var(--ec-grey-00);
-      --ec-border-card: var(--ec-grey-200);
-      --ec-border-table-row: var(--ec-grey-200);
-      --ec-border-input: var(--ec-grey-300);
-      --ec-action-primary: var(--ec-purple-500);
-      --ec-action-primary-hover: var(--ec-purple-600);
-      --ec-action-primary-active: var(--ec-purple-700);
-      --ec-action-on-primary: var(--ec-grey-00);
-      --ec-focus-ring: var(--ec-purple-400);
-      --ec-status-ok: var(--ec-green-700);
-      --ec-status-ok-bg: var(--ec-green-200);
-      --ec-status-warn: var(--ec-yellow-750);
-      --ec-status-warn-bg: var(--ec-yellow-200);
-      --ec-status-error: var(--ec-red-800);
-      --ec-status-error-bg: var(--ec-red-200);
-      --ec-status-info: var(--ec-blue-600);
-      --ec-status-info-bg: var(--ec-blue-200);
-
-      --ec-space-1: 0.25rem;
-      --ec-space-2: 0.5rem;
-      --ec-space-3: 0.75rem;
-      --ec-space-4: 1rem;
-      --ec-space-5: 1.5rem;
-      --ec-radius-card: 4px;
-      --ec-radius-pill: 10px;
-      --ec-radius-input: 3px;
-      --ec-nav-height: 56px;
-      --ec-content-max: 1600px;
-      --ec-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
-      --ec-font-mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-      --ec-font-size-base: 14px;
-      --ec-font-size-sm: 12px;
-      --ec-font-size-h1: 20px;
-      --ec-font-weight-strong: 600;
-    }
-
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; height: 100%; }
-    body {
-      font-family: var(--ec-font-sans);
-      font-size: var(--ec-font-size-base);
-      color: var(--ec-fg-body);
-      background: var(--ec-bg-body);
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-
-    .topbar {
-      flex: none;
-      height: var(--ec-nav-height);
-      background: var(--ec-bg-nav);
-      color: var(--ec-fg-on-nav);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 var(--ec-space-5);
-    }
-    .brand {
-      font-weight: var(--ec-font-weight-strong);
-      letter-spacing: 0.02em;
-    }
-    .small-muted {
-      font-size: var(--ec-font-size-sm);
-      color: var(--ec-grey-300);
-    }
-
-    .content { flex: 1; min-height: 0; overflow-y: auto; }
-    .wrap {
-      max-width: none;
-      width: 100%;
-      margin: 0;
-      padding: var(--ec-space-4);
-    }
-    .card {
-      background: var(--ec-bg-surface);
-      border: 1px solid var(--ec-border-card);
-      border-radius: var(--ec-radius-card);
-    }
-    .card > .card-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: var(--ec-space-3) var(--ec-space-4);
-      border-bottom: 1px solid var(--ec-border-card);
-    }
-    .card > .card-head h1 {
-      margin: 0;
-      font-size: var(--ec-font-size-h1);
-      font-weight: var(--ec-font-weight-strong);
-    }
-    .card > .card-body { padding: var(--ec-space-4); }
-
-    .toolbar { display: flex; gap: var(--ec-space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--ec-space-3); }
-    .input {
-      flex: 1 1 640px;
-      min-width: 280px;
-      padding: var(--ec-space-2);
-      border: 1px solid var(--ec-border-input);
-      border-radius: var(--ec-radius-input);
-      background: var(--ec-bg-surface);
-      color: var(--ec-fg-body);
-      font-family: var(--ec-font-mono);
-      font-size: var(--ec-font-size-sm);
-    }
-    .input:focus-visible {
-      outline: 2px solid var(--ec-focus-ring);
-      outline-offset: 0;
-      border-color: var(--ec-focus-ring);
-    }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font: inherit;
-      font-weight: var(--ec-font-weight-strong);
-      border: 1px solid var(--ec-border-input);
-      background: var(--ec-bg-surface);
-      color: var(--ec-fg-body);
-      border-radius: var(--ec-radius-input);
-      padding: var(--ec-space-2) var(--ec-space-4);
-      cursor: pointer;
-      white-space: nowrap;
-    }
-    .btn:hover { background: var(--ec-bg-surface-alt); }
-    .btn.primary {
-      background: var(--ec-action-primary);
-      border-color: var(--ec-action-primary);
-      color: var(--ec-action-on-primary);
-    }
-    .btn.primary:hover { background: var(--ec-action-primary-hover); border-color: var(--ec-action-primary-hover); }
-    .btn.primary:active { background: var(--ec-action-primary-active); border-color: var(--ec-action-primary-active); }
-    .hint {
-      color: var(--ec-fg-muted);
-      font-size: var(--ec-font-size-sm);
-      margin: var(--ec-space-2) 0 var(--ec-space-3);
-    }
-    .hint-row {
-      display: flex;
-      align-items: center;
-      gap: var(--ec-space-3);
-      margin: var(--ec-space-2) 0 var(--ec-space-3);
-      flex-wrap: wrap;
-    }
-    .matched-pill {
-      display: inline-flex;
-      align-items: center;
-      border-radius: var(--ec-radius-pill);
-      padding: 1px var(--ec-space-2);
-      font-size: var(--ec-font-size-sm);
-      font-weight: var(--ec-font-weight-strong);
-      color: var(--ec-status-info);
-      background: var(--ec-status-info-bg);
-      white-space: nowrap;
-    }
-    code {
-      font-family: var(--ec-font-mono);
-      background: var(--ec-bg-surface-alt);
-      border: 1px solid var(--ec-border-card);
-      border-radius: var(--ec-radius-input);
-      padding: 0 5px;
-    }
-
-    #table {
-      border: 1px solid var(--ec-border-card);
-      height: 70vh;
-      min-height: 420px;
-      border-radius: var(--ec-radius-card);
-      overflow: hidden;
-    }
-    .tabulator {
-      border: 0;
-      background: var(--ec-bg-surface);
-      color: var(--ec-fg-body);
-    }
-    .tabulator .tabulator-header {
-      position: sticky;
-      top: 0;
-      z-index: 20;
-      background: var(--ec-bg-surface);
-      border-bottom: 1px solid var(--ec-border-table-row);
-    }
-    .tabulator .tabulator-col {
-      border-right: 1px solid var(--ec-border-table-row);
-      background: var(--ec-bg-surface);
-    }
-    .tabulator .tabulator-col .tabulator-col-title {
-      color: var(--ec-fg-muted);
-      font-size: var(--ec-font-size-sm);
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      font-weight: var(--ec-font-weight-strong);
-    }
-    .tabulator .tabulator-header .tabulator-col input {
-      border: 1px solid var(--ec-border-input);
-      border-radius: var(--ec-radius-input);
-      padding: 4px 6px;
-      background: var(--ec-bg-surface);
-      color: var(--ec-fg-body);
-      font-size: var(--ec-font-size-sm);
-    }
-    .tabulator .tabulator-row {
-      border-bottom: 1px solid var(--ec-border-table-row);
-    }
-    .tabulator .tabulator-row:hover {
-      background: var(--ec-bg-surface-alt);
-    }
-    .tabulator .tabulator-cell {
-      border-right: 1px solid var(--ec-border-table-row);
-      padding: var(--ec-space-2) var(--ec-space-3);
-    }
-    .tabulator .tabulator-footer {
-      background: var(--ec-bg-surface);
-      border-top: 1px solid var(--ec-border-table-row);
-    }
-
-    #status {
-      margin-top: var(--ec-space-3);
-      font-size: var(--ec-font-size-sm);
-      color: var(--ec-fg-muted);
-    }
-    .context-menu {
-      position: fixed;
-      z-index: 10000;
-      min-width: 260px;
-      background: var(--ec-bg-surface);
-      border: 1px solid var(--ec-border-card);
-      border-radius: var(--ec-radius-input);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-      padding: 4px 0;
-      display: none;
-    }
-    .context-menu.open { display: block; }
-    .context-menu button {
-      width: 100%;
-      border: 0;
-      background: transparent;
-      color: var(--ec-fg-body);
-      text-align: left;
-      padding: 8px 12px;
-      font-size: var(--ec-font-size-sm);
-      cursor: pointer;
-    }
-    .context-menu button:hover {
-      background: var(--ec-bg-surface-alt);
-    }
+    :root{--ec-grey-00:#ffffff;--ec-grey-50:#f5f7f9;--ec-grey-100:#edf0f2;--ec-grey-200:#d0d4d9;--ec-grey-300:#b8bfca;--ec-grey-650:#5b6168;--ec-grey-800:#2a2f36;--ec-grey-995:#131313;--ec-purple-400:#9c84fc;--ec-purple-500:#7855fa;--ec-purple-600:#6740ee;--ec-purple-700:#5530d2;--ec-green-200:#d7f6e1;--ec-green-700:#20973e;--ec-red-200:#fddddd;--ec-red-800:#d02550;--ec-yellow-200:#fff2ce;--ec-yellow-750:#b85c00;--ec-blue-200:#cfe4f8;--ec-blue-600:#2778ce;--ec-bg-body:var(--ec-grey-00);--ec-bg-surface:var(--ec-grey-00);--ec-bg-surface-alt:var(--ec-grey-50);--ec-bg-nav:var(--ec-grey-995);--ec-fg-body:var(--ec-grey-995);--ec-fg-muted:var(--ec-grey-650);--ec-fg-on-nav:var(--ec-grey-00);--ec-border-card:var(--ec-grey-200);--ec-border-table-row:var(--ec-grey-200);--ec-border-input:var(--ec-grey-300);--ec-action-primary:var(--ec-purple-500);--ec-action-primary-hover:var(--ec-purple-600);--ec-action-primary-active:var(--ec-purple-700);--ec-action-on-primary:var(--ec-grey-00);--ec-focus-ring:var(--ec-purple-400);--ec-status-ok:var(--ec-green-700);--ec-status-ok-bg:var(--ec-green-200);--ec-status-warn:var(--ec-yellow-750);--ec-status-warn-bg:var(--ec-yellow-200);--ec-status-error:var(--ec-red-800);--ec-status-error-bg:var(--ec-red-200);--ec-status-info:var(--ec-blue-600);--ec-status-info-bg:var(--ec-blue-200);--ec-space-1:0.25rem;--ec-space-2:0.5rem;--ec-space-3:0.75rem;--ec-space-4:1rem;--ec-space-5:1.5rem;--ec-radius-card:4px;--ec-radius-pill:10px;--ec-radius-input:3px;--ec-nav-height:56px;--ec-content-max:1600px;--ec-font-sans:-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;--ec-font-mono:"SF Mono", Menlo, Consolas, "Liberation Mono", monospace;--ec-font-size-base:14px;--ec-font-size-sm:12px;--ec-font-size-h1:20px;--ec-font-weight-strong:600}*{box-sizing:border-box}body,html{margin:0;padding:0;height:100%}body{font-family:var(--ec-font-sans);font-size:var(--ec-font-size-base);color:var(--ec-fg-body);background:var(--ec-bg-body);display:flex;flex-direction:column;height:100vh}.topbar{flex:none;height:var(--ec-nav-height);background:var(--ec-bg-nav);color:var(--ec-fg-on-nav);display:flex;align-items:center;justify-content:space-between;padding:0 var(--ec-space-5)}.brand,.card>.card-head h1{font-weight:var(--ec-font-weight-strong)}.brand{letter-spacing:.02em}.small-muted{font-size:var(--ec-font-size-sm);color:var(--ec-grey-300)}.content{overflow:hidden}.card,.content,.wrap{flex:1;display:flex;flex-direction:column;min-height:0}.wrap{max-width:none;width:100%;margin:0;padding:var(--ec-space-4)}.card{background:var(--ec-bg-surface);border:1px solid var(--ec-border-card);border-radius:var(--ec-radius-card)}.card>.card-head,.toolbar{display:flex;align-items:center;flex:none}.card>.card-head{justify-content:space-between;padding:var(--ec-space-3) var(--ec-space-4);border-bottom:1px solid var(--ec-border-card)}.card>.card-head h1{margin:0;font-size:var(--ec-font-size-h1)}.card>.card-body{padding:var(--ec-space-4);flex:1;display:flex;flex-direction:column;min-height:0}.toolbar{gap:var(--ec-space-2);flex-wrap:wrap;margin-bottom:var(--ec-space-3)}.input{flex:1 1 640px;min-width:280px;padding:var(--ec-space-2);border:1px solid var(--ec-border-input);border-radius:var(--ec-radius-input);background:var(--ec-bg-surface);color:var(--ec-fg-body);font-family:var(--ec-font-mono);font-size:var(--ec-font-size-sm)}.input:focus-visible{outline:2px solid var(--ec-focus-ring);outline-offset:0;border-color:var(--ec-focus-ring)}.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-weight:var(--ec-font-weight-strong);border:1px solid var(--ec-border-input);background:var(--ec-bg-surface);color:var(--ec-fg-body);border-radius:var(--ec-radius-input);padding:var(--ec-space-2) var(--ec-space-4);cursor:pointer;white-space:nowrap}.btn:hover{background:var(--ec-bg-surface-alt)}.btn.primary{background:var(--ec-action-primary);border-color:var(--ec-action-primary);color:var(--ec-action-on-primary)}.btn.primary:hover{background:var(--ec-action-primary-hover);border-color:var(--ec-action-primary-hover)}.btn.primary:active{background:var(--ec-action-primary-active);border-color:var(--ec-action-primary-active)}.hint{color:var(--ec-fg-muted);font-size:var(--ec-font-size-sm);margin:var(--ec-space-2)0 var(--ec-space-3)}.hint-row{flex:none}.matched-pill,.tabulator .tabulator-col .tabulator-col-title{font-size:var(--ec-font-size-sm);font-weight:var(--ec-font-weight-strong)}.matched-pill{display:inline-flex;align-items:center;border-radius:var(--ec-radius-pill);padding:1px var(--ec-space-2);color:var(--ec-status-info);background:var(--ec-status-info-bg);white-space:nowrap}#table,code{border:1px solid var(--ec-border-card)}code{font-family:var(--ec-font-mono);background:var(--ec-bg-surface-alt);border-radius:var(--ec-radius-input);padding:0 5px}#table{border-radius:var(--ec-radius-card);overflow:hidden;flex:1;min-height:0}.tabulator{border:0;background:var(--ec-bg-surface);color:var(--ec-fg-body)}.tabulator .tabulator-header{position:sticky;top:0;z-index:20;background:var(--ec-bg-surface);border-bottom:1px solid var(--ec-border-table-row)}.tabulator .tabulator-col{border-right:1px solid var(--ec-border-table-row);background:var(--ec-bg-surface)}.tabulator .tabulator-col .tabulator-col-title{color:var(--ec-fg-muted);text-transform:uppercase;letter-spacing:.03em}.context-menu,.tabulator .tabulator-header .tabulator-col input{background:var(--ec-bg-surface);border-radius:var(--ec-radius-input)}.tabulator .tabulator-header .tabulator-col input{border:1px solid var(--ec-border-input);padding:4px 6px;color:var(--ec-fg-body);font-size:var(--ec-font-size-sm)}.tabulator .tabulator-row{border-bottom:1px solid var(--ec-border-table-row)}.context-menu button:hover,.tabulator .tabulator-row:hover{background:var(--ec-bg-surface-alt)}.tabulator .tabulator-cell{border-right:1px solid var(--ec-border-table-row);padding:var(--ec-space-2) var(--ec-space-3)}.tabulator .tabulator-footer{background:var(--ec-bg-surface);border-top:1px solid var(--ec-border-table-row)}#status,.context-menu button{font-size:var(--ec-font-size-sm)}#status{margin-top:var(--ec-space-3);color:var(--ec-fg-muted);flex:none}.context-menu{position:fixed;z-index:10000;min-width:260px;border:1px solid var(--ec-border-card);box-shadow:0 4px 14px rgba(0,0,0,.18);padding:4px 0;display:none}.context-menu.open{display:block}.context-menu button{width:100%;border:0;background:0 0;color:var(--ec-fg-body);text-align:left;padding:8px 12px;cursor:pointer}
   </style>
 </head>
 <body>
@@ -470,386 +201,438 @@ def main(api_server,username,secret,secure=False):
   <script src="https://cdn.jsdelivr.net/npm/alasql@4.6/dist/alasql.min.js"></script>
   <script src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
   <script>
+    // Disable native scroll restoration so the table always loads at X:0, Y:0
+    if ("scrollRestoration" in history) {
+        history.scrollRestoration = "manual";
+    }
     const originalData = __DATA_JSON__;
-    const statusEl = document.getElementById("status");
-    const sqlInput = document.getElementById("sql");
-    const contextMenuEl = document.getElementById("cellContextMenu");
-    const matchedRowsTopEl = document.getElementById("matchedRowsTop");
-    let currentData = [...originalData];
-    let contextCell = null;
-    let lastSqlResultCount = null;
+        const statusEl = document.getElementById("status");
+        const sqlInput = document.getElementById("sql");
+        const contextMenuEl = document.getElementById("cellContextMenu");
+        const matchedRowsTopEl = document.getElementById("matchedRowsTop");
+        let currentData = originalData; // Tabulator doesn't mutate - don't need a shallow copy
+        let contextCell = null;
+        let lastSqlResultCount = null;
 
-    const inferColumns = (rows) => {
-      if (!rows.length) return [];
-      return Object.keys(rows[0]).map((key) => ({
-        title: key,
-        field: key,
-        headerFilter: true,
-        sorter: "string",
-        formatter: (cell) => {
-          const v = cell.getValue();
-          if (Array.isArray(v)) return v.join(", ");
-          if (v === null || v === undefined) return "";
-          return String(v);
-        }
-      }));
-    };
-    const baseColumns = inferColumns(originalData);
+        const normalizeSqlQuery = (query) =>
+            query.replace(/CAST\(\s*`([^`]+)`\s+AS\s+STRING\s*\)/gi, "`$1`");
 
-    let table = new Tabulator("#table", {
-      data: currentData,
-      layout: "fitDataTable",
-      height: "100%",
-      pagination: false,
-      movableColumns: true,
-      clipboard: true,
-      headerVisible: true,
-      columns: baseColumns,
-    });
+        const toComparableString = (value) => {
+            if (value === null || value === undefined) {
+                return "";
+            }
+            if (Array.isArray(value)) {
+                return value.join(", ");
+            }
+            return String(value);
+        };
 
-    const updateStatus = (msg) => {
-      statusEl.textContent = msg;
-    };
+        const inferColumns = (rows) => {
+            if (!rows.length) return [];
+            return Object.keys(rows[0]).map((key) => ({
+                title: key,
+                field: key,
+                frozen: key === "name",
+                headerFilter: true,
+                headerFilterFunc: (headerValue, rowValue) => {
+                    const needle = String(headerValue).toLowerCase();
+                    const haystack = toComparableString(rowValue).toLowerCase();
+                    return haystack.includes(needle);
+                },
+                sorter: "string",
+                formatter: (cell) => toComparableString(cell.getValue())
+            }));
+        };
 
-    const getActiveRowData = () => table.getRows("active").map((row) => row.getData());
+        const baseColumns = inferColumns(originalData);
 
-    const refreshMatchedStatus = (prefix = "Matched rows", explicitCount = null) => {
-      const count = explicitCount !== null
-        ? explicitCount
-        : (lastSqlResultCount !== null ? lastSqlResultCount : getActiveRowData().length);
-      updateStatus(`${prefix}: ${count}`);
-      if (matchedRowsTopEl) {
-        matchedRowsTopEl.textContent = `Matched rows: ${count}`;
-      }
-    };
+        let table = new Tabulator("#table", {
+            data: currentData,
+            height: "100%",
+            pagination: false,
+            movableColumns: true,
+            clipboard: true,
+            headerVisible: true,
+            columns: baseColumns,
 
-    const escapeSqlValue = (value) => String(value).replace(/'/g, "''");
-    const escapeSqlField = (field) => String(field).replace(/`/g, "``");
-    let previousHeaderFilterCount = 0;
+            tooltipGenerationMode: "hover", // Only generate tooltip when hovering
+            tooltips: function(cell) {
+                // Only show tooltip if the cell content is truncated
+                let el = cell.getElement();
+                return el.scrollWidth > el.clientWidth ? cell.getValue() : false;
+            },
 
-    const normalizeSqlQuery = (query) =>
-      query.replace(/CAST\(\s*`([^`]+)`\s+AS\s+STRING\s*\)/gi, "`$1`");
-
-    const toComparableString = (value) => {
-      if (value === null || value === undefined) {
-        return "";
-      }
-      if (Array.isArray(value)) {
-        return value.join(", ");
-      }
-      return String(value);
-    };
-
-    const runDeterministicLikeQuery = (query) => {
-      const normalized = normalizeSqlQuery(query).trim();
-      const match = normalized.match(/^SELECT\s+\*\s+FROM\s+\?\s+WHERE\s+(.+)$/i);
-      if (!match) {
-        return null;
-      }
-      const whereClause = match[1].trim();
-      if (!whereClause) {
-        return [...originalData];
-      }
-
-      const conditions = whereClause.split(/\s+AND\s+/i).map((part) => part.trim()).filter(Boolean);
-      if (!conditions.length) {
-        return [...originalData];
-      }
-
-      const parsedConditions = [];
-      for (const condition of conditions) {
-        const condMatch = condition.match(/^`([^`]+)`\s+LIKE\s+'%(.*)%'$/i);
-        if (!condMatch) {
-          return null;
-        }
-        const field = condMatch[1];
-        const needle = condMatch[2].replace(/''/g, "'").toLowerCase();
-        parsedConditions.push({ field, needle });
-      }
-
-      return originalData.filter((row) =>
-        parsedConditions.every(({ field, needle }) => {
-          const haystack = toComparableString(row[field]).toLowerCase();
-          return haystack.includes(needle);
-        })
-      );
-    };
-
-    const runQueryAgainstOriginalData = (query) => {
-      const normalizedQuery = normalizeSqlQuery(query);
-      let result = runDeterministicLikeQuery(normalizedQuery);
-      if (result === null) {
-        result = alasql(normalizedQuery, [originalData]);
-      }
-      return { normalizedQuery, result };
-    };
-
-    const buildSqlFromHeaderFilters = (headerFilters) => {
-      if (!headerFilters.length) {
-        return "SELECT * FROM ? WHERE 1=1";
-      }
-      const whereClauses = headerFilters
-        .filter((flt) => flt && flt.field && flt.value !== null && flt.value !== undefined && String(flt.value).trim() !== "")
-        .map((flt) => {
-          const field = escapeSqlField(flt.field);
-          const value = escapeSqlValue(String(flt.value).trim());
-          return `CAST(\`${field}\` AS STRING) LIKE '%${value}%'`;
+            // --- CRITICAL PERFORMANCE OVERRIDES ---
+            reactiveData: false,         // Disables memory-heavy array watchers
+            renderVerticalBuffer: 300,   // Renders a few rows off-screen for smooth scrolling
+            columnDefaults: {
+                width: 150,                // Give an explicit default width so it doesn't try to calculate it
+            },
+            // Wait 300ms after the user stops typing before filtering
+            textDirection: "ltr", 
+            filterMode: "local",
+            headerFilterLiveFilterDelay: 300
         });
-      if (!whereClauses.length) {
-        return "SELECT * FROM ? WHERE 1=1";
-      }
-      return `SELECT * FROM ? WHERE ${whereClauses.join(" AND ")}`;
-    };
 
-    const applyData = (rows, messagePrefix) => {
-      currentData = rows;
-      table.setData(currentData);
-      // Let Tabulator finish applying internal filters/sort before counting.
-      setTimeout(() => refreshMatchedStatus(messagePrefix), 0);
-    };
+        const updateStatus = (msg) => {
+            statusEl.textContent = msg;
+        };
 
-    document.getElementById("runSql").addEventListener("click", () => {
-      const query = sqlInput.value.trim();
-      try {
-        const { normalizedQuery, result } = runQueryAgainstOriginalData(query);
-        if (!Array.isArray(result)) {
-          updateStatus("SQL executed, but result is not a row set.");
-          return;
-        }
-        lastSqlResultCount = result.length;
-        if (normalizedQuery !== query) {
-          sqlInput.value = normalizedQuery;
-        }
-        applyData(result, "Filtered");
-        setTimeout(() => refreshMatchedStatus("Matched rows", lastSqlResultCount), 0);
-      } catch (err) {
-        updateStatus(`SQL error: ${err.message}`);
-      }
-    });
+        const getActiveRowData = () => table.getRows("active").map((row) => row.getData());
 
-    document.getElementById("resetSql").addEventListener("click", () => {
-      const resetQuery = "SELECT * FROM ? WHERE 1=1";
-      sqlInput.value = resetQuery;
-      previousHeaderFilterCount = 0;
-      table.clearHeaderFilter();
-      table.clearFilter();
-      const { normalizedQuery, result } = runQueryAgainstOriginalData(resetQuery);
-      if (normalizedQuery !== resetQuery) {
-        sqlInput.value = normalizedQuery;
-      }
-      const rows = Array.isArray(result) ? result : [...originalData];
-      lastSqlResultCount = rows.length;
-      currentData = rows;
-      table.setData(rows);
-      refreshMatchedStatus("Matched rows", lastSqlResultCount);
-    });
+        const refreshMatchedStatus = (prefix = "Matched rows", explicitCount = null) => {
+            const count = explicitCount !== null
+                ? explicitCount
+                : (lastSqlResultCount !== null ? lastSqlResultCount : getActiveRowData().length);
+            updateStatus(`${prefix}: ${count}`);
+            if (matchedRowsTopEl) {
+                matchedRowsTopEl.textContent = `Matched rows: ${count}`;
+            }
+        };
 
-    const toCsv = (rows) => {
-      if (!rows || !rows.length) {
-        return "";
-      }
-      const headers = Object.keys(rows[0]);
-      const escapeCsv = (value) => {
-        if (value === null || value === undefined) {
-          return "";
-        }
-        const normalized = Array.isArray(value) ? value.join(", ") : String(value);
-        if (/[",\\n]/.test(normalized)) {
-          return `"${normalized.replace(/"/g, '""')}"`;
-        }
-        return normalized;
-      };
-      const lines = [headers.join(",")];
-      for (const row of rows) {
-        lines.push(headers.map((header) => escapeCsv(row[header])).join(","));
-      }
-      return lines.join("\\n");
-    };
+        const escapeSqlValue = (value) => String(value).replace(/'/g, "''");
+        const escapeSqlField = (field) => String(field).replace(/`/g, "``");
+        let previousHeaderFilterCount = 0;
 
-    document.getElementById("downloadCsv").addEventListener("click", () => {
-      const activeRows = getActiveRowData();
-      const exportRows = activeRows.length ? activeRows : currentData;
-      const csvContent = toCsv(exportRows);
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "__CSV_DOWNLOAD_NAME__";
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-      updateStatus(`Exported CSV from ${exportRows.length} row(s)`);
-    });
+        const runDeterministicLikeQuery = (query) => {
+            const normalized = normalizeSqlQuery(query).trim();
+            const match = normalized.match(/^SELECT\s+\*\s+FROM\s+\?\s+WHERE\s+(.+)$/i);
+            if (!match) {
+                return null;
+            }
+            const whereClause = match[1].trim();
+            if (!whereClause) {
+                return [...originalData];
+            }
 
-    const toArray = (value) => {
-      if (Array.isArray(value)) {
-        return value;
-      }
-      if (typeof value === "string" && value.trim().startsWith("[") && value.trim().endsWith("]")) {
-        try {
-          const parsed = JSON.parse(value.replace(/'/g, '"'));
-          return Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
-          return [];
-        }
-      }
-      return [];
-    };
+            const conditions = whereClause.split(/\s+AND\s+/i).map((part) => part.trim()).filter(Boolean);
+            if (!conditions.length) {
+                return [...originalData];
+            }
 
-    const inferVmGroup = (row) => {
-      const name = String(row.name || "").toLowerCase();
-      if (/w\\d+$/.test(name) || name.includes("windows")) {
-        return "windows_vms";
-      }
-      if (/l\\d+$/.test(name) || name.includes("linux")) {
-        return "linux_vms";
-      }
-      return "other_vms";
-    };
+            const parsedConditions = [];
+            for (const condition of conditions) {
+                const condMatch = condition.match(/^`([^`]+)`\s+LIKE\s+'%(.*)%'$/i);
+                if (!condMatch) {
+                    return null;
+                }
+                const field = condMatch[1];
+                const needle = condMatch[2].replace(/''/g, "'").toLowerCase();
+                parsedConditions.push({ field, needle });
+            }
 
-    const toInventoryIni = (rows) => {
-      const groups = {
-        linux_vms: [],
-        windows_vms: [],
-        other_vms: [],
-      };
+            return originalData.filter((row) =>
+                parsedConditions.every(({ field, needle }) => {
+                    const haystack = toComparableString(row[field]).toLowerCase();
+                    return haystack.includes(needle);
+                })
+            );
+        };
 
-      rows.forEach((row) => {
-        const vmName = String(row.name || "").trim();
-        if (!vmName) {
-          return;
-        }
-        const learnedIps = toArray(row.learned_ip_addresses)
-          .map((ip) => String(ip || "").trim())
-          .filter((ip) => ip.length > 0);
-        const ansibleHost = learnedIps.length ? learnedIps[0] : "";
-        const inventoryLine = ansibleHost ? `${vmName} ansible_host=${ansibleHost}` : vmName;
-        groups[inferVmGroup(row)].push(inventoryLine);
-      });
+        const runQueryAgainstOriginalData = (query) => {
+            const normalizedQuery = normalizeSqlQuery(query);
+            let result = runDeterministicLikeQuery(normalizedQuery);
+            if (result === null) {
+                result = alasql(normalizedQuery, [originalData]);
+            }
+            return { normalizedQuery, result };
+        };
 
-      const lines = [];
-      lines.push("# Generated from current report filter");
-      lines.push(`# Total VMs: ${rows.length}`);
-      lines.push("");
-      lines.push("[linux_vms]");
-      lines.push(...groups.linux_vms);
-      lines.push("");
-      lines.push("[windows_vms]");
-      lines.push(...groups.windows_vms);
-      lines.push("");
-      lines.push("[other_vms]");
-      lines.push(...groups.other_vms);
-      lines.push("");
-      lines.push("[nutanix_vms:children]");
-      lines.push("linux_vms");
-      lines.push("windows_vms");
-      lines.push("other_vms");
-      lines.push("");
-      return lines.join("\\n");
-    };
+        const buildSqlFromHeaderFilters = (headerFilters) => {
+            if (!headerFilters.length) {
+                return "SELECT * FROM ? WHERE 1=1";
+            }
+            const whereClauses = headerFilters
+            .filter((flt) => flt && flt.field && flt.value !== null && flt.value !== undefined && String(flt.value).trim() !== "")
+            .map((flt) => {
+                const field = escapeSqlField(flt.field);
+                const value = escapeSqlValue(String(flt.value).trim());
+                return `CAST(\`${field}\` AS STRING) LIKE '%${value}%'`;
+            });
+            if (!whereClauses.length) {
+                return "SELECT * FROM ? WHERE 1=1";
+            }
+            return `SELECT * FROM ? WHERE ${whereClauses.join(" AND ")}`;
+        };
 
-    document.getElementById("downloadInventory").addEventListener("click", () => {
-      const activeRows = getActiveRowData();
-      const exportRows = activeRows.length ? activeRows : currentData;
-      const iniContent = toInventoryIni(exportRows);
-      const blob = new Blob([iniContent], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "__INVENTORY_DOWNLOAD_NAME__";
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-      updateStatus(`Exported inventory.ini from ${exportRows.length} row(s)`);
-    });
+        const applyData = (rows, messagePrefix) => {
+            currentData = rows;
+            table.setData(currentData);
+            // Let Tabulator finish applying internal filters/sort before counting.
+            setTimeout(() => refreshMatchedStatus(messagePrefix), 0);
+        };
 
-    const hideContextMenu = () => {
-      contextMenuEl.classList.remove("open");
-      contextMenuEl.setAttribute("aria-hidden", "true");
-      contextMenuEl.innerHTML = "";
-      contextCell = null;
-    };
+        document.getElementById("runSql").addEventListener("click", () => {
+            const query = sqlInput.value.trim();
+            updateStatus("↻ Executing query..."); // Give the user immediate feedback
 
-    const showContextMenu = (event, cell) => {
-      event.preventDefault();
-      const field = cell.getField();
-      const rawValue = cell.getValue();
-      const value = Array.isArray(rawValue) ? rawValue.join(", ") : String(rawValue ?? "");
-      const safeValue = value.length > 80 ? `${value.slice(0, 77)}...` : value;
+            // Yield the main thread for 50ms so the browser can render the status message
+            setTimeout(() => {
+                try {
+                    const { normalizedQuery, result } = runQueryAgainstOriginalData(query);
+                    if (!Array.isArray(result)) {
+                        updateStatus("SQL executed, but result is not a row set.");
+                        return;
+                    }
+                    lastSqlResultCount = result.length;
+                    if (normalizedQuery !== query) {
+                        sqlInput.value = normalizedQuery;
+                    }
+                    applyData(result, "Filtered");
+                    setTimeout(() => refreshMatchedStatus("Matched rows", lastSqlResultCount), 0);
+                } catch (err) {
+                    updateStatus(`SQL error: ${err.message}`);
+                }
+            }, 50);
+        });
 
-      contextCell = { field, value };
-      contextMenuEl.innerHTML = `
-        <button type="button" data-action="add-column-filter" title="Set ${field} filter to this value">
-          Filter \`${field}\` by "${safeValue}"
-        </button>
-      `;
+        document.getElementById("resetSql").addEventListener("click", () => {
+            updateStatus("↻ Resetting data...");
 
-      const menuWidth = 320;
-      const menuHeight = 44;
-      const left = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
-      const top = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
-      contextMenuEl.style.left = `${Math.max(8, left)}px`;
-      contextMenuEl.style.top = `${Math.max(8, top)}px`;
-      contextMenuEl.classList.add("open");
-      contextMenuEl.setAttribute("aria-hidden", "false");
-    };
+            setTimeout(() => {
+                const resetQuery = "SELECT * FROM ? WHERE 1=1";
+                sqlInput.value = resetQuery;
+                previousHeaderFilterCount = 0;
+                table.clearHeaderFilter();
+                table.clearFilter();
 
-    contextMenuEl.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!target || !target.dataset || target.dataset.action !== "add-column-filter") {
-        return;
-      }
-      if (!contextCell) {
-        hideContextMenu();
-        return;
-      }
-      table.setHeaderFilterValue(contextCell.field, contextCell.value);
-      hideContextMenu();
-      updateStatus(`Applied header filter: ${contextCell.field} contains "${contextCell.value}"`);
-    });
+                const { normalizedQuery, result } = runQueryAgainstOriginalData(resetQuery);
+                if (normalizedQuery !== resetQuery) {
+                    sqlInput.value = normalizedQuery;
+                }
 
-    document.addEventListener("click", () => hideContextMenu());
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        hideContextMenu();
-      }
-    });
-    window.addEventListener("resize", () => hideContextMenu());
-    window.addEventListener("scroll", () => hideContextMenu(), true);
+                // const rows = Array.isArray(result) ? result : [...originalData];
+                const rows = Array.isArray(result) ? result : originalData; // Avoid shallow copy 
+                lastSqlResultCount = rows.length;
+                currentData = rows;
 
-    table.on("cellContext", (event, cell) => {
-      showContextMenu(event, cell);
-    });
+                // This is the heavy operation
+                table.setData(rows);
+                refreshMatchedStatus("Matched rows", lastSqlResultCount);
+            }, 50);
+        });
 
-    table.on("dataFiltered", () => {
-      const headerFilters = table.getHeaderFilters() || [];
-      const activeRows = getActiveRowData();
-      currentData = activeRows;
+        const toCsv = (rows) => {
+            if (!rows || !rows.length) {
+                return "";
+            }
+            const headers = Object.keys(rows[0]);
+            const escapeCsv = (value) => {
+                if (value === null || value === undefined) {
+                    return "";
+                }
+                const normalized = Array.isArray(value) ? value.join(", ") : String(value);
+                if (/[",\\n]/.test(normalized)) {
+                    return `"${normalized.replace(/"/g, '""')}"`;
+                }
+                return normalized;
+            };
+            const lines = [headers.join(",")];
+            for (const row of rows) {
+                lines.push(headers.map((header) => escapeCsv(row[header])).join(","));
+            }
+            return lines.join("\n");
+        };
 
-      if (headerFilters.length > 0) {
-        sqlInput.value = buildSqlFromHeaderFilters(headerFilters);
-      } else if (previousHeaderFilterCount > 0) {
-        sqlInput.value = "SELECT * FROM ? WHERE 1=1";
-      }
-      previousHeaderFilterCount = headerFilters.length;
-      try {
-        const { normalizedQuery, result } = runQueryAgainstOriginalData(sqlInput.value.trim());
-        if (Array.isArray(result)) {
-          lastSqlResultCount = result.length;
-          if (normalizedQuery !== sqlInput.value.trim()) {
-            sqlInput.value = normalizedQuery;
-          }
-        }
-      } catch (err) {
-        // Keep UI responsive even when query is temporarily invalid while typing.
-      }
-      refreshMatchedStatus();
-    });
+        document.getElementById("downloadCsv").addEventListener("click", () => {
+            const activeRows = getActiveRowData();
+            const exportRows = activeRows.length ? activeRows : currentData;
+            const csvContent = toCsv(exportRows);
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "__CSV_DOWNLOAD_NAME__";
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+            URL.revokeObjectURL(url);
+            updateStatus(`Exported CSV from ${exportRows.length} row(s)`);
+        });
 
-    refreshMatchedStatus();
-  </script>
+        const toArray = (value) => {
+            if (Array.isArray(value)) {
+                return value;
+            }
+            if (typeof value === "string" && value.trim().startsWith("[") && value.trim().endsWith("]")) {
+                try {
+                    const parsed = JSON.parse(value.replace(/'/g, '"'));
+                    return Array.isArray(parsed) ? parsed : [];
+                } catch (e) {
+                    return [];
+                }
+            }
+            return [];
+        };
+
+        const inferVmGroup = (row) => {
+            const guestOs = String(row.guest_os || "").toLowerCase();
+            if (guestOs.includes("windows")) {
+                return "windows_vms";
+            }
+            if (
+                guestOs.includes("linux") ||
+                guestOs.includes("ubuntu") ||
+                guestOs.includes("red hat") ||
+                guestOs.includes("rhel") ||
+                guestOs.includes("centos") ||
+                guestOs.includes("debian") ||
+                guestOs.includes("suse")
+            ) {
+                return "linux_vms";
+            }
+            const name = String(row.name || "").toLowerCase();
+            if (/w\\d+$/.test(name) || name.includes("windows")) {
+                return "windows_vms";
+            }
+            if (/l\\d+$/.test(name) || name.includes("linux")) {
+                return "linux_vms";
+            }
+            return "other_vms";
+        };
+
+        const toInventoryIni = (rows) => {
+            const groups = {
+                linux_vms: [],
+                windows_vms: [],
+                other_vms: [],
+            };
+
+            rows.forEach((row) => {
+                const vmName = String(row.name || "").trim();
+                if (!vmName) {
+                    return;
+                }
+                const learnedIps = toArray(row.learned_ip_addresses)
+                .map((ip) => String(ip || "").trim())
+                .filter((ip) => ip.length > 0);
+                const ansibleHost = learnedIps.length ? learnedIps[0] : "";
+                const inventoryLine = ansibleHost ? `${vmName} ansible_host=${ansibleHost}` : vmName;
+                groups[inferVmGroup(row)].push(inventoryLine);
+            });
+
+            const lines = [];
+            lines.push("# Generated from current report filter");
+            lines.push(`# Total VMs: ${rows.length}`);
+            lines.push("");
+            lines.push("[linux_vms]");
+            lines.push(...groups.linux_vms);
+            lines.push("");
+            lines.push("[windows_vms]");
+            lines.push(...groups.windows_vms);
+            lines.push("");
+            lines.push("[other_vms]");
+            lines.push(...groups.other_vms);
+            lines.push("");
+            lines.push("[nutanix_vms:children]");
+            lines.push("linux_vms");
+            lines.push("windows_vms");
+            lines.push("other_vms");
+            lines.push("");
+            return lines.join("\n");
+        };
+
+        document.getElementById("downloadInventory").addEventListener("click", () => {
+            const activeRows = getActiveRowData();
+            const exportRows = activeRows.length ? activeRows : currentData;
+            const iniContent = toInventoryIni(exportRows);
+            const blob = new Blob([iniContent], { type: "text/plain;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = "__INVENTORY_DOWNLOAD_NAME__";
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+            URL.revokeObjectURL(url);
+            updateStatus(`Exported inventory.ini from ${exportRows.length} row(s)`);
+        });
+
+        const hideContextMenu = () => {
+            contextMenuEl.classList.remove("open");
+            contextMenuEl.setAttribute("aria-hidden", "true");
+            contextMenuEl.innerHTML = "";
+            contextCell = null;
+        };
+
+        const showContextMenu = (event, cell) => {
+            event.preventDefault();
+            const field = cell.getField();
+            const rawValue = cell.getValue();
+            const value = Array.isArray(rawValue) ? rawValue.join(", ") : String(rawValue ?? "");
+            const safeValue = value.length > 80 ? `${value.slice(0, 77)}...` : value;
+
+            contextCell = { field, value };
+            contextMenuEl.innerHTML = `
+<button type="button" data-action="add-column-filter" title="Set ${field} filter to this value">
+    Filter \`${field}\` by "${safeValue}"
+</button>
+`;
+
+            const menuWidth = 320;
+            const menuHeight = 44;
+            const left = Math.min(event.clientX, window.innerWidth - menuWidth - 8);
+            const top = Math.min(event.clientY, window.innerHeight - menuHeight - 8);
+            contextMenuEl.style.left = `${Math.max(8, left)}px`;
+            contextMenuEl.style.top = `${Math.max(8, top)}px`;
+            contextMenuEl.classList.add("open");
+            contextMenuEl.setAttribute("aria-hidden", "false");
+        };
+
+        contextMenuEl.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!target || !target.dataset || target.dataset.action !== "add-column-filter") {
+                return;
+            }
+            if (!contextCell) {
+                hideContextMenu();
+                return;
+            }
+            table.setHeaderFilterValue(contextCell.field, contextCell.value);
+            hideContextMenu();
+            updateStatus(`Applied header filter: ${contextCell.field} contains "${contextCell.value}"`);
+        });
+
+        document.addEventListener("click", () => hideContextMenu());
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                hideContextMenu();
+            }
+        });
+        window.addEventListener("resize", () => hideContextMenu());
+        window.addEventListener("scroll", () => hideContextMenu(), true);
+
+        table.on("cellContext", (event, cell) => {
+            showContextMenu(event, cell);
+        });
+
+        table.on("dataFiltered", () => {
+            const headerFilters = table.getHeaderFilters() || [];
+            const activeRows = getActiveRowData();
+            currentData = activeRows;
+
+            if (headerFilters.length > 0) {
+                sqlInput.value = buildSqlFromHeaderFilters(headerFilters);
+            } else if (previousHeaderFilterCount > 0) {
+                sqlInput.value = "SELECT * FROM ? WHERE 1=1";
+            }
+            previousHeaderFilterCount = headerFilters.length;
+            try {
+                const { normalizedQuery, result } = runQueryAgainstOriginalData(sqlInput.value.trim());
+                if (Array.isArray(result)) {
+                    lastSqlResultCount = result.length;
+                    if (normalizedQuery !== sqlInput.value.trim()) {
+                        sqlInput.value = normalizedQuery;
+                    }
+                }
+            } catch (err) {
+                // Keep UI responsive even when query is temporarily invalid while typing.
+            }
+            refreshMatchedStatus();
+        });
+
+        refreshMatchedStatus();
+        </script>
 </body>
 </html>
 """
@@ -862,7 +645,6 @@ def main(api_server,username,secret,secure=False):
         with open(output_file, "w", encoding="utf-8") as html_file:
             html_file.write(html_content)
 
-    #region clusters
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_clustermgmt_py_client.Configuration()
     api_client_configuration.host = api_server
@@ -870,9 +652,9 @@ def main(api_server,username,secret,secure=False):
     api_client_configuration.password = secret
 
     if secure == False:
-        #! suppress warnings about insecure connections
+        # suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        #! suppress ssl certs verification
+        # suppress ssl certs verification
         api_client_configuration.verify_ssl = False
 
     api_client = ntnx_clustermgmt_py_client.ApiClient(configuration=api_client_configuration)
@@ -923,9 +705,7 @@ def main(api_server,username,secret,secure=False):
         }
 
         cluster_list_output.append(entity_output)
-    #endregion clusters
 
-    #region hosts
     #* getting list of hosts
     print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all hosts from {api_server}.{PrintColors.RESET}")
     host_list = ntnx_api_pagination(api_instance=api_instance_cluster,function='list_hosts')
@@ -939,9 +719,7 @@ def main(api_server,username,secret,secure=False):
         }
 
         host_list_output.append(entity_output)
-    #endregion hosts
 
-    #region storage containers
     #* getting list of storage containers
     print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Gettting all storage containers from {api_server}.{PrintColors.RESET}")
     api_instance_storage_containers = ntnx_clustermgmt_py_client.api.StorageContainersApi(api_client=api_client)
@@ -956,9 +734,7 @@ def main(api_server,username,secret,secure=False):
         }
 
         storage_container_list_output.append(entity_output)
-    #endregion storage containers
 
-    #region networks
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_networking_py_client.Configuration()
     api_client_configuration.host = api_server
@@ -966,9 +742,9 @@ def main(api_server,username,secret,secure=False):
     api_client_configuration.password = secret
 
     if secure == False:
-        #! suppress warnings about insecure connections
+        # suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        #! suppress ssl certs verification
+        # suppress ssl certs verification
         api_client_configuration.verify_ssl = False
 
     api_client = ntnx_networking_py_client.ApiClient(configuration=api_client_configuration)
@@ -989,9 +765,7 @@ def main(api_server,username,secret,secure=False):
         }
 
         subnet_list_output.append(entity_output)
-    #endregion networks
 
-    #region categories
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_prism_py_client.Configuration()
     api_client_configuration.host = api_server
@@ -999,9 +773,9 @@ def main(api_server,username,secret,secure=False):
     api_client_configuration.password = secret
 
     if secure == False:
-        #! suppress warnings about insecure connections
+        # suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        #! suppress ssl certs verification
+        # suppress ssl certs verification
         api_client_configuration.verify_ssl = False
 
     api_client = ntnx_prism_py_client.ApiClient(configuration=api_client_configuration)
@@ -1022,9 +796,7 @@ def main(api_server,username,secret,secure=False):
         }
 
         category_list_output.append(entity_output)
-    #endregion categories
 
-    #region users
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_iam_py_client.Configuration()
     api_client_configuration.host = api_server
@@ -1032,9 +804,9 @@ def main(api_server,username,secret,secure=False):
     api_client_configuration.password = secret
 
     if secure == False:
-        #! suppress warnings about insecure connections
+        # suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        #! suppress ssl certs verification
+        # suppress ssl certs verification
         api_client_configuration.verify_ssl = False
 
     api_client = ntnx_iam_py_client.ApiClient(configuration=api_client_configuration)
@@ -1055,9 +827,7 @@ def main(api_server,username,secret,secure=False):
         }
 
         user_list_output.append(entity_output)
-    #endregion users
 
-    #region vms
     #* initialize variable for API client configuration
     api_client_configuration = ntnx_vmm_py_client.Configuration()
     api_client_configuration.host = api_server
@@ -1065,9 +835,9 @@ def main(api_server,username,secret,secure=False):
     api_client_configuration.password = secret
 
     if secure == False:
-        #! suppress warnings about insecure connections
+        # suppress warnings about insecure connections
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        #! suppress ssl certs verification
+        # suppress ssl certs verification
         api_client_configuration.verify_ssl = False
 
     api_client = ntnx_vmm_py_client.ApiClient(configuration=api_client_configuration)
@@ -1098,7 +868,9 @@ def main(api_server,username,secret,secure=False):
             'power_state': entity.power_state,
             'protection_type': entity.protection_type,
             'machine_type': entity.machine_type,
+            'guest_os': getattr(entity, 'guest_os_name', '') or '',
             'guest_tools_version': '',
+            'guest_tools_available_version': '',
             'ngt_config_enabled': '',
             'guest_tools_capabilities': '',
             'ngt_status': 'not_installed',
@@ -1128,7 +900,10 @@ def main(api_server,username,secret,secure=False):
 
         #getting ngt information
         if entity.guest_tools:
-            entity_output['guest_tools_version'] = entity.guest_tools.available_version
+            entity_output['guest_tools_version'] = getattr(entity.guest_tools, 'version', '')
+            entity_output['guest_tools_available_version'] = getattr(entity.guest_tools, 'available_version', '')
+            if not entity_output['guest_os']:
+                entity_output['guest_os'] = getattr(entity.guest_tools, 'guest_os_version', '') or ''
             entity_output['ngt_config_enabled'] = entity.guest_tools.is_enabled
             entity_output['guest_tools_capabilities'] = entity.guest_tools.capabilities
             is_installed = getattr(entity.guest_tools, 'is_installed', None)
@@ -1199,9 +974,7 @@ def main(api_server,username,secret,secure=False):
                     entity_output['subnets'].append(subnet_name)
 
         vm_list_output.append(entity_output)
-    #endregion vms
 
-    #region html report
     #* exporting to html and csv
     safe_origin = "".join(char if (char.isalnum() or char in ("-", "_")) else "_" for char in str(api_server or "unknown"))
     report_timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -1214,8 +987,6 @@ def main(api_server,username,secret,secure=False):
     write_interactive_html_report(vm_list_output, html_file_name, api_server, csv_file_name, inventory_file_name)
     print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Exporting {len(df)} results to file {csv_file_name}.{PrintColors.RESET}")
     df.to_csv(csv_file_name, index=False)
-    #endregion html report
-#endregion FUNCTIONS
 
 
 if __name__ == '__main__':
@@ -1235,5 +1006,6 @@ if __name__ == '__main__':
             keyring.set_password("ntnx",args.username,pwd)
         except Exception as error:
             print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] {error}.{PrintColors.RESET}")
+            raise
 
     main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure)

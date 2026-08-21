@@ -92,48 +92,7 @@ def write_interactive_html_report(data_sets, output_file, origin, generated_at, 
   <title>Nutanix PC Report</title>
   <link href="https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator.min.css" rel="stylesheet">
   <style>
-    __ORCHESTRATOR_CSS__
-    .wrap { max-width: none; width: 100%; margin: 0; padding: var(--ec-space-4); }
-    .toolbar { display: flex; gap: var(--ec-space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--ec-space-3); }
-    .input {
-      padding: var(--ec-space-2);
-      border: 1px solid var(--ec-border-input);
-      border-radius: var(--ec-radius-input);
-      background: var(--ec-bg-surface);
-      color: var(--ec-fg-body);
-      font-family: var(--ec-font-mono);
-      font-size: var(--ec-font-size-sm);
-      min-width: 240px;
-    }
-    .input.sql { flex: 1 1 640px; min-width: 320px; }
-    #table { border: 1px solid var(--ec-border-card); height: 70vh; min-height: 420px; border-radius: var(--ec-radius-card); overflow: hidden; }
-    .tabulator .tabulator-header { position: sticky; top: 0; z-index: 20; }
-    .hint-row { display: flex; align-items: center; gap: var(--ec-space-3); margin: var(--ec-space-2) 0 var(--ec-space-3); flex-wrap: wrap; }
-    .matched-pill { display: inline-flex; align-items: center; border-radius: var(--ec-radius-pill); padding: 1px var(--ec-space-2); font-size: var(--ec-font-size-sm); font-weight: var(--ec-font-weight-strong); color: var(--ec-status-info); background: var(--ec-status-info-bg); }
-    .hint { color: var(--ec-fg-muted); font-size: var(--ec-font-size-sm); }
-    .context-menu {
-      position: fixed;
-      z-index: 10000;
-      min-width: 260px;
-      background: var(--ec-bg-surface);
-      border: 1px solid var(--ec-border-card);
-      border-radius: var(--ec-radius-input);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-      padding: 4px 0;
-      display: none;
-    }
-    .context-menu.open { display: block; }
-    .context-menu button {
-      width: 100%;
-      border: 0;
-      background: transparent;
-      color: var(--ec-fg-body);
-      text-align: left;
-      padding: 8px 12px;
-      font-size: var(--ec-font-size-sm);
-      cursor: pointer;
-    }
-    .context-menu button:hover { background: var(--ec-bg-surface-alt); }
+    :root{--ec-grey-00:#ffffff;--ec-grey-50:#f5f7f9;--ec-grey-100:#edf0f2;--ec-grey-200:#d0d4d9;--ec-grey-300:#b8bfca;--ec-grey-650:#5b6168;--ec-grey-800:#2a2f36;--ec-grey-995:#131313;--ec-purple-400:#9c84fc;--ec-purple-500:#7855fa;--ec-purple-600:#6740ee;--ec-purple-700:#5530d2;--ec-green-200:#d7f6e1;--ec-green-700:#20973e;--ec-red-200:#fddddd;--ec-red-800:#d02550;--ec-yellow-200:#fff2ce;--ec-yellow-750:#b85c00;--ec-blue-200:#cfe4f8;--ec-blue-600:#2778ce;--ec-bg-body:var(--ec-grey-00);--ec-bg-surface:var(--ec-grey-00);--ec-bg-surface-alt:var(--ec-grey-50);--ec-bg-nav:var(--ec-grey-995);--ec-fg-body:var(--ec-grey-995);--ec-fg-muted:var(--ec-grey-650);--ec-fg-on-nav:var(--ec-grey-00);--ec-border-card:var(--ec-grey-200);--ec-border-table-row:var(--ec-grey-200);--ec-border-input:var(--ec-grey-300);--ec-action-primary:var(--ec-purple-500);--ec-action-primary-hover:var(--ec-purple-600);--ec-action-primary-active:var(--ec-purple-700);--ec-action-on-primary:var(--ec-grey-00);--ec-focus-ring:var(--ec-purple-400);--ec-status-ok:var(--ec-green-700);--ec-status-ok-bg:var(--ec-green-200);--ec-status-warn:var(--ec-yellow-750);--ec-status-warn-bg:var(--ec-yellow-200);--ec-status-error:var(--ec-red-800);--ec-status-error-bg:var(--ec-red-200);--ec-status-info:var(--ec-blue-600);--ec-status-info-bg:var(--ec-blue-200);--ec-space-1:0.25rem;--ec-space-2:0.5rem;--ec-space-3:0.75rem;--ec-space-4:1rem;--ec-space-5:1.5rem;--ec-radius-card:4px;--ec-radius-pill:10px;--ec-radius-input:3px;--ec-nav-height:56px;--ec-content-max:1600px;--ec-font-sans:-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;--ec-font-mono:"SF Mono", Menlo, Consolas, "Liberation Mono", monospace;--ec-font-size-base:14px;--ec-font-size-sm:12px;--ec-font-size-h1:20px;--ec-font-weight-strong:600}*{box-sizing:border-box}body,html{margin:0;padding:0;height:100%}body{font-family:var(--ec-font-sans);font-size:var(--ec-font-size-base);color:var(--ec-fg-body);background:var(--ec-bg-body);display:flex;flex-direction:column;height:100vh}.topbar{flex:none;height:var(--ec-nav-height);background:var(--ec-bg-nav);color:var(--ec-fg-on-nav);display:flex;align-items:center;justify-content:space-between;padding:0 var(--ec-space-5)}.brand,.card>.card-head h1{font-weight:var(--ec-font-weight-strong)}.brand{letter-spacing:.02em}.small-muted{font-size:var(--ec-font-size-sm);color:var(--ec-grey-300)}.content{overflow:hidden}.card,.content,.wrap{flex:1;display:flex;flex-direction:column;min-height:0}.wrap{max-width:none;width:100%;margin:0;padding:var(--ec-space-4)}.card{background:var(--ec-bg-surface);border:1px solid var(--ec-border-card);border-radius:var(--ec-radius-card)}.card>.card-head,.toolbar{display:flex;align-items:center;flex:none}.card>.card-head{justify-content:space-between;padding:var(--ec-space-3) var(--ec-space-4);border-bottom:1px solid var(--ec-border-card)}.card>.card-head h1{margin:0;font-size:var(--ec-font-size-h1)}.card>.card-body{padding:var(--ec-space-4);flex:1;display:flex;flex-direction:column;min-height:0}.toolbar{gap:var(--ec-space-2);flex-wrap:wrap;margin-bottom:var(--ec-space-3)}.input{flex:1 1 640px;min-width:280px;padding:var(--ec-space-2);border:1px solid var(--ec-border-input);border-radius:var(--ec-radius-input);background:var(--ec-bg-surface);color:var(--ec-fg-body);font-family:var(--ec-font-mono);font-size:var(--ec-font-size-sm)}.input:focus-visible{outline:2px solid var(--ec-focus-ring);outline-offset:0;border-color:var(--ec-focus-ring)}.btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-weight:var(--ec-font-weight-strong);border:1px solid var(--ec-border-input);background:var(--ec-bg-surface);color:var(--ec-fg-body);border-radius:var(--ec-radius-input);padding:var(--ec-space-2) var(--ec-space-4);cursor:pointer;white-space:nowrap}.btn:hover{background:var(--ec-bg-surface-alt)}.btn.primary{background:var(--ec-action-primary);border-color:var(--ec-action-primary);color:var(--ec-action-on-primary)}.btn.primary:hover{background:var(--ec-action-primary-hover);border-color:var(--ec-action-primary-hover)}.btn.primary:active{background:var(--ec-action-primary-active);border-color:var(--ec-action-primary-active)}.hint{color:var(--ec-fg-muted);font-size:var(--ec-font-size-sm);margin:var(--ec-space-2)0 var(--ec-space-3)}.hint-row{flex:none}.matched-pill,.tabulator .tabulator-col .tabulator-col-title{font-size:var(--ec-font-size-sm);font-weight:var(--ec-font-weight-strong)}.matched-pill{display:inline-flex;align-items:center;border-radius:var(--ec-radius-pill);padding:1px var(--ec-space-2);color:var(--ec-status-info);background:var(--ec-status-info-bg);white-space:nowrap}#table,code{border:1px solid var(--ec-border-card)}code{font-family:var(--ec-font-mono);background:var(--ec-bg-surface-alt);border-radius:var(--ec-radius-input);padding:0 5px}#table{border-radius:var(--ec-radius-card);overflow:hidden;flex:1;min-height:0}.tabulator{border:0;background:var(--ec-bg-surface);color:var(--ec-fg-body)}.tabulator .tabulator-header{position:sticky;top:0;z-index:20;background:var(--ec-bg-surface);border-bottom:1px solid var(--ec-border-table-row)}.tabulator .tabulator-col{border-right:1px solid var(--ec-border-table-row);background:var(--ec-bg-surface)}.tabulator .tabulator-col .tabulator-col-title{color:var(--ec-fg-muted);text-transform:uppercase;letter-spacing:.03em}.context-menu,.tabulator .tabulator-header .tabulator-col input{background:var(--ec-bg-surface);border-radius:var(--ec-radius-input)}.tabulator .tabulator-header .tabulator-col input{border:1px solid var(--ec-border-input);padding:4px 6px;color:var(--ec-fg-body);font-size:var(--ec-font-size-sm)}.tabulator .tabulator-row{border-bottom:1px solid var(--ec-border-table-row)}.context-menu button:hover,.tabulator .tabulator-row:hover{background:var(--ec-bg-surface-alt)}.tabulator .tabulator-cell{border-right:1px solid var(--ec-border-table-row);padding:var(--ec-space-2) var(--ec-space-3)}.tabulator .tabulator-footer{background:var(--ec-bg-surface);border-top:1px solid var(--ec-border-table-row)}#status,.context-menu button{font-size:var(--ec-font-size-sm)}#status{margin-top:var(--ec-space-3);color:var(--ec-fg-muted);flex:none}.context-menu{position:fixed;z-index:10000;min-width:260px;border:1px solid var(--ec-border-card);box-shadow:0 4px 14px rgba(0,0,0,.18);padding:4px 0;display:none}.context-menu.open{display:block}.context-menu button{width:100%;border:0;background:0 0;color:var(--ec-fg-body);text-align:left;padding:8px 12px;cursor:pointer}
   </style>
 </head>
 <body>
@@ -359,6 +318,17 @@ def write_interactive_html_report(data_sets, output_file, origin, generated_at, 
     };
 
     const inferVmGroup = (row) => {
+      const guestOs = String(row.guest_os || "").toLowerCase();
+      if (guestOs.includes("windows")) return "windows_vms";
+      if (
+        guestOs.includes("linux") ||
+        guestOs.includes("ubuntu") ||
+        guestOs.includes("red hat") ||
+        guestOs.includes("rhel") ||
+        guestOs.includes("centos") ||
+        guestOs.includes("debian") ||
+        guestOs.includes("suse")
+      ) return "linux_vms";
       const name = String(row.name || "").toLowerCase();
       if (/w\\d+$/.test(name) || name.includes("windows")) return "windows_vms";
       if (/l\\d+$/.test(name) || name.includes("linux")) return "linux_vms";
@@ -972,7 +942,9 @@ def main(api_server,username,secret,secure=False):
             'power_state': entity.power_state,
             'protection_type': entity.protection_type,
             'machine_type': entity.machine_type,
+            'guest_os': getattr(entity, 'guest_os_name', '') or '',
             'guest_tools_version': '',
+            'guest_tools_available_version': '',
             'guest_tools_enabled': '',
             'guest_tools_capabilities': '',
             'is_agent_vm': entity.is_agent_vm,
@@ -1016,7 +988,10 @@ def main(api_server,username,secret,secure=False):
 
         #getting ngt information
         if entity.guest_tools:
-            entity_output['guest_tools_version'] = entity.guest_tools.available_version
+            entity_output['guest_tools_version'] = getattr(entity.guest_tools, 'version', '')
+            entity_output['guest_tools_available_version'] = getattr(entity.guest_tools, 'available_version', '')
+            if not entity_output['guest_os']:
+                entity_output['guest_os'] = getattr(entity.guest_tools, 'guest_os_version', '') or ''
             entity_output['guest_tools_enabled'] = entity.guest_tools.is_enabled
             entity_output['guest_tools_capabilities'] = entity.guest_tools.capabilities
 
