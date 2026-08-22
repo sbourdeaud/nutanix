@@ -992,6 +992,8 @@ Date       By   Updates (newest updates at the top)
 
   $resultsJob = $myvarListToProcess | ForEach-Object -ThrottleLimit 10 -Parallel {
     $state = $using:progressState
+    $max429Retries = 5
+    $retryBaseSeconds = 2
     $myvar_already_tagged = $false
     $putAccepted = $false
     $taskHandled = $false
@@ -1011,22 +1013,34 @@ Date       By   Updates (newest updates at the top)
       $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port),$api_server_endpoint
       $method = "GET"
 
-      try {
-        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
-        $vm_config = $resp
-      }
-      catch {
-        $saved_error = $_.Exception.Message
-        [System.Threading.Monitor]::Enter($state.SyncRoot)
+      $vmGetAttempt = 0
+      do {
         try {
-          $state["PutErrors"] = [int]$state["PutErrors"] + 1
-          [void]$state["PutErrorMessages"].Add("VM ${vm}: failed to retrieve VM details: $saved_error")
+          $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+          $vm_config = $resp
+          $vmGetStatusCode = 200
         }
-        finally {
-          [System.Threading.Monitor]::Exit($state.SyncRoot)
+        catch {
+          $saved_error = $_.Exception.Message
+          $vmGetStatusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { -1 }
+          if (($vmGetStatusCode -eq 429) -and ($vmGetAttempt -lt $max429Retries)) {
+            $vmGetAttempt += 1
+            $delaySeconds = [Math]::Pow($retryBaseSeconds, $vmGetAttempt)
+            Start-Sleep -Seconds $delaySeconds
+          }
+          else {
+            [System.Threading.Monitor]::Enter($state.SyncRoot)
+            try {
+              $state["PutErrors"] = [int]$state["PutErrors"] + 1
+              [void]$state["PutErrorMessages"].Add("VM ${vm}: failed to retrieve VM details (status=$vmGetStatusCode): $saved_error")
+            }
+            finally {
+              [System.Threading.Monitor]::Exit($state.SyncRoot)
+            }
+            return
+          }
         }
-        return
-      }
+      } while ($vmGetStatusCode -eq 429)
 
       $vm_config.PSObject.Properties.Remove('status')
 
@@ -1048,8 +1062,8 @@ Date       By   Updates (newest updates at the top)
       }
 
       if ($($using:remove)) {
-        $removeResult = $vm_config.metadata.categories_mapping.PSObject.Properties.Remove($category)
-        if (!$removeResult) {
+        $existingCategoryProperty = $vm_config.metadata.categories_mapping.PSObject.Properties[$category]
+        if ($null -eq $existingCategoryProperty) {
           $myvar_already_tagged = $true
           [System.Threading.Monitor]::Enter($state.SyncRoot)
           try {
@@ -1058,6 +1072,33 @@ Date       By   Updates (newest updates at the top)
           }
           finally {
             [System.Threading.Monitor]::Exit($state.SyncRoot)
+          }
+        }
+        else {
+          $existingValues = @()
+          if ($null -ne $existingCategoryProperty.Value) {
+            $existingValues = @($existingCategoryProperty.Value)
+          }
+
+          if ($value -notin $existingValues) {
+            $myvar_already_tagged = $true
+            [System.Threading.Monitor]::Enter($state.SyncRoot)
+            try {
+              $state["PutWarnings"] = [int]$state["PutWarnings"] + 1
+              [void]$state["PutWarningMessages"].Add("VM ${vm}: category:value ($category`:$value) is not assigned. Nothing to remove.")
+            }
+            finally {
+              [System.Threading.Monitor]::Exit($state.SyncRoot)
+            }
+          }
+          else {
+            $remainingValues = @($existingValues | Where-Object {$_ -ne $value})
+            if (($remainingValues | Measure-Object).Count -eq 0) {
+              [void]$vm_config.metadata.categories_mapping.PSObject.Properties.Remove($category)
+            }
+            else {
+              $vm_config.metadata.categories_mapping.$category = $remainingValues
+            }
           }
         }
       }
@@ -1092,7 +1133,25 @@ Date       By   Updates (newest updates at the top)
               $task_uuid = $resp.status.execution_context.task_uuid
               $task_url = "https://{0}:{1}/api/nutanix/v3/tasks/{2}" -f $($using:api_server),$($using:api_server_port),$task_uuid
               while (($task_status -ieq "running") -or ($task_status -ieq "queued")) {
-                $taskDetails = Invoke-RestMethod -Method "GET" -Uri $task_url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+                $taskGetAttempt = 0
+                do {
+                  try {
+                    $taskDetails = Invoke-RestMethod -Method "GET" -Uri $task_url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+                    $taskGetStatusCode = 200
+                  }
+                  catch {
+                    $taskGetStatusCode = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { -1 }
+                    if (($taskGetStatusCode -eq 429) -and ($taskGetAttempt -lt $max429Retries)) {
+                      $taskGetAttempt += 1
+                      $delaySeconds = [Math]::Pow($retryBaseSeconds, $taskGetAttempt)
+                      Start-Sleep -Seconds $delaySeconds
+                    }
+                    else {
+                      throw
+                    }
+                  }
+                } while ($taskGetStatusCode -eq 429)
+
                 [System.Threading.Monitor]::Enter($state.SyncRoot)
                 try {
                   $state["TaskChecks"] = [int]$state["TaskChecks"] + 1
@@ -1130,16 +1189,40 @@ Date       By   Updates (newest updates at the top)
           catch {
             $saved_error = $_.Exception
             $resp_return_code = $_.Exception.Response.StatusCode.value__
-            if ($resp_return_code -eq 409) {
+            if (($resp_return_code -eq 409) -or ($resp_return_code -eq 429)) {
               [System.Threading.Monitor]::Enter($state.SyncRoot)
               try {
                 $state["PutWarnings"] = [int]$state["PutWarnings"] + 1
-                [void]$state["PutWarningMessages"].Add("VM ${vm} cannot be updated now (409 conflict). Retrying in 5 seconds.")
+                if ($resp_return_code -eq 409) {
+                  [void]$state["PutWarningMessages"].Add("VM ${vm} cannot be updated now (409 conflict). Retrying in 5 seconds.")
+                }
+                else {
+                  [void]$state["PutWarningMessages"].Add("VM ${vm} hit API rate limit (429). Retrying with backoff.")
+                }
               }
               finally {
                 [System.Threading.Monitor]::Exit($state.SyncRoot)
               }
-              Start-Sleep -Seconds 5
+              if ($resp_return_code -eq 409) {
+                Start-Sleep -Seconds 5
+              }
+              else {
+                $put429Attempt = if ($null -eq $put429Attempt) { 0 } else { [int]$put429Attempt }
+                $put429Attempt += 1
+                if ($put429Attempt -gt $max429Retries) {
+                  [System.Threading.Monitor]::Enter($state.SyncRoot)
+                  try {
+                    $state["PutErrors"] = [int]$state["PutErrors"] + 1
+                    [void]$state["PutErrorMessages"].Add("VM ${vm} update failed: exceeded 429 retry limit ($max429Retries).")
+                  }
+                  finally {
+                    [System.Threading.Monitor]::Exit($state.SyncRoot)
+                  }
+                  break
+                }
+                $delaySeconds = [Math]::Pow($retryBaseSeconds, $put429Attempt)
+                Start-Sleep -Seconds $delaySeconds
+              }
             }
             else {
               [System.Threading.Monitor]::Enter($state.SyncRoot)
@@ -1153,7 +1236,7 @@ Date       By   Updates (newest updates at the top)
               break
             }
           }
-        } while ($resp_return_code -eq 409)
+        } while (($resp_return_code -eq 409) -or ($resp_return_code -eq 429))
       }
       else {
         $putAccepted = $true
