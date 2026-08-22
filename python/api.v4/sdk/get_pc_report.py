@@ -67,6 +67,36 @@ def fetch_entities(client,module,entity_api,function,page,limit):
     return response
 
 
+def format_vm_uptime(entity):
+    """Best-effort VM uptime using available VM timestamps."""
+    now = datetime.now(timezone.utc)
+    candidates = [
+        getattr(entity, 'boot_time', None),
+        getattr(entity, 'last_powered_on_time', None),
+        getattr(entity, 'power_state_transition_time', None),
+        getattr(entity, 'create_time', None),
+    ]
+    timestamp = next((value for value in candidates if value), None)
+    if not timestamp:
+        return ''
+    if isinstance(timestamp, str):
+        try:
+            timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            return ''
+    if not isinstance(timestamp, datetime):
+        return ''
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    delta = now - timestamp
+    if delta.total_seconds() < 0:
+        return ''
+    days = delta.days
+    hours, remainder = divmod(delta.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{days}d {hours}h {minutes}m"
+
+
 def write_interactive_html_report(data_sets, output_file, origin, generated_at, csv_base_name):
     """Writes a styled interactive HTML report without datapane."""
     data_sets_json = json.dumps(data_sets, default=str)
@@ -942,6 +972,7 @@ def main(api_server,username,secret,secure=False):
             'power_state': entity.power_state,
             'protection_type': entity.protection_type,
             'machine_type': entity.machine_type,
+            'vm_uptime': format_vm_uptime(entity),
             'guest_os': getattr(entity, 'guest_os_name', '') or '',
             'guest_tools_version': '',
             'guest_tools_available_version': '',

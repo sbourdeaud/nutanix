@@ -88,7 +88,7 @@ def ntnx_api_pagination_get_next_page_number(response_next_page_link):
     return next_page_number
 
 
-def ntnx_api_pagination(api_instance,function):
+def ntnx_api_pagination(api_instance, function, page_size=100):
     '''gets all available objects of a specific type.
         api_instance:
             api instance object
@@ -101,17 +101,16 @@ def ntnx_api_pagination(api_instance,function):
     #get the name of the list function for this specific api instance
     list_function = getattr(api_instance, function)
 
-    #* paginate thru all response pages
-    entity_list=[]
-    response_self_page_link = 'a'
-    response_last_page_link = 'b'
+    #* paginate through all response pages deterministically
+    entity_list = []
     next_page_number = 0
-    while response_self_page_link != response_last_page_link:
-        response = list_function(_page=next_page_number)
-        entity_list = entity_list + response.data
-        response_self_page_link,response_next_page_link,response_last_page_link = ntnx_api_pagination_get_page_links(response)
-        if response_next_page_link:
-            next_page_number = ntnx_api_pagination_get_next_page_number(response_next_page_link)
+    while True:
+        response = list_function(_page=next_page_number, _limit=page_size)
+        entity_list.extend(response.data)
+        _, response_next_page_link, _ = ntnx_api_pagination_get_page_links(response)
+        if not response_next_page_link:
+            break
+        next_page_number = ntnx_api_pagination_get_next_page_number(response_next_page_link)
     return entity_list
 
 
@@ -134,6 +133,35 @@ def main(api_server,username,secret,secure=False):
     def get_disk_size_bytes(disk):
         """Returns disk size in bytes when available."""
         return getattr(getattr(disk, 'backing_info', None), 'disk_size_bytes', None)
+
+    def format_vm_uptime(entity):
+        """Best-effort VM uptime using available VM timestamps."""
+        now = datetime.now(timezone.utc)
+        candidates = [
+            getattr(entity, 'boot_time', None),
+            getattr(entity, 'last_powered_on_time', None),
+            getattr(entity, 'power_state_transition_time', None),
+            getattr(entity, 'create_time', None),
+        ]
+        timestamp = next((value for value in candidates if value), None)
+        if not timestamp:
+            return ''
+        if isinstance(timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                return ''
+        if not isinstance(timestamp, datetime):
+            return ''
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        delta = now - timestamp
+        if delta.total_seconds() < 0:
+            return ''
+        days = delta.days
+        hours, remainder = divmod(delta.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        return f"{days}d {hours}h {minutes}m"
 
     def write_interactive_html_report(data_rows, output_file, origin, csv_download_name, inventory_download_name):
         """Writes an interactive HTML report with SQL filtering and CSV export."""
@@ -868,6 +896,7 @@ def main(api_server,username,secret,secure=False):
             'power_state': entity.power_state,
             'protection_type': entity.protection_type,
             'machine_type': entity.machine_type,
+            'vm_uptime': format_vm_uptime(entity),
             'guest_os': getattr(entity, 'guest_os_name', '') or '',
             'guest_tools_version': '',
             'guest_tools_available_version': '',
