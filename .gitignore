@@ -28,6 +28,8 @@ previous
 .DS_Store
 .venv/
 **/.venv/
+.venv*/
+**/.venv*/
 venv/
 **/venv/
 env/
