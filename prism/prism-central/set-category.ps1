@@ -10,7 +10,7 @@
 .PARAMETER vm
   Name of the virtual machine to edit (as displayed in Prism Central)
 .PARAMETER sourcecsv
-  Indicates the path of a comma separated file including a list of VMs to modify. The format of each line (with headers) is: vm_name,category_name,category_value.
+  Indicates the path of a comma or semicolon separated file including a list of VMs to modify. The format of each line (with headers) is: vm_name,category_name,category_value.
 .PARAMETER category
   Name of the category to assign to the vm (which must already exists in Prism Central). This is case sensitive.
 .PARAMETER value
@@ -116,6 +116,9 @@ begin
 process
 {
     try {
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Making a $method call to $url" -ForegroundColor White
+        }
         #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
         if ($PSVersionTable.PSVersion.Major -gt 5) {
             $headers = @{
@@ -140,6 +143,9 @@ process
             } else {
                 $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
             }
+        }
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Call $method to $url succeeded." -ForegroundColor White
         }
     }
     catch {
@@ -649,7 +655,7 @@ https://github.com/sbourdeaud
     process 
     {
         #region get initial task details
-            Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
+            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Retrieving details of task $task..." -ForegroundColor White}
             $taskDetails = InvokePrismAPICall -method $method -url $url -credential $credential -checking_task_status
         #endregion
 
@@ -659,7 +665,7 @@ https://github.com/sbourdeaud
             {
                 #New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
                 #$Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
-                Write-Host "$(Get-Date) [INFO] Task $($taskDetails.operation_type) is still running: $($taskDetails.percentage_complete) completed" -ForegroundColor Green
+                if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Task $($taskDetails.operation_type) is still running: $($taskDetails.percentage_complete) completed" -ForegroundColor White}
                 Sleep 5
                 $taskDetails = InvokePrismAPICall -method $method -url $url -credential $credential -checking_task_status
                 
@@ -673,8 +679,7 @@ https://github.com/sbourdeaud
             }
             While ($taskDetails.percentage_complete -ne "100")
             
-            New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
-            Write-Host ""
+            # Progress rendering is handled centrally in the parent runspace.
         } 
         else 
         {
@@ -754,7 +759,50 @@ Date       By   Updates (newest updates at the top)
   }
   if ($sourcecsv) {
     try {
-      $myvarListToProcess = Import-Csv -Path $sourcecsv -ErrorAction Stop
+      if (!(Test-Path -Path $sourcecsv)) {
+        throw "CSV file not found: $sourcecsv"
+      }
+
+      $firstLine = Get-Content -Path $sourcecsv -TotalCount 1 -ErrorAction Stop
+      if ([string]::IsNullOrWhiteSpace($firstLine)) {
+        throw "CSV file is empty: $sourcecsv"
+      }
+
+      $commaCount = ($firstLine.ToCharArray() | Where-Object {$_ -eq ','}).Count
+      $semicolonCount = ($firstLine.ToCharArray() | Where-Object {$_ -eq ';'}).Count
+      $csvDelimiter = if ($semicolonCount -gt $commaCount) {';'} else {','}
+
+      $myvarListToProcess = Import-Csv -Path $sourcecsv -Delimiter $csvDelimiter -ErrorAction Stop
+      if (($myvarListToProcess | Measure-Object).Count -eq 0) {
+        throw "CSV file contains headers but no data rows: $sourcecsv"
+      }
+
+      $requiredColumns = @("vm_name","category_name","category_value")
+      $actualColumns = $myvarListToProcess[0].PSObject.Properties.Name
+      $missingColumns = $requiredColumns | Where-Object {$_ -notin $actualColumns}
+      if (($missingColumns | Measure-Object).Count -gt 0) {
+        throw "CSV is missing required column(s): $($missingColumns -join ', '). Expected: $($requiredColumns -join ', ')"
+      }
+
+      $invalidRows = New-Object System.Collections.ArrayList($null)
+      $rowNumber = 1 # data starts at line 2 in csv (line 1 is header)
+      foreach ($row in $myvarListToProcess) {
+        $rowNumber += 1
+        $missingValues = @()
+        foreach ($column in $requiredColumns) {
+          if ([string]::IsNullOrWhiteSpace([string]$row.$column)) {
+            $missingValues += $column
+          }
+        }
+        if (($missingValues | Measure-Object).Count -gt 0) {
+          [void]$invalidRows.Add("line $rowNumber missing: $($missingValues -join ', ')")
+        }
+      }
+
+      if (($invalidRows | Measure-Object).Count -gt 0) {
+        $preview = ($invalidRows | Select-Object -First 10) -join '; '
+        throw "CSV validation failed. $preview"
+      }
     }
     catch {
       $saved_error = $_.Exception.Message
@@ -924,137 +972,241 @@ Date       By   Updates (newest updates at the top)
   #endregion check category:value pair exist
 
   Write-Host "$(Get-Date) [INFO] Updating the configuration of $(($myvarListToProcess | Measure-Object).Count) vms in $($prism)..." -ForegroundColor Green
-  $results = $myvarListToProcess | ForEach-Object -ThrottleLimit 10 -Parallel {
+  $totalVmCount = ($myvarListToProcess | Measure-Object).Count
+  $progressState = [hashtable]::Synchronized(@{
+    Total = $totalVmCount
+    PutCompleted = 0
+    PutSuccess = 0
+    PutWarnings = 0
+    PutErrors = 0
+    TaskCompleted = 0
+    TaskSuccess = 0
+    TaskWarnings = 0
+    TaskErrors = 0
+    TaskChecks = 0
+    PutWarningMessages = New-Object System.Collections.ArrayList($null)
+    PutErrorMessages = New-Object System.Collections.ArrayList($null)
+    TaskWarningMessages = New-Object System.Collections.ArrayList($null)
+    TaskErrorMessages = New-Object System.Collections.ArrayList($null)
+  })
+
+  $resultsJob = $myvarListToProcess | ForEach-Object -ThrottleLimit 10 -Parallel {
+    $state = $using:progressState
     $myvar_already_tagged = $false
-    $vm = $_.vm_name
-    $category = $_.category_name
-    $value = $_.category_value
-    $vm_uuid = ($($using:vm_list) | Where-Object {$_.spec.name -eq $vm}).metadata.uuid
-    Write-Host "$(Get-Date) [STEP] Applying $($category):$($value) to vm $vm with uuid $vm_uuid on $($using:prism)..." -ForegroundColor Magenta
+    $putAccepted = $false
+    $taskHandled = $false
+    try {
+      $vm = $_.vm_name
+      $category = $_.category_name
+      $value = $_.category_value
+      $vm_uuid = ($($using:vm_list) | Where-Object {$_.spec.name -eq $vm}).metadata.uuid
+      if ($using:debugme) {Write-Host "$(Get-Date) [DEBUG] Applying $($category):$($value) to vm $vm with uuid $vm_uuid on $($using:prism)..." -ForegroundColor White}
 
-    $headers = @{
-      "Content-Type"="application/json";
-      "Accept"="application/json"
-    }
+      $headers = @{
+        "Content-Type"="application/json";
+        "Accept"="application/json"
+      }
 
-    #! step 2: retrieve vm details
-    #region retrieve the vm details
+      $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
+      $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port),$api_server_endpoint
+      $method = "GET"
 
-      #region prepare api call
-        $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
-        $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port), `
-            $api_server_endpoint
-        $method = "GET"
-      #endregion
-
-      #region make the api call
-        #Write-Host "$(Get-Date) [INFO] Retrieving the configuration of vm $vm from $($using:prism)..." -ForegroundColor Green
+      try {
+        $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+        $vm_config = $resp
+      }
+      catch {
+        $saved_error = $_.Exception.Message
+        [System.Threading.Monitor]::Enter($state.SyncRoot)
         try {
-          $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
-          $vm_config = $resp
-        }
-        catch {
-          $saved_error = $_.Exception.Message
-          Write-Host "$(get-date) [WARNING] While retrieving details of $($vm): $saved_error" -ForegroundColor Yellow
-          #Write-Host $resp
-          Continue
+          $state["PutErrors"] = [int]$state["PutErrors"] + 1
+          [void]$state["PutErrorMessages"].Add("VM ${vm}: failed to retrieve VM details: $saved_error")
         }
         finally {
+          [System.Threading.Monitor]::Exit($state.SyncRoot)
         }
-      #endregion
+        return
+      }
 
-    #endregion
-
-    #! step 3: prepare the json payload
-    #region prepare the json payload
       $vm_config.PSObject.Properties.Remove('status')
-    #endregion
 
-    #! step 4.1: process -add
-    #region process add
       if ($($using:add)) {
         try {
           $myvarNull = $vm_config.metadata.categories_mapping | Add-Member -MemberType NoteProperty -Name $category -Value @($value) -PassThru -ErrorAction Stop
         }
         catch {
-          Write-Host "$(Get-Date) [WARNING] Could not add category:value pair ($($category):$($value)). It may already be assigned to the vm $vm in $($using:prism)" -ForegroundColor Yellow
           $myvar_already_tagged = $true
-          continue
+          [System.Threading.Monitor]::Enter($state.SyncRoot)
+          try {
+            $state["PutWarnings"] = [int]$state["PutWarnings"] + 1
+            [void]$state["PutWarningMessages"].Add("VM ${vm}: category:value ($category`:$value) already assigned.")
+          }
+          finally {
+            [System.Threading.Monitor]::Exit($state.SyncRoot)
+          }
         }
       }
-    #endregion
 
-    #! step 4.2: process -remove
-    #region process remove
       if ($($using:remove)) {
-        #todo match the exact value pair here as a category could have multiple values assigned
-        #Write-Host "$(Get-Date) [WARNING] Remove hasn't been implemented yet (still working on it)" -ForegroundColor Yellow
-        #$myvarNull = $vm_config.metadata.categories.PSObject.Properties.Remove($category)
-        $myvarNull = $vm_config.metadata.categories_mapping.PSObject.Properties.Remove($category)
+        $removeResult = $vm_config.metadata.categories_mapping.PSObject.Properties.Remove($category)
+        if (!$removeResult) {
+          $myvar_already_tagged = $true
+          [System.Threading.Monitor]::Enter($state.SyncRoot)
+          try {
+            $state["PutWarnings"] = [int]$state["PutWarnings"] + 1
+            [void]$state["PutWarningMessages"].Add("VM ${vm}: category '$category' is not assigned. Nothing to remove.")
+          }
+          finally {
+            [System.Threading.Monitor]::Exit($state.SyncRoot)
+          }
+        }
       }
-    #endregion
 
-    #! step 5: update the vm object
-    #region update vm
-      if (!$myvar_already_tagged)
-      {
-        #region prepare api call
-          $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
-          $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port), `
-              $api_server_endpoint
-          $method = "PUT"
+      if (!$myvar_already_tagged) {
+        $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
+        $url = "https://{0}:{1}{2}" -f $($using:api_server),$($using:api_server_port),$api_server_endpoint
+        $method = "PUT"
 
-          #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
-          #$vm_config.metadata.spec_version += 1
-          #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
-          if (!$vm_config.api_version) {
-            $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
-          }
-          if (!$vm_config.metadata.use_categories_mapping) {
-            $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
-          }
-          $payload = (ConvertTo-Json $vm_config -Depth 20)
-        #endregion
+        if (!$vm_config.api_version) {
+          $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
+        }
+        if (!$vm_config.metadata.use_categories_mapping) {
+          $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
+        }
+        $payload = (ConvertTo-Json $vm_config -Depth 20)
 
-        #region make the api call
-          #Write-Host "$(Get-Date) [INFO] Updating the configuration of vm $vm in $($using:prism)..." -ForegroundColor Green
-          do {
+        do {
+          try {
+            $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+            $putAccepted = $true
+            [System.Threading.Monitor]::Enter($state.SyncRoot)
             try {
-              $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
-              if (!$($using:async))
-              {#user does want to wait for each vm update task to complete
-                $task_status = Get-PrismCentralTaskStatus -Task $resp.status.execution_context.task_uuid -cluster $($using:prism) -credential $($using:prismCredentials)
-                if ($task_status -ine "failed") 
-                {
-                  if ($($using:debugme)) {Write-Host "$(Get-Date) [SUCCESS] Successfully updated the configuration of vm $vm from $($using:prism)" -ForegroundColor Cyan}
-                  $resp_return_code = 200
-                }
-              }
-              else 
-              {#user does not care about waiting for update task status
-                $resp_return_code = 200
-              }
-            }
-            catch {
-              $saved_error = $_.Exception
-              $resp_return_code = $_.Exception.Response.StatusCode.value__
-              if ($resp_return_code -eq 409) {
-                Write-Host "$(Get-Date) [WARNING] VM $vm cannot be updated now. Retrying in 5 seconds..." -ForegroundColor Yellow
-                sleep 5
-              }
-              else {
-                #Write-Host $payload -ForegroundColor White
-                Write-Host "$(get-date) [WARNING] While trying to update $($vm): $($_)" -ForegroundColor Yellow
-                Break
-              }
+              $state["PutSuccess"] = [int]$state["PutSuccess"] + 1
             }
             finally {
+              [System.Threading.Monitor]::Exit($state.SyncRoot)
             }
-          } while ($resp_return_code -eq 409)
-        #endregion
-      }
 
-    #endregion
+            if (!$($using:async)) {
+              $task_status = "running"
+              $task_uuid = $resp.status.execution_context.task_uuid
+              $task_url = "https://{0}:{1}/api/nutanix/v3/tasks/{2}" -f $($using:api_server),$($using:api_server_port),$task_uuid
+              while (($task_status -ieq "running") -or ($task_status -ieq "queued")) {
+                $taskDetails = Invoke-RestMethod -Method "GET" -Uri $task_url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $($using:prismCredentials) -ErrorAction Stop
+                [System.Threading.Monitor]::Enter($state.SyncRoot)
+                try {
+                  $state["TaskChecks"] = [int]$state["TaskChecks"] + 1
+                }
+                finally {
+                  [System.Threading.Monitor]::Exit($state.SyncRoot)
+                }
+                $task_status = [string]$taskDetails.status
+                if (($task_status -ieq "running") -or ($task_status -ieq "queued")) { Start-Sleep -Seconds 5 }
+              }
+
+              $taskHandled = $true
+              [System.Threading.Monitor]::Enter($state.SyncRoot)
+              try {
+                $state["TaskCompleted"] = [int]$state["TaskCompleted"] + 1
+                if ($task_status -ieq "succeeded") {
+                  $state["TaskSuccess"] = [int]$state["TaskSuccess"] + 1
+                }
+                elseif ($task_status -ieq "failed") {
+                  $state["TaskErrors"] = [int]$state["TaskErrors"] + 1
+                  [void]$state["TaskErrorMessages"].Add("VM ${vm} task $task_uuid failed: $($taskDetails.progress_message) $($taskDetails.error_detail)")
+                }
+                else {
+                  $state["TaskWarnings"] = [int]$state["TaskWarnings"] + 1
+                  [void]$state["TaskWarningMessages"].Add("VM ${vm} task $task_uuid ended with status '$task_status': $($taskDetails.progress_message)")
+                }
+              }
+              finally {
+                [System.Threading.Monitor]::Exit($state.SyncRoot)
+              }
+            }
+
+            $resp_return_code = 200
+          }
+          catch {
+            $saved_error = $_.Exception
+            $resp_return_code = $_.Exception.Response.StatusCode.value__
+            if ($resp_return_code -eq 409) {
+              [System.Threading.Monitor]::Enter($state.SyncRoot)
+              try {
+                $state["PutWarnings"] = [int]$state["PutWarnings"] + 1
+                [void]$state["PutWarningMessages"].Add("VM ${vm} cannot be updated now (409 conflict). Retrying in 5 seconds.")
+              }
+              finally {
+                [System.Threading.Monitor]::Exit($state.SyncRoot)
+              }
+              Start-Sleep -Seconds 5
+            }
+            else {
+              [System.Threading.Monitor]::Enter($state.SyncRoot)
+              try {
+                $state["PutErrors"] = [int]$state["PutErrors"] + 1
+                [void]$state["PutErrorMessages"].Add("VM ${vm} update failed: $saved_error")
+              }
+              finally {
+                [System.Threading.Monitor]::Exit($state.SyncRoot)
+              }
+              break
+            }
+          }
+        } while ($resp_return_code -eq 409)
+      }
+      else {
+        $putAccepted = $true
+      }
+    }
+    finally {
+      [System.Threading.Monitor]::Enter($state.SyncRoot)
+      try {
+        $state["PutCompleted"] = [int]$state["PutCompleted"] + 1
+        if ($using:async -and $putAccepted) {
+          $state["TaskCompleted"] = [int]$state["TaskCompleted"] + 1
+          $state["TaskSuccess"] = [int]$state["TaskSuccess"] + 1
+        }
+      }
+      finally {
+        [System.Threading.Monitor]::Exit($state.SyncRoot)
+      }
+    }
+  } -AsJob
+
+  while ((Get-Job -Id $resultsJob.Id).State -eq "Running") {
+    $putDone = $progressState.PutCompleted
+    $taskDone = $progressState.TaskCompleted
+    $putPercent = if ($progressState.Total -gt 0) { [int](($putDone / $progressState.Total) * 100) } else { 100 }
+    $taskPercent = if ($progressState.Total -gt 0) { [int](($taskDone / $progressState.Total) * 100) } else { 100 }
+
+    Write-Progress -Id 1 -Activity "PUT category updates in $prism" -Status "$putDone / $($progressState.Total) VM operations complete" -PercentComplete $putPercent
+    Write-Progress -Id 2 -ParentId 1 -Activity "GET task status checks in $prism" -Status "$taskDone / $($progressState.Total) tasks completed, polls: $($progressState.TaskChecks)" -PercentComplete $taskPercent
+    Start-Sleep -Milliseconds 300
+  }
+
+  $results = Receive-Job -Id $resultsJob.Id -Wait -AutoRemoveJob
+  Write-Progress -Id 2 -Activity "GET task status checks in $prism" -Completed
+  Write-Progress -Id 1 -Activity "PUT category updates in $prism" -Completed
+
+  Write-Host "$(Get-Date) [SUM] PUT phase summary: success=$($progressState.PutSuccess), warnings=$($progressState.PutWarnings), errors=$($progressState.PutErrors), total_processed=$($progressState.PutCompleted)" -ForegroundColor Magenta
+  foreach ($msg in $progressState.PutWarningMessages) { Write-Host "$(Get-Date) [WARNING] $msg" -ForegroundColor Yellow }
+  foreach ($msg in $progressState.PutErrorMessages) { Write-Host "$(Get-Date) [ERROR] $msg" -ForegroundColor Red }
+
+  Write-Host "$(Get-Date) [SUM] GET task-check phase summary: success=$($progressState.TaskSuccess), warnings=$($progressState.TaskWarnings), errors=$($progressState.TaskErrors), completed=$($progressState.TaskCompleted), polls=$($progressState.TaskChecks)" -ForegroundColor Magenta
+  foreach ($msg in $progressState.TaskWarningMessages) { Write-Host "$(Get-Date) [WARNING] $msg" -ForegroundColor Yellow }
+  foreach ($msg in $progressState.TaskErrorMessages) { Write-Host "$(Get-Date) [ERROR] $msg" -ForegroundColor Red }
+
+  $totalWarnings = [int]$progressState.PutWarnings + [int]$progressState.TaskWarnings
+  $totalErrors = [int]$progressState.PutErrors + [int]$progressState.TaskErrors
+  if ($totalErrors -gt 0) {
+    Write-Host "$(Get-Date) [SUM] OVERALL RESULT: FAIL (warnings=$totalWarnings, errors=$totalErrors)" -ForegroundColor Red
+  }
+  elseif ($totalWarnings -gt 0) {
+    Write-Host "$(Get-Date) [SUM] OVERALL RESULT: WARN (warnings=$totalWarnings, errors=$totalErrors)" -ForegroundColor Yellow
+  }
+  else {
+    Write-Host "$(Get-Date) [SUM] OVERALL RESULT: PASS (warnings=$totalWarnings, errors=$totalErrors)" -ForegroundColor Green
   }
 #endregion processing
 
