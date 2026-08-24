@@ -134,6 +134,62 @@ def main(api_server,username,secret,secure=False):
         """Returns disk size in bytes when available."""
         return getattr(getattr(disk, 'backing_info', None), 'disk_size_bytes', None)
 
+    def get_cdrom_mount_status(cdroms):
+        """Best-effort CD-ROM mount status: mounted, unmounted, or unknown."""
+        if not cdroms:
+            return 'unknown'
+
+        has_mounted = False
+        has_explicit_unmounted = False
+        has_observable_state = False
+
+        for cdrom in cdroms:
+            backing_info = getattr(cdrom, 'backing_info', None)
+            candidates = [cdrom, backing_info] if backing_info else [cdrom]
+
+            # Any media/data-source/image reference is treated as mounted media.
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                for attr in ('disk_size_bytes', 'data_source_reference', 'image', 'image_reference', 'file'):
+                    if getattr(candidate, attr, None) is not None:
+                        has_mounted = True
+                        has_observable_state = True
+                        break
+                if has_mounted:
+                    break
+            if has_mounted:
+                break
+
+            # Some model variants may expose explicit no-media indicators.
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                for attr in ('is_empty', 'has_media', 'is_mounted'):
+                    value = getattr(candidate, attr, None)
+                    if value is None:
+                        continue
+                    has_observable_state = True
+                    if (attr == 'is_empty' and value is True) or (
+                        attr in ('has_media', 'is_mounted') and value is False
+                    ):
+                        has_explicit_unmounted = True
+                    elif (attr == 'is_empty' and value is False) or (
+                        attr in ('has_media', 'is_mounted') and value is True
+                    ):
+                        has_mounted = True
+                        break
+                if has_mounted:
+                    break
+            if has_mounted:
+                break
+
+        if has_mounted:
+            return 'mounted'
+        if has_explicit_unmounted and has_observable_state:
+            return 'unmounted'
+        return 'unknown'
+
     def format_vm_uptime(entity):
         """Best-effort VM uptime using available VM timestamps."""
         now = datetime.now(timezone.utc)
@@ -913,6 +969,7 @@ def main(api_server,username,secret,secure=False):
             'is_secure_boot_enabled': '',
             'boot_order': entity.boot_config.boot_order,
             'cdroms': list({ getattr(getattr(cdrom, 'disk_address', None), 'bus_type', None) for cdrom in entity.cd_roms if getattr(getattr(cdrom, 'disk_address', None), 'bus_type', None) }) if entity.cd_roms else [],
+            'cdrom_mount_status': get_cdrom_mount_status(entity.cd_roms),
             'disks': list({ getattr(getattr(disk, 'disk_address', None), 'bus_type', None) for disk in entity.disks if getattr(getattr(disk, 'disk_address', None), 'bus_type', None) }) if entity.disks else [],
             'disks_bytes': disk_sizes,
             'disks_bytes_total': sum(disk_sizes) if disk_sizes else 0,
