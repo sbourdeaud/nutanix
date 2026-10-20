@@ -396,6 +396,10 @@ Synchronize all category values in lab-users from pc1 to pc2:
 
         process
         {
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                # PowerShell 7+ already defaults to TLS 1.2+; REST helpers also set -SslProtocol Tls12
+                return
+            }
             Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             [Net.ServicePointManager]::SecurityProtocol = `
             ([Net.ServicePointManager]::SecurityProtocol -bor `
@@ -425,6 +429,13 @@ Synchronize all category values in lab-users from pc1 to pc2:
         
         process
         {
+            # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod.
+            # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+                return
+            }
+
             Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
             if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
                 $certCallback = @"

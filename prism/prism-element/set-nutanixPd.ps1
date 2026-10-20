@@ -1,4 +1,4 @@
-﻿<#
+﻿﻿<#
 .SYNOPSIS
   This script is used to edit and control Nutanix protection domains.
 .DESCRIPTION
@@ -213,7 +213,9 @@ Removes all orphaned VM entries from the protection domain "protect1" on Nutanix
     #endregion
 
     #region module BetterTls
-        $result = Set-PoshTls
+        if ($PSVersionTable.PSVersion.Major -le 5) {
+            $result = Set-PoshTls
+        }
     #endregion
 
 

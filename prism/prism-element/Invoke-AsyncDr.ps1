@@ -1093,8 +1093,10 @@ Param
             }
             catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
             }
-            Set-PoSHSSLCerts
-            Set-PoshTls
+            if ($PSVersionTable.PSVersion.Major -le 5) {
+                Set-PoSHSSLCerts
+                Set-PoshTls
+            }
         #endregion
     #endregion
 
