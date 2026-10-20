@@ -188,8 +188,10 @@ Date       By   Updates (newest updates at the top)
         }
     #endregion
 
-    Set-PoSHSSLCerts
-    Set-PoshTls
+    if ($PSVersionTable.PSVersion.Major -le 5) {
+        Set-PoSHSSLCerts
+        Set-PoshTls
+    }
 #endregion
 
 #region variables

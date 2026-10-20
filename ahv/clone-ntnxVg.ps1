@@ -196,8 +196,10 @@ Display a list of volume groups to clone from sqlprod1 to sqldev1 and proceed wi
         catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
         }
     #endregion
-    Set-PoSHSSLCerts
-    Set-PoshTls
+    if ($PSVersionTable.PSVersion.Major -le 5) {
+        Set-PoSHSSLCerts
+        Set-PoshTls
+    }
 
 #endregion
 

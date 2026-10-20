@@ -24,7 +24,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: April 15th 2022
+  Revision: October 20th 2026
 #>
 
 #region parameters
@@ -388,6 +388,10 @@ function Set-PoshTls
 
     process
     {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
         Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
         [Net.ServicePointManager]::SecurityProtocol = `
         ([Net.ServicePointManager]::SecurityProtocol -bor `
@@ -417,6 +421,13 @@ function Set-PoSHSSLCerts
     
     process
     {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
         Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
         if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
             $certCallback = @"
@@ -677,6 +688,7 @@ function Get-PrismCentralObjectList
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/20/2026 sb   Fix Set-PoSHSSLCerts/Set-PoshTls for PowerShell 7 (avoid SYSLIB0014 Add-Type errors).
 06/21/2019 sb   Initial release.
 04/02/2020 sb   Do over to include sbourdeaud module.
 02/06/2021 sb   Replaced username with get-credential

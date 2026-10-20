@@ -510,10 +510,14 @@ if ($History) {$HistoryText; exit}
 if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
 #region get ready to use the Nutanix REST API
-# ignore SSL warnings
-Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
-if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
-$certCallback = @"
+# ignore SSL warnings / ensure TLS 1.2 (Windows PowerShell 5.x only;
+# PowerShell 6+ uses -SkipCertificateCheck / native TLS 1.2+)
+if ($PSVersionTable.PSVersion.Major -gt 5) {
+    Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+} else {
+    Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+    if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+    $certCallback = @"
 using System;
 using System.Net;
 using System.Net.Security;
@@ -539,15 +543,16 @@ public class ServerCertificateValidationCallback
     }
 }
 "@
-Add-Type $certCallback
-}
-[ServerCertificateValidationCallback]::Ignore()
+    Add-Type $certCallback
+    }
+    [ServerCertificateValidationCallback]::Ignore()
 
-# add Tls12 support
-Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
-[Net.ServicePointManager]::SecurityProtocol = `
-([Net.ServicePointManager]::SecurityProtocol -bor `
-[Net.SecurityProtocolType]::Tls12)
+    # add Tls12 support
+    Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+    [Net.ServicePointManager]::SecurityProtocol = `
+    ([Net.ServicePointManager]::SecurityProtocol -bor `
+    [Net.SecurityProtocolType]::Tls12)
+}
 #endregion
 
 #endregion
