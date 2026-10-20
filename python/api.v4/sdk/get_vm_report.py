@@ -431,7 +431,7 @@ def main(api_server,username,secret,secure=False):
             .map((flt) => {
                 const field = escapeSqlField(flt.field);
                 const value = escapeSqlValue(String(flt.value).trim());
-                return `CAST(\`${field}\` AS STRING) LIKE '%${value}%'`;
+                return "CAST(`" + field + "` AS STRING) LIKE '%" + value + "%'";
             });
             if (!whereClauses.length) {
                 return "SELECT * FROM ? WHERE 1=1";
@@ -649,7 +649,7 @@ def main(api_server,username,secret,secure=False):
             contextCell = { field, value };
             contextMenuEl.innerHTML = `
 <button type="button" data-action="add-column-filter" title="Set ${field} filter to this value">
-    Filter \`${field}\` by "${safeValue}"
+    Filter ` + "`" + field + "`" + ` by "${safeValue}"
 </button>
 `;
 

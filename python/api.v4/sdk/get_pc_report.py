@@ -275,7 +275,7 @@ def write_interactive_html_report(data_sets, output_file, origin, generated_at, 
         .map((flt) => {
           const field = escapeSqlField(flt.field);
           const value = escapeSqlValue(String(flt.value).trim());
-          return `CAST(\`${field}\` AS STRING) LIKE '%${value}%'`;
+          return "CAST(`" + field + "` AS STRING) LIKE '%" + value + "%'";
         });
       if (!whereClauses.length) return "SELECT * FROM ? WHERE 1=1";
       return `SELECT * FROM ? WHERE ${whereClauses.join(" AND ")}`;
@@ -479,7 +479,7 @@ def write_interactive_html_report(data_sets, output_file, origin, generated_at, 
       contextCell = { field, value };
       contextMenuEl.innerHTML = `
         <button type="button" data-action="add-column-filter" title="Set ${field} filter to this value">
-          Filter \`${field}\` by "${safeValue}"
+          Filter ` + "`" + field + "`" + ` by "${safeValue}"
         </button>
       `;
       const menuWidth = 320;
