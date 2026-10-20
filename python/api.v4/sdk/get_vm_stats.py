@@ -357,9 +357,13 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
     body {{ margin: 0; font-family: Arial, sans-serif; background: #fff; }}
     .topbar {{
       position: sticky; top: 0; z-index: 1000;
-      display: flex; align-items: center; justify-content: flex-end;
+      display: flex; align-items: center; justify-content: space-between;
       gap: 8px; padding: 10px 14px; border-bottom: 1px solid #e5e7eb; background: #fff;
     }}
+    .report-meta {{
+      font-size: 13px; color: #374151; line-height: 1.4;
+    }}
+    .report-meta strong {{ color: #111827; }}
     .btn {{
       border: 1px solid #2563eb; background: #2563eb; color: #fff;
       padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
@@ -374,6 +378,12 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
 </head>
 <body>
   <div class="topbar">
+    <div class="report-meta">
+      <strong>{vm}</strong> metrics
+      &nbsp;|&nbsp; <strong>time:</strong> last {minutes_ago} minutes
+      &nbsp;|&nbsp; <strong>stat_type:</strong> {stat_type}
+      &nbsp;|&nbsp; <strong>interval:</strong> {sampling_interval}s
+    </div>
     <button class="btn" onclick="window.print()">Export to PDF</button>
   </div>
   <div class="content">
