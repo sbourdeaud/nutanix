@@ -419,7 +419,14 @@ public class ServerCertificateValidationCallback
                 $mask = 0
                 for ($i = 0; $i -lt $prefix; $i++) { $mask = ($mask * 2) + 1 }
                 $mask = $mask -shl (32 - $prefix)
-                $subnet_mask = [System.Net.IPAddress]::New(($mask[0], $mask[1], $mask[2], $mask[3])).IPAddressToString
+                # Extract 4 bytes from the 32-bit mask integer
+                $bytes = @(
+                    ($mask -shr 24) -band 0xFF
+                    ($mask -shr 16) -band 0xFF
+                    ($mask -shr 8) -band 0xFF
+                    $mask -band 0xFF
+                )
+                $subnet_mask = [System.Net.IPAddress]::New($bytes).IPAddressToString
 
                 $myvarNetworkInfo = [ordered]@{
                   "network_name" = $entity.spec.name;
