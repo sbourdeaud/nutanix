@@ -1,14 +1,15 @@
 <#
 .SYNOPSIS
-  This script retrieves the complete list of virtual machines from Prism Central.
+  This script retrieves the complete list of virtual machines from Prism Central using v4 API.
 .DESCRIPTION
   This script retrieves the complete list of virtual machines from Prism Central, including each VM specs and exports the results to csv in the current directory.
+  Uses Nutanix Prism Central v4 APIs (VMM for VMs, Prism for clusters).
 .PARAMETER help
-  Displays a help message (seriously, what did you think this was?)
+  Displays a help message.
 .PARAMETER history
-  Displays a release history for this script (provided the editors were smart enough to document this...)
+  Displays a release history for this script.
 .PARAMETER debugme
-  Turns off SilentlyContinue on unexpected error messages.
+  Turns on debug output.
 .PARAMETER prismcentral
   Nutanix Prism Central fully qualified domain name or IP address.
 .PARAMETER prismCreds
@@ -22,7 +23,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 29th 2026
+  Revision: October 29th 2026 - Migrated to v4 API
 #>
 
 #region parameters
@@ -45,6 +46,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Migrated to Prism Central v4 API (VMM for VMs, Prism for clusters); inline helpers; fixed SSL for PS7+
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 10/20/2026 sb   Fix Set-PoSHSSLCerts/Set-PoshTls for PowerShell 7 (avoid SYSLIB0014 Add-Type errors).
 06/21/2019 sb   Initial release.
@@ -123,6 +125,42 @@ Date       By   Updates (newest updates at the top)
           throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
       }
       return $resp
+  }
+
+  function Invoke-PrismAPICallWithRetry {
+      param (
+          [parameter(mandatory = $true)]
+          [hashtable]$InvokeParams,
+
+          [parameter(mandatory = $false)]
+          [int]$MaxRetries = 3,
+
+          [parameter(mandatory = $false)]
+          [string]$RequestId = (New-Guid).ToString()
+      )
+      $attempt = 0
+      $delayMs = 1000
+      while ($true) {
+          try {
+              $response = Invoke-RestMethod @InvokeParams
+              return $response
+          }
+          catch {
+              $statusCode = $null
+              if ($_.Exception -is [System.Net.WebException] -and $_.Exception.Response) {
+                  try { $statusCode = [int][System.Net.HttpStatusCode]$_.Exception.Response.StatusCode } catch { $statusCode = $null }
+              }
+              if (($statusCode -in 429, 503) -and ($attempt -lt $MaxRetries)) {
+                  $attempt++
+                  Write-Host "$(Get-Date) [WARN] Transient error (HTTP $statusCode), retry $attempt/$MaxRetries in ${delayMs}ms" -ForegroundColor Yellow
+                  Start-Sleep -Milliseconds $delayMs
+                  $delayMs = [Math]::Min($delayMs * 2, 30000)
+                  continue
+              }
+              Write-Host "$(Get-Date) [ERROR] API call failed: $($_.Exception.Message)" -ForegroundColor Red
+              throw
+          }
+      }
   }
 
   function Set-CustomCredentials {
@@ -267,7 +305,7 @@ public class ServerCertificateValidationCallback
 #region variables
   $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
   [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null)
-  $length = 100
+  $pageLimit = 100
   $api_server_port = "9440"
 #endregion
 
@@ -295,53 +333,66 @@ public class ServerCertificateValidationCallback
   $username = $prismCredentials.UserName
   $PrismSecurePassword = $prismCredentials.Password
   $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+  
+  # Build auth header for v4 API calls
+  $pair = "$($prismCredentials.UserName):$($prismCredentials.GetNetworkCredential().Password)"
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($pair)
+  $base64 = [Convert]::ToBase64String($bytes)
+  $v4Headers = @{
+      'Content-Type' = 'application/json'
+      'Accept'       = 'application/json'
+      'Authorization' = "Basic $base64"
+  }
+  $baseUri = "https://${prismcentral}:${api_server_port}/api"
 #endregion
 
 
 #region main processing
 
-  #region make v3 api call for clusters (if -ngt)
+  #region make v4 api call for clusters (if -ngt)
     if ($ngt) 
     {
       [System.Collections.ArrayList]$myvarClusterResults = New-Object System.Collections.ArrayList($null)
-      $url = "https://{0}:{1}/api/nutanix/v3/clusters/list" -f $prismcentral,$api_server_port
-      $method = "POST"
-      $content = @{
-          kind="cluster";
-          offset=0;
-          length=$length
-      }
-      $payload = (ConvertTo-Json $content -Depth 4)
+      $page = 0
+      $select = [uri]::EscapeDataString('extId,name,spec.resources.network.external_ip,spec.resources.config.software_map.NOS.version')
       
       Write-Host "$(Get-Date) [INFO] Retrieving clusters information from Prism Central $($prismcentral)" -ForegroundColor Green
       Do 
       {
           try 
           {
-              $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-              if ($resp.entities) {
-                  ForEach ($entity in $resp.entities) 
+              $clustersUri = "${baseUri}/prism/v4.0/config/clusters?`$page=$page&`$limit=$pageLimit&`$select=$select"
+              Write-Host "$(Get-Date) [INFO] Fetching clusters page $page" -ForegroundColor Green
+              $invokeParams = @{
+                  Uri         = $clustersUri
+                  Method      = 'GET'
+                  Headers     = $v4Headers
+                  TimeoutSec  = 60
+              }
+              $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+              
+              if ($resp.data) {
+                  ForEach ($entity in $resp.data) 
                   {
                       $myvarClusterInfo = [ordered]@{
                           "name" = $entity.spec.name;
-                          "uuid" = $entity.metadata.uuid;
+                          "extId" = $entity.extId;
                           "external_ip" = $entity.spec.resources.network.external_ip;
                           "AOS" = $entity.spec.resources.config.software_map.NOS.version
                       }
                       $myvarClusterResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
                   }
               }
-        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
-              $content.offset = $resp.metadata.offset + $resp.metadata.length
-              $payload = (ConvertTo-Json $content -Depth 4)
+              if (-not $resp.data -or (@($resp.data)).Count -eq 0) { break }
+              $page++
           }
           catch 
           {
-              Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+              Write-Host "$(Get-Date) [ERROR] $($_.Exception.Message)" -ForegroundColor Red
               Throw "$(get-date) [ERROR] $($_.Exception.Message)"
           }
       }
-      While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
+      While ($resp.data -and $resp.data.Count -eq $pageLimit)
       
       if ($debugme) 
       {
@@ -351,32 +402,38 @@ public class ServerCertificateValidationCallback
     }
   #endregion
 
-  #region make v3 api call for vms
-  # this is used to capture the content of the payload
-  $content = @{
-      kind="vm";
-      offset=0;
-      length=$length
-  }
-  $payload = (ConvertTo-Json $content -Depth 4)
+  #region make v4 api call for vms
+  # v4 VMM API uses GET with $page, $limit, and $select
+  $page = 0
+  # Select only the fields we need to reduce payload size
+  $selectFields = 'extId,name,spec.resources.num_sockets,spec.resources.memory_size_mib,spec.resources.power_state,spec.cluster_reference.extId,spec.resources.nic_list,spec.resources.disk_list,status.resources.hypervisor_type,status.resources.protection_type,metadata.creation_time,metadata.owner_reference.name,status.resources.gpu_list'
+  $select = [uri]::EscapeDataString($selectFields)
+  
   Write-Host "$(Get-Date) [INFO] Retrieving VM information from Prism Central $($prismcentral)" -ForegroundColor Green
   Do 
   {
       try 
       {
-          $api_server_endpoint = "/api/nutanix/v3/vms/list"
-          $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-          $method = "POST"
-          $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+          $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$pageLimit&`$select=$select"
+          Write-Host "$(Get-Date) [INFO] Fetching VMs page $page" -ForegroundColor Green
+          $invokeParams = @{
+              Uri        = $vmsUri
+              Method     = 'GET'
+              Headers    = $v4Headers
+              TimeoutSec = 60
+          }
+          $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
           
-          if ($resp.entities) {
-              ForEach ($entity in $resp.entities) 
+          if ($resp.data) {
+              ForEach ($entity in $resp.data) 
               {
                 if ($ngt) 
                 {
-                  $myvarClusterIp = ($myvarClusterResults | Where-Object {$_.uuid -eq $entity.spec.cluster_reference.uuid}).external_ip
+                  # v4 uses extId for cluster reference
+                  $myvarClusterIp = ($myvarClusterResults | Where-Object {$_.extId -eq $entity.spec.cluster_reference.extId}).external_ip
                   if (!$myvarClusterIp) {throw "$(get-date) [ERROR] Could not find external ip address of cluster $($entity.spec.cluster_reference.name)"}
-                  $api_server_endpoint = "/PrismGateway/services/rest/v1/vms/?filterCriteria=vm_uuid%3D%3D{0}" -f $entity.metadata.uuid
+                  # NGT still uses Prism Element REST API (unchanged)
+                  $api_server_endpoint = "/PrismGateway/services/rest/v1/vms/?filterCriteria=vm_uuid%3D%3D{0}" -f $entity.extId
                   $url = "https://{0}:{1}{2}" -f $myvarClusterIp,$api_server_port, $api_server_endpoint
                   $method = "GET"
                   try 
@@ -416,7 +473,7 @@ public class ServerCertificateValidationCallback
                     "vnic_vlans" = (($entity.spec.resources.nic_list | Select-Object -Property subnet_reference).subnet_reference.name) -join ',';
                     "vnic_macs" = (($entity.spec.resources.nic_list | Select-Object -Property mac_address).mac_address) -join ',';
                     "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
-                    "uuid" = $entity.metadata.uuid
+                    "extId" = $entity.extId
                   }
                 } 
                 else 
@@ -439,7 +496,7 @@ public class ServerCertificateValidationCallback
                       "vnic1_vlan" = $entity.spec.resources.nic_list[1].subnet_reference.name;
                       "vnic1_mac" = $entity.spec.resources.nic_list[1].mac_address;
                       "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
-                      "uuid" = $entity.metadata.uuid
+                      "extId" = $entity.extId
                   }
                 }
                 #store the results for this entity in our overall result variable
@@ -447,17 +504,16 @@ public class ServerCertificateValidationCallback
               }
           }
           
-        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
-          $content.offset = $resp.metadata.offset + $resp.metadata.length
-          $payload = (ConvertTo-Json $content -Depth 4)
+          if (-not $resp.data -or (@($resp.data)).Count -eq 0) { break }
+          $page++
       }
       catch 
       {
-          Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+          Write-Host "$(Get-Date) [ERROR] $($_.Exception.Message)" -ForegroundColor Red
           Throw "$(get-date) [ERROR] $($_.Exception.Message)"
       }
   }
-  While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
+  While ($resp.data -and $resp.data.Count -eq $pageLimit)
 
   if ($debugme) 
   {
@@ -487,6 +543,8 @@ public class ServerCertificateValidationCallback
   Remove-Variable prismcentral -ErrorAction SilentlyContinue
   Remove-Variable prismCreds -ErrorAction SilentlyContinue
   Remove-Variable ngt -ErrorAction SilentlyContinue
-  Remove-Variable length -ErrorAction SilentlyContinue
+  Remove-Variable pageLimit -ErrorAction SilentlyContinue
   Remove-Variable api_server_port -ErrorAction SilentlyContinue
+  Remove-Variable v4Headers -ErrorAction SilentlyContinue
+  Remove-Variable baseUri -ErrorAction SilentlyContinue
 #endregion
