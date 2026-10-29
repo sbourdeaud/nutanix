@@ -368,6 +368,7 @@ public class ServerCertificateValidationCallback
 #region main processing
 
   #region Build cluster lookup table (using v3 API since v4 doesn't have clusters endpoint)
+  # Skip Prism Central clusters - they don't have AHV hosts
   [System.Collections.Hashtable]$clusterLookup = @{}  # uuid -> cluster object
   
   Write-Host "$(Get-Date) [INFO] Retrieving clusters information from Prism Central $($prismcentral) (v3 API)" -ForegroundColor Green
@@ -378,17 +379,32 @@ public class ServerCertificateValidationCallback
           ForEach ($entity in $resp.entities) 
           {
               $clusterUuid = $entity.metadata.uuid
+              $clusterName = $entity.spec.name
+              
+              # Detect Prism Central cluster: no hypervisor_server_list or hypervisor type indicates PC
+              $isPcCluster = $false
+              if (-not $entity.status.resources.nodes.hypervisor_server_list) {
+                  $isPcCluster = $true
+              } elseif ($entity.status.resources.nodes.hypervisor_server_list[0].type -eq "PRISM_CENTRAL") {
+                  $isPcCluster = $true
+              }
+              
+              if ($isPcCluster) {
+                  Write-Host "$(Get-Date) [INFO] Skipping Prism Central cluster: $clusterName (UUID=$clusterUuid)" -ForegroundColor Yellow
+                  continue
+              }
+              
               # Safe access to hypervisor type
               $hypervisor = "AHV"
               if ($entity.status.resources.nodes.hypervisor_server_list) {
                   $hypervisor = $entity.status.resources.nodes.hypervisor_server_list[0].type
               }
               $clusterLookup[$clusterUuid] = @{
-                  name = $entity.spec.name
+                  name = $clusterName
                   hypervisor = $hypervisor
               }
               if ($debugme) {
-                  Write-Host "$(Get-Date) [DEBUG] Cluster: $($entity.spec.name) UUID=$clusterUuid Hypervisor=$hypervisor" -ForegroundColor White
+                  Write-Host "$(Get-Date) [DEBUG] Cluster: $clusterName UUID=$clusterUuid Hypervisor=$hypervisor" -ForegroundColor White
               }
           }
       }
@@ -401,7 +417,7 @@ public class ServerCertificateValidationCallback
   
   if ($debugme) 
   {
-      Write-Host "$(Get-Date) [DEBUG] Cluster lookup table has $($clusterLookup.Count) entries" -ForegroundColor White
+      Write-Host "$(Get-Date) [DEBUG] Cluster lookup table has $($clusterLookup.Count) entries (AHV clusters only)" -ForegroundColor White
   }
   #endregion
 
