@@ -60,7 +60,7 @@ Param
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$prism,
     [parameter(mandatory = $false)] $prismCreds,
-    [parameter(mandatory = $true)] [ValidateSet("planned","unplanned","deactivate")] [string]$failover,
+    [parameter(mandatory = $false)] [ValidateSet("planned","unplanned","deactivate")] [string]$failover,
     [parameter(mandatory = $false)] [string]$fsname,
     [parameter(mandatory = $false)] [string]$reference,
     [parameter(mandatory = $false)] [string]$pd,
@@ -86,10 +86,21 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
-'
+'@
     $myvarScriptName = ".\Invoke-NutanixFilesDr.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -98,17 +109,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -153,7 +164,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -208,7 +219,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -380,7 +391,7 @@ public class ServerCertificateValidationCallback
         param (
             [Parameter(Mandatory)][String]$task,
             [Parameter(Mandatory)][String]$cluster,
-            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+            [parameter(mandatory = $false)][System.Management.Automation.PSCredential]$credential   
         )
         
         Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
@@ -431,7 +442,7 @@ public class ServerCertificateValidationCallback
             [Parameter(Mandatory)]$time,
             [Parameter(Mandatory)][String][ValidateSet('activate','deactivate')]$operation,
             [Parameter(Mandatory)][String]$cluster,
-            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+            [parameter(mandatory = $false)][System.Management.Automation.PSCredential]$credential   
         )
         
         Write-Host ""
@@ -484,7 +495,7 @@ public class ServerCertificateValidationCallback
         param (
             $pd,
             [Parameter(Mandatory)][String]$cluster,
-            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential            
+            [parameter(mandatory = $false)][System.Management.Automation.PSCredential]$credential            
         )
 
         Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
@@ -544,7 +555,7 @@ public class ServerCertificateValidationCallback
         param (
             $pd,
             [Parameter(Mandatory)][String]$cluster,
-            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+            [parameter(mandatory = $false)][System.Management.Automation.PSCredential]$credential   
         )
 
         Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
@@ -586,7 +597,7 @@ public class ServerCertificateValidationCallback
         param (
             $pd,
             [Parameter(Mandatory)][String]$cluster,
-            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+            [parameter(mandatory = $false)][System.Management.Automation.PSCredential]$credential   
         )
 
         Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
@@ -630,7 +641,7 @@ public class ServerCertificateValidationCallback
         param (
             $pd,
             [Parameter(Mandatory)][String]$cluster,
-            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+            [parameter(mandatory = $false)][System.Management.Automation.PSCredential]$credential   
         )
 
         Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green

@@ -39,9 +39,9 @@ Synchronize all rules starting with flowPc1 from pc1 to pc2:
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$sourcePc,
-        [parameter(mandatory = $true)] [string]$targetPc,
-        [parameter(mandatory = $true)] [string]$prefix,
+        [parameter(mandatory = $false)] [string]$sourcePc,
+        [parameter(mandatory = $false)] [string]$targetPc,
+        [parameter(mandatory = $false)] [string]$prefix,
         [parameter(mandatory = $false)][ValidateSet("scan","sync")] [string]$action="scan",
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $false)] [switch]$securedCalls
@@ -70,10 +70,21 @@ Date       By   Updates (newest updates at the top)
 10/18/2021 sb   Fixing an issue where a rule needed both adding and removing but had different target groups.
 10/19/2021 sb   Fixing an issue where the wrong rule would sometime get removed.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\Invoke-FlowRuleSync.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -82,17 +93,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -137,7 +148,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -192,7 +203,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -277,6 +288,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
+    if (!$sourcepc -or !$targetpc) {
+        Throw "$(Get-Date) [ERROR] You must specify -sourcepc -targetpc!"
+    }
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
@@ -340,10 +354,11 @@ public class ServerCertificateValidationCallback
                 if ($resp.entities) {
                     $source_rules_response += $resp.entities
                 }
-                $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                $content.offset = $resp.metadata.offset + $resp.metadata.length
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
-            While ($resp.metadata.length -eq $length)
+            While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the source Prism Central instance $($sourcePc)" -ForegroundColor Cyan
             $filtered_source_rules_response = $source_rules_response | Where-Object {$_.spec.name -match "^$prefix"}
             Write-Host "$(get-date) [DATA] There are $($filtered_source_rules_response.count) Flow rules which match prefix $($prefix) on source Prism Central $($sourcePc)..." -ForegroundColor White
@@ -365,10 +380,11 @@ public class ServerCertificateValidationCallback
                 if ($resp.entities) {
                     $target_rules_response += $resp.entities
                 }
-                $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                $content.offset = $resp.metadata.offset + $resp.metadata.length
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
-            While ($resp.metadata.length -eq $length)
+            While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of Flow rules from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
             $filtered_target_rules_response = $target_rules_response | Where-Object {$_.spec.name -match "^$prefix"}
             Write-Host "$(get-date) [DATA] There are $($filtered_target_rules_response.count) Flow rules which match prefix $($prefix) on target Prism Central $($targetPc)..." -ForegroundColor White
@@ -400,10 +416,11 @@ public class ServerCertificateValidationCallback
                 if ($resp.entities) {
                     $target_service_groups += $resp.entities
                 }
-                $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                $content.offset = $resp.metadata.offset + $resp.metadata.length
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
-            While ($resp.metadata.length -eq $length)
+            While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
             Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
         #endregion
@@ -429,10 +446,11 @@ public class ServerCertificateValidationCallback
                 if ($resp.entities) {
                     $target_address_groups += $resp.entities
                 }
-                $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                $content.offset = $resp.metadata.offset + $resp.metadata.length
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
-            While ($resp.metadata.length -eq $length)
+            While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of address groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
             Write-Host "$(get-date) [DATA] There are $($target_address_groups.count) address groups on target Prism Central $($targetPc)..." -ForegroundColor White
         #endregion
@@ -649,10 +667,11 @@ public class ServerCertificateValidationCallback
                                     if ($resp.entities) {
                                         $target_service_groups += $resp.entities
                                     }
-                                    $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                                    $content.offset = $resp.metadata.offset + $resp.metadata.length
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                 }
-                                While ($resp.metadata.length -eq $length)
+                                While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
                                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
                                 Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
                             #endregion
@@ -678,10 +697,11 @@ public class ServerCertificateValidationCallback
                                     if ($resp.entities) {
                                         $target_address_groups += $resp.entities
                                     }
-                                    $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                                    $content.offset = $resp.metadata.offset + $resp.metadata.length
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                 }
-                                While ($resp.metadata.length -eq $length)
+                                While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
                                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of address groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
                                 Write-Host "$(get-date) [DATA] There are $($target_address_groups.count) address groups on target Prism Central $($targetPc)..." -ForegroundColor White
                             #endregion
@@ -791,10 +811,11 @@ public class ServerCertificateValidationCallback
                                     if ($resp.entities) {
                                         $target_service_groups += $resp.entities
                                     }
-                                    $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                                    $content.offset = $resp.metadata.offset + $resp.metadata.length
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                 }
-                                While ($resp.metadata.length -eq $length)
+                                While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
                                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of service groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
                                 Write-Host "$(get-date) [DATA] There are $($target_service_groups.count) service groups on target Prism Central $($targetPc)..." -ForegroundColor White
                             #endregion
@@ -820,10 +841,11 @@ public class ServerCertificateValidationCallback
                                     if ($resp.entities) {
                                         $target_address_groups += $resp.entities
                                     }
-                                    $content.offset = $content.offset + $content.length
+        if (-not $resp.entities -or (@($resp.entities)).Count -eq 0) { break }
+                                    $content.offset = $resp.metadata.offset + $resp.metadata.length
                                     $payload = (ConvertTo-Json $content -Depth 4)
                                 }
-                                While ($resp.metadata.length -eq $length)
+                                While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
                                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved list of address groups from the target Prism Central instance $($targetPc)" -ForegroundColor Cyan
                                 Write-Host "$(get-date) [DATA] There are $($target_address_groups.count) address groups on target Prism Central $($targetPc)..." -ForegroundColor White
                             #endregion

@@ -47,7 +47,7 @@ Connect to a Nutanix cluster of your choice:
         [parameter(mandatory = $false)] [switch]$html,
         [parameter(mandatory = $false)] [switch]$viewnow,
         [parameter(mandatory = $false)] [string]$dir,
-        [parameter(mandatory = $true)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$prismCreds,
         [parameter(mandatory = $false)] [switch]$influxdb,
         [parameter(mandatory = $false)] [string]$influxdbCreds,
@@ -59,17 +59,17 @@ Connect to a Nutanix cluster of your choice:
 #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -114,7 +114,7 @@ Connect to a Nutanix cluster of your choice:
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -169,7 +169,7 @@ Connect to a Nutanix cluster of your choice:
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -256,10 +256,21 @@ Date       By   Updates (newest updates at the top)
 02/07/2021 sb   Initial release.
 02/22/2021 sb   Adding influxdb output.
 ################################################################################
-'
+'@
     $myvar_script_name = ".\get-UvmCapacity.ps1"
 
-    if ($help) {get-help $myvar_script_name; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
     
     if (!$dir)
@@ -404,6 +415,9 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region parameters validation
+    if (!$cluster) {
+        Throw "$(Get-Date) [ERROR] You must specify -cluster!"
+    }
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
@@ -1302,7 +1316,7 @@ Date       By   Updates (newest updates at the top)
                 #endregion
 
                 #* html report creation/formatting starts here
-                $myvar_html_report = New-Html -TitleText "Capacity Report" -Online {
+                $myvar_html_report = New-HTML -TitleText "Capacity Report" -Online {
                     New-HTMLTableStyle -BackgroundColor Black -TextColor White -Type Button
                     New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Header
                     New-HTMLTableStyle -FontFamily 'system-ui' -FontSize 14 -BackgroundColor "#4C4C4E" -TextColor White -TextAlign center -Type Footer
@@ -1316,19 +1330,19 @@ Date       By   Updates (newest updates at the top)
                     New-HTMLTableStyle -Type Footer -BorderTopStyle none -BorderTopColor Black -BorderTopWidthSize 5px -BorderBottomColor "#4C4C4E" -BorderBottomStyle solid
 
                     #* this is the collapsed general info section at the top which contains configuration settings and cluster details
-                    New-HtmlSection -HeaderText "General Information" -Wrap wrap -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White -Direction Row {
-                        New-HtmlSection -HeaderText "Report Configuration Settings" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                            New-HtmlTable -DataTable ($myvar_report_configuration_settings) -HideFooter
+                    New-HTMLSection -HeaderText "General Information" -Wrap wrap -CanCollapse  -Collapsed -HeaderBackGroundColor "#168CF5" -HeaderTextColor White -Direction Row {
+                        New-HTMLSection -HeaderText "Report Configuration Settings" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                            New-HTMLTable -DataTable ($myvar_report_configuration_settings) -HideFooter
                         }
-                        New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                            New-HtmlTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
-                            New-HtmlTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
+                        New-HTMLSection -HeaderText "$($myvar_ntnx_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                            New-HTMLTable -DataTable ($myvar_ntnx_cluster_general_information) -HideFooter
+                            New-HTMLTable -DataTable ($myvar_ntnx_cluster_reserved_capacity) -HideFooter
                         }
                         if ($myvar_remote_site_online)
                         {#remote site is available
-                            New-HtmlSection -HeaderText "$($myvar_ntnx_remote_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                                New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_general_information) -HideFooter
-                                New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_reserved_capacity) -HideFooter
+                            New-HTMLSection -HeaderText "$($myvar_ntnx_remote_cluster_name)" -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                                New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_general_information) -HideFooter
+                                New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_reserved_capacity) -HideFooter
                             }
                         }
                     }
@@ -1336,7 +1350,7 @@ Date       By   Updates (newest updates at the top)
                     #* this is the section containing the metro failover capability status widgets
                     if ($myvar_remote_site_online)
                     {#remote site is available
-                        New-HtmlSection -HeaderText "Metro Failover Capability" -Wrap wrap -CanCollapse -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                        New-HTMLSection -HeaderText "Metro Failover Capability" -Wrap wrap -CanCollapse -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
                             #showing capacity status widget
                             New-HTMLPanel -Invisible {   
                                 New-HTMLToast -TextHeader $myvar_ntnx_cluster_widget_header -Text $myvar_ntnx_cluster_failover_capacity_status -TextColor $myvar_ntnx_cluster_failover_capacity_color -TextHeaderColor $myvar_ntnx_cluster_failover_capacity_color -BarColorLeft $myvar_ntnx_cluster_failover_capacity_color -BarColorRight $myvar_ntnx_cluster_failover_capacity_color -IconSolid $myvar_ntnx_cluster_failover_capacity_icon -IconColor $myvar_ntnx_cluster_failover_capacity_color
@@ -1346,10 +1360,10 @@ Date       By   Updates (newest updates at the top)
                     }
 
                     #* this is the section containing virtual machines capacity details
-                    New-HtmlSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse -Collapsed -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
+                    New-HTMLSection -HeaderText "UVM Capacity" -Wrap wrap -CanCollapse -Collapsed -HeaderBackGroundColor "#024DA1" -HeaderTextColor White {
                         
                         #showing capacity numbers for the queried cluster
-                        New-HtmlSection -HeaderText "$($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White -Wrap wrap {
+                        New-HTMLSection -HeaderText "$($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White -Wrap wrap {
                             #* showing capacity status widget
                             New-HTMLPanel -Invisible {   
                                 if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
@@ -1372,7 +1386,7 @@ Date       By   Updates (newest updates at the top)
                             }
                             
                             #* showing capacity numbers 
-                            New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter {
+                            New-HTMLTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter {
                                 New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining vCPUs for UVMs' -BackgroundColor $myvar_ntnx_cluster_cpu_color -Row -Color White
                                 New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining Memory GiB for UVMs' -BackgroundColor $myvar_ntnx_cluster_memory_color -Row  -Color White
                             }
@@ -1407,8 +1421,8 @@ Date       By   Updates (newest updates at the top)
                         #* showing capacity details for metro protected uvms
                         if ($myvar_ntnx_cluster_ma_uvms)
                         {#there are powered on vms protected by metro availability
-                            New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                                New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
+                            New-HTMLSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                                New-HTMLTable -DataTable ($myvar_ntnx_cluster_ma_uvms_capacity_allocated) -HideFooter
                             }
                         }
 
@@ -1417,7 +1431,7 @@ Date       By   Updates (newest updates at the top)
                         if ($myvar_remote_site_online)
                         {#remote site is available
                             #* showing capacity numbers for the remote cluster
-                            New-HtmlSection -HeaderText "$($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White -Wrap wrap {
+                            New-HTMLSection -HeaderText "$($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White -Wrap wrap {
                                 #* showing capacity status widget
                                 New-HTMLPanel -Invisible {   
                                     if ($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_remote_cluster_uvm_remaining_cpu)
@@ -1440,7 +1454,7 @@ Date       By   Updates (newest updates at the top)
                                 }
                                 
                                 #* showing capacity numbers 
-                                New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_uvm_capacity) -HideFooter {
+                                New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_uvm_capacity) -HideFooter {
                                     New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining vCPUs for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_cpu_color -Row -Color White
                                     New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining Memory GiB for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_memory_color -Row  -Color White
                                 }
@@ -1475,8 +1489,8 @@ Date       By   Updates (newest updates at the top)
                             #showing capacity details for metro protected uvms
                             if ($myvar_ntnx_remote_cluster_ma_uvms)
                             {#there are powered on vms protected by metro availability
-                                New-HtmlSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
-                                    New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_ma_uvms_capacity_allocated) -HideFooter
+                                New-HTMLSection -HeaderText "Metro enabled UVM Allocated Capacity for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed -HeaderBackGroundColor "#3ABFEF" -HeaderTextColor White {
+                                    New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_ma_uvms_capacity_allocated) -HideFooter
                                 }
                             }
                         }
@@ -1485,8 +1499,8 @@ Date       By   Updates (newest updates at the top)
                     #showing queried cluster details of metro enabled uvms
                     if ($myvar_ntnx_cluster_ma_uvms)
                     {#there are powered on vms protected by metro availability
-                        New-HtmlSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                            New-HtmlTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
+                        New-HTMLSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                            New-HTMLTable -DataTable ($myvar_ntnx_cluster_ma_uvms) -HideFooter
                         }
                     }
 
@@ -1495,48 +1509,48 @@ Date       By   Updates (newest updates at the top)
                     {#remote site is available
                         if ($myvar_ntnx_remote_cluster_ma_uvms)
                         {#there are powered on vms protected by metro availability
-                            New-HtmlSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                                New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_ma_uvms) -HideFooter
+                            New-HTMLSection -HeaderText "Metro enabled UVMs details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                                New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_ma_uvms) -HideFooter
                             }
                         }
                     }
 
                     #showing queried cluster hosts details
-                    New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
+                    New-HTMLSection -HeaderText "Hosts details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                        New-HTMLTable -DataTable ($myvar_ntnx_cluster_hosts_config) -HideFooter
                     }
 
                     #showing remote cluster hosts details
                     if ($myvar_remote_site_online)
                     {#remote site is available
-                        New-HtmlSection -HeaderText "Hosts details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                            New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_hosts_config) -HideFooter
+                        New-HTMLSection -HeaderText "Hosts details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                            New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_hosts_config) -HideFooter
                         }
                     }
                     
                     #showing queried cluster uvms details
-                    New-HtmlSection -HeaderText "UVM details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvms_info) -HideFooter
+                    New-HTMLSection -HeaderText "UVM details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                        New-HTMLTable -DataTable ($myvar_ntnx_cluster_uvms_info) -HideFooter
                     }
                     
                     #showing remote cluster uvms details
                     if ($myvar_remote_site_online)
                     {#remote site is available
-                        New-HtmlSection -HeaderText "UVM details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                            New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_uvms_info) -HideFooter
+                        New-HTMLSection -HeaderText "UVM details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                            New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_uvms_info) -HideFooter
                         }
                     }
 
                     #showing queried cluster storage containers details
-                    New-HtmlSection -HeaderText "Storage containers details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                        New-HtmlTable -DataTable ($myvar_ntnx_cluster_storage_containers_info) -HideFooter
+                    New-HTMLSection -HeaderText "Storage containers details for $($myvar_ntnx_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                        New-HTMLTable -DataTable ($myvar_ntnx_cluster_storage_containers_info) -HideFooter
                     }
 
                     #showing remote cluster storage containers details
                     if ($myvar_remote_site_online)
                     {#remote site is available
-                        New-HtmlSection -HeaderText "Storage containers details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
-                            New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_storage_containers_info) -HideFooter
+                        New-HTMLSection -HeaderText "Storage containers details for $($myvar_ntnx_remote_cluster_name)" -CanCollapse -Collapsed  -HeaderBackGroundColor "#AFD135" -HeaderTextColor White {
+                            New-HTMLTable -DataTable ($myvar_ntnx_remote_cluster_storage_containers_info) -HideFooter
                         }
                     }
                 }

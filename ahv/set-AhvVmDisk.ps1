@@ -38,10 +38,10 @@ Adds a single 100 GiB disk to VM myvm.
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true,HelpMessage = "Enter the Nutanix AHV cluster name or address")] [string]$cluster,
+        [parameter(mandatory = $false,HelpMessage = "Enter the Nutanix AHV cluster name or address")] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
-        [parameter(mandatory = $true,HelpMessage = "Enter the name of the VM to add disks to")] [string]$vm,
-        [parameter(mandatory = $true,HelpMessage = "Enter the size in GiB of the disks to add")] [int64]$size,
+        [parameter(mandatory = $false,HelpMessage = "Enter the name of the VM to add disks to")] [string]$vm,
+        [parameter(mandatory = $false,HelpMessage = "Enter the size in GiB of the disks to add")] [int64]$size,
         [parameter(mandatory = $false)] [string]$container,
         [parameter(mandatory = $false)] [int]$qty
     )
@@ -59,10 +59,21 @@ Date       By   Updates (newest updates at the top)
 04/06/2020 sb   Do over with sbourdeaud module
 09/11/2018 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\new-AhvVmDisk.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -71,17 +82,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -126,7 +137,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -181,7 +192,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -266,6 +277,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
+    if (!$prismcentral -or !$vmname -or !$diskname) {
+        Throw "$(Get-Date) [ERROR] You must specify -prismcentral -vmname -diskname!"
+    }
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"

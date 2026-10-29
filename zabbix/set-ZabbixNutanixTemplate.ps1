@@ -39,10 +39,10 @@ Add items and triggers for all alerts in the cluster1-alertPolicy.csv file with 
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$inputcsv,
-        [parameter(mandatory = $true)] [string]$zabbix,
+        [parameter(mandatory = $false)] [string]$inputcsv,
+        [parameter(mandatory = $false)] [string]$zabbix,
         [parameter(mandatory = $false)] $zabbixCreds,
-        [parameter(mandatory = $true)] [string]$alertName,
+        [parameter(mandatory = $false)] [string]$alertName,
         [parameter(mandatory = $false)] [string]$template
     )
 #endregion parameters
@@ -73,7 +73,7 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
         [string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -176,7 +176,7 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
 		[string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -342,7 +342,18 @@ Date       By   Updates (newest updates at the top)
 '@
     $myvarScriptName = ".\set-ZabbixNutanixTemplate.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -358,6 +369,9 @@ Date       By   Updates (newest updates at the top)
 #endregion variables
 
 #region parameters validation
+    if (!$inputcsv -or !$zabbix -or !$alertName) {
+        Throw "$(Get-Date) [ERROR] You must specify -inputcsv -zabbix -alertName!"
+    }
     if (!$zabbixCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $zabbixCredentials = Get-Credential -Message "Please enter Zabbix credentials"

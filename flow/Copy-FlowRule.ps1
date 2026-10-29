@@ -39,10 +39,10 @@ Copy myFlowRule1 to myFlowRule2 and apply it to AppType app2 in monitor mode:
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$pc,
-        [parameter(mandatory = $true)] [string]$sourceRule,
-        [parameter(mandatory = $true)] [string]$targetRule,
-        [parameter(mandatory = $true)] [string]$appType,
+        [parameter(mandatory = $false)] [string]$pc,
+        [parameter(mandatory = $false)] [string]$sourceRule,
+        [parameter(mandatory = $false)] [string]$targetRule,
+        [parameter(mandatory = $false)] [string]$appType,
         [parameter(mandatory = $false)] [ValidateSet("enforce","monitor")] [string]$mode,
         [parameter(mandatory = $false)] $prismCreds
     )
@@ -75,7 +75,7 @@ function Set-CustomCredentials
         [string] 
         $path,
         
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
     )
@@ -179,7 +179,7 @@ function Get-CustomCredentials
         [string] 
         $path,
         
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
     )
@@ -358,12 +358,12 @@ function Invoke-PrismAPICall
     #>
     param
     (
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [ValidateSet("POST","GET","DELETE","PUT")]
         [string] 
         $method,
         
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $url,
 
@@ -371,7 +371,7 @@ function Invoke-PrismAPICall
         [string] 
         $payload,
         
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [System.Management.Automation.PSCredential]
         $credential
     )
@@ -482,9 +482,9 @@ function Get-PrismCentralObjectList
     [CmdletBinding()]
     param 
     (
-        [Parameter(mandatory = $true)][string] $pc,
-        [Parameter(mandatory = $true)][string] $object,
-        [Parameter(mandatory = $true)][string] $kind
+        [parameter(mandatory = $false)][string] $pc,
+        [parameter(mandatory = $false)][string] $object,
+        [parameter(mandatory = $false)][string] $kind
     )
 
     begin 
@@ -585,11 +585,11 @@ function Get-PrismCentralTaskStatus
         [Parameter(Mandatory)]
         $task,
         
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [System.Management.Automation.PSCredential]
         $credential,
 
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [String]
         $cluster
     )
@@ -1006,10 +1006,21 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter and Write-LogOutput/LoadModule functions
 11/09/2022 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\Copy-FlowRule.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -1025,6 +1036,9 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region parameters validation
+    if (!$pc -or !$sourceRule -or !$targetRule -or !$appType) {
+        Throw "$(Get-Date) [ERROR] You must specify -pc -sourceRule -targetRule -appType!"
+    }
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"

@@ -40,7 +40,7 @@ Move myvm to forensics quarantine.
       [parameter(mandatory = $false)] [string]$prism,
       [parameter(mandatory = $false)] $prismCreds,
       [parameter(mandatory = $false)] [string]$vm,
-      [parameter(mandatory = $true)] [ValidateSet("move","remove")] [string]$action,
+      [parameter(mandatory = $false)] [ValidateSet("move","remove")] [string]$action,
       [parameter(mandatory = $false)] [ValidateSet("strict","forensics")] [string]$type
   )
 #endregion
@@ -69,12 +69,12 @@ Makes a POST api call to the specified endpoint with the specified payload.
 #>
 param
 (
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [ValidateSet("POST","GET","DELETE","PUT")]
     [string] 
     $method,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [string] 
     $url,
 
@@ -82,7 +82,7 @@ param
     [string] 
     $payload,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [System.Management.Automation.PSCredential]
     $credential,
     
@@ -168,7 +168,7 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
         [string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -271,7 +271,7 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
 		[string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -449,11 +449,11 @@ https://github.com/sbourdeaud
         [Parameter(Mandatory)]
         $task,
         
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [System.Management.Automation.PSCredential]
         $credential,
 
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [String]
         $cluster
     )
@@ -730,9 +730,20 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter and Write-LogOutput/LoadModule/CheckModule functions
 11/10/2022 sb   Initial release.
 ################################################################################
-'
+'@
   $myvarScriptName = ".\set-vmQuarantine.ps1"
-  if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
   if ($History) {$HistoryText; exit}
 
   Set-PoSHSSLCerts

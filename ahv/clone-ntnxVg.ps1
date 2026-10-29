@@ -34,9 +34,9 @@ Display a list of volume groups to clone from sqlprod1 to sqldev1 and proceed wi
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$cluster,
-        [parameter(mandatory = $true)] [string]$sourcevm,
-        [parameter(mandatory = $true)] [string]$targetvm,
+        [parameter(mandatory = $false)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$sourcevm,
+        [parameter(mandatory = $false)] [string]$targetvm,
         [parameter(mandatory = $false)] [string]$prismCreds
     )
 #endregion
@@ -53,12 +53,19 @@ Date       By   Updates (newest updates at the top)
 04/03/2020 sb   Do over with sbourdeaud module.
 06/19/2015 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\clone-ntnxVg.ps1"
     
-    if ($help) 
-    {
-        get-help $myvarScriptName
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
         exit
     }
     if ($History) 
@@ -76,17 +83,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -131,7 +138,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -186,7 +193,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -264,11 +271,11 @@ public class ServerCertificateValidationCallback
             [Parameter(Mandatory)]
             $Task,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]
             $credential,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [String]
             $cluster
         )
@@ -345,6 +352,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation	
+    if (!$prismcentral -or !$vgname -or !$newvgname) {
+        Throw "$(Get-Date) [ERROR] You must specify -prismcentral -vgname -newvgname!"
+    }
 	#let's initialize parameters if they haven't been specified
     if ($sourcevm -eq $targetvm)
     {#source and target vm are the same

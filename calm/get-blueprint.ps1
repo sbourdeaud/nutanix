@@ -32,7 +32,7 @@ Get json exports for all blueprints starting with my_blueprints:
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$prismcentral,
+        [parameter(mandatory = $false)] [string]$prismcentral,
         [parameter(mandatory = $false)] [string]$bps,
         [parameter(mandatory = $false)] $prismCreds
     )
@@ -41,17 +41,17 @@ Get json exports for all blueprints starting with my_blueprints:
 #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -96,7 +96,7 @@ Get json exports for all blueprints starting with my_blueprints:
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -151,7 +151,7 @@ Get json exports for all blueprints starting with my_blueprints:
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -237,10 +237,21 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter and Write-LogOutput/LoadModule functions; converted from UTF-16 to UTF-8
 07/08/2021 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\get-blueprint.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -352,7 +363,7 @@ Date       By   Updates (newest updates at the top)
                   Throw "$(get-date) [ERROR] $saved_error"
               }
           }
-          While ($resp.metadata.length -eq $length)
+          While ($content.offset -lt $resp.metadata.total_matches)
 
           if ($debugme) 
           {

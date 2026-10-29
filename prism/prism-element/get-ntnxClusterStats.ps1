@@ -62,7 +62,7 @@ Generate one csv file per overview metric for the last 7 days.
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $false)] [pscredential]$prismCredsObject,
         [parameter(mandatory = $false)] [switch]$hour,
@@ -234,12 +234,12 @@ Makes a POST api call to the specified endpoint with the specified payload.
 #>
 param
 (
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [ValidateSet("POST","GET","DELETE","PUT")]
     [string] 
     $method,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [string] 
     $url,
 
@@ -247,7 +247,7 @@ param
     [string] 
     $payload,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [System.Management.Automation.PSCredential]
     $credential
 )
@@ -329,7 +329,7 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
         [string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -432,7 +432,7 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
 		[string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -695,10 +695,21 @@ function New-PercentageBar {
  08/08/2023 sb   Removing dependency on sbourdeaud module in the gallery.
  08/09/2023 sb   Adding prismCredsObject parameter.
  ################################################################################
-'
+'@
     $myvarScriptName = ".\get-ntnxClusterStats.ps1"
     
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -724,6 +735,9 @@ function New-PercentageBar {
 
 #region parameters validation
 
+    if (!$cluster) {
+        Throw "$(Get-Date) [ERROR] You must specify -cluster!"
+    }
     #make sure we have a time period specified
     if ((!$hour) -and (!$day) -and (!$week) -and (!$month) -and (!($startdate -and $enddate))) {
         Throw "$(get-date) [ERROR] You must specify a time period with -day, -week, -month or with -startdate and -enddate!"

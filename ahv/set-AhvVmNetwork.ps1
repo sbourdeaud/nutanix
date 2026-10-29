@@ -40,9 +40,9 @@ Connect myvm to the mynetwork AHV network:
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$prism,
+        [parameter(mandatory = $false)] [string]$prism,
         [parameter(mandatory = $false)] $prismCreds,
-        [parameter(mandatory = $true)] $vms,
+        [parameter(mandatory = $false)] $vms,
         [parameter(mandatory = $false)] [string]$ahv_network,
         [parameter(mandatory = $false)] [string]$vpc_subnet,
         [parameter(mandatory = $false)] [switch]$skiptaskstatuscheck,
@@ -61,10 +61,21 @@ Date       By   Updates (newest updates at the top)
 04/27/2021 sb   Initial release.
 06/24/2022 sb   Adding vpc_subnet option.  Replacing external module dependency with local functions.
 ################################################################################
-'
+'@
     $myvar_script_name = ".\set-AhvVmNetwork.ps1"
 
-    if ($help) {get-help $myvar_script_name; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$myvar_history_text; exit}
 
     #check PoSH version
@@ -73,17 +84,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -128,7 +139,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -183,7 +194,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -356,11 +367,11 @@ public class ServerCertificateValidationCallback
             [Parameter(Mandatory)]
             $task,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]
             $credential,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [String]
             $cluster
         )
@@ -412,11 +423,11 @@ public class ServerCertificateValidationCallback
             [Parameter(Mandatory)]
             $task,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]
             $credential,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [String]
             $cluster
         )
@@ -471,6 +482,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
+    if (!$prismcentral -or !$vmname -or !$networkname) {
+        Throw "$(Get-Date) [ERROR] You must specify -prismcentral -vmname -networkname!"
+    }
     if ($ahv_network -and $vpc_subnet) {Throw "$(get-date) [ERROR] You can only specify an ahv_network OR a vpc_subnet but not both! Exiting."}
     if (!$ahv_network -and !$vpc_subnet) {Throw "$(get-date) [ERROR] You must specify either an ahv_network OR a vpc_subnet! Exiting."}
     if ($ahv_network) 

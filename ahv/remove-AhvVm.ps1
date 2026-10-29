@@ -41,8 +41,8 @@ Deletes all VMs matching steph-vm* without prompting, using up to 20 concurrent 
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$cluster,
-        [parameter(mandatory = $true)] $vm,
+        [parameter(mandatory = $false)] [string]$cluster,
+        [parameter(mandatory = $false)] $vm,
         [parameter(mandatory = $false)] [switch]$allowWildcards,
         [parameter(mandatory = $false)] [switch]$Force,
         [parameter(mandatory = $false)] [ValidateRange(1, 50)] [int]$ThrottleLimit = 10,
@@ -61,10 +61,21 @@ Date       By   Updates (newest updates at the top)
 08/26/2026 sb   Added -Force to skip delete confirmation, A[ll] prompt option, and parallel deletes.
 02/22/2021 sb   Initial release, with JM's help.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\remove-AhvVm.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -73,17 +84,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -128,7 +139,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -183,7 +194,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -268,6 +279,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
+    if (!$prismcentral -or !$vmname) {
+        Throw "$(Get-Date) [ERROR] You must specify -prismcentral -vmname!"
+    }
   if (!$prismCreds) 
   {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
       $prismCredentials = Get-Credential -Message "Please enter Prism credentials"

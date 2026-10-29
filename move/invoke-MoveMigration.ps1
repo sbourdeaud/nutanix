@@ -53,9 +53,9 @@ Report the status of all migration plans from the specified Move instance:
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] $move,
+        [parameter(mandatory = $false)] $move,
         [parameter(mandatory = $false)] $moveCreds,
-        [parameter(mandatory = $true)] [string][ValidateSet("migrate","report","cutover","failback","validate","suspend","resume")]$action,
+        [parameter(mandatory = $false)] [string][ValidateSet("migrate","report","cutover","failback","validate","suspend","resume")]$action,
         [parameter(mandatory = $false)] $plans,
         [parameter(mandatory = $false)] $csvPlans
     )
@@ -106,7 +106,7 @@ Report the status of all migration plans from the specified Move instance:
             [string] 
             $path,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $credname
         )
@@ -210,7 +210,7 @@ Report the status of all migration plans from the specified Move instance:
             [string] 
             $path,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $credname
         )
@@ -390,12 +390,12 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
         #>
         param
         (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string] 
             $method,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $url,
 
@@ -403,7 +403,7 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             [string] 
             $payload,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]
             $credential
         )
@@ -508,9 +508,9 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
         [CmdletBinding()]
         param 
         (
-            [Parameter(mandatory = $true)][string] $pc,
-            [Parameter(mandatory = $true)][string] $object,
-            [Parameter(mandatory = $true)][string] $kind
+            [parameter(mandatory = $false)][string] $pc,
+            [parameter(mandatory = $false)][string] $object,
+            [parameter(mandatory = $false)][string] $kind
         )
 
         begin 
@@ -806,11 +806,11 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
             [Parameter(Mandatory)]
             $task,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]
             $credential,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [String]
             $cluster
         )
@@ -925,11 +925,11 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
 
         param 
         (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $move,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]
             $credential
         )
@@ -1015,11 +1015,11 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
 
         param 
         (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $move,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [String]
             $token
         )
@@ -1101,11 +1101,11 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
 
         param 
         (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $move,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]
             $token,
 
@@ -1197,19 +1197,19 @@ if(ServicePointManager.ServerCertificateValidationCallback ==null)
 
         param 
         (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string] 
             $move,
             
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]
             $token,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]
             $provider_uuid,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]
             $cluster,
 
@@ -1277,10 +1277,21 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 08/26/2022 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\invoke-MoveMigration.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -1297,6 +1308,9 @@ Date       By   Updates (newest updates at the top)
 #endregion
 
 #region parameters validation
+    if (!$move -or !$action) {
+        Throw "$(Get-Date) [ERROR] You must specify -move -action!"
+    }
     if (!$moveCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $moveCredentials = Get-Credential -Message "Please enter Move credentials"

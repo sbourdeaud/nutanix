@@ -41,17 +41,17 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
 #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -96,7 +96,7 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -151,7 +151,7 @@ Mount the NGT iso on all VMs which are in the protection domain called "MyProtec
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -241,14 +241,21 @@ public class ServerCertificateValidationCallback
  04/21/2020 sb   Do over with sbourdeaud module.
  02/06/2021 sb   Replaced username with get-credential
  ###############################################################################
-'
+'@
         $myvarScriptName = ".\invoke-MountNgt.ps1"
 
-        if ($help) 
-        {
-            get-help $myvarScriptName
-            exit
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
         }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
         if ($History) {
         $HistoryText
         exit

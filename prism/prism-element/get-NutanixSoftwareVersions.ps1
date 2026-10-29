@@ -74,12 +74,12 @@ Makes a POST api call to the specified endpoint with the specified payload.
 #>
 param
 (
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [ValidateSet("POST","GET","DELETE","PUT")]
     [string] 
     $method,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [string] 
     $url,
 
@@ -87,7 +87,7 @@ param
     [string] 
     $payload,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [System.Management.Automation.PSCredential]
     $credential
 )
@@ -279,7 +279,7 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
         [string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -382,7 +382,7 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
 		[string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -453,11 +453,11 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
            [Parameter(Mandatory)]
            $task,
            
-           [parameter(mandatory = $true)]
+           [parameter(mandatory = $false)]
            [System.Management.Automation.PSCredential]
            $credential,
 
-           [parameter(mandatory = $true)]
+           [parameter(mandatory = $false)]
            [String]
            $cluster
        )
@@ -612,10 +612,21 @@ Date       By   Updates (newest updates at the top)
 04/16/2020 sb   Initial release.
 06/25/2020 sb   Added the -startinventory and -nowait parameters.
 ################################################################################
-'
+'@
   $myvarScriptName = ".\get-NutanixSoftwareVersions.ps1"
 
-  if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
   if ($History) {$HistoryText; exit}
 
   #check PoSH version
@@ -734,7 +745,7 @@ Date       By   Updates (newest updates at the top)
                     Throw "$(get-date) [ERROR] $saved_error"
                 }
             }
-            While ($resp.metadata.length -eq $length)
+            While ($content.offset -lt $resp.metadata.total_matches)
 
             if ($debugme) {
                 Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White

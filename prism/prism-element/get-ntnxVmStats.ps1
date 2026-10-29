@@ -59,7 +59,7 @@ Generate one csv file per overview metric for the last 7 days for the vm names m
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$cluster,
         [parameter(mandatory = $false)] [string]$username,
         [parameter(mandatory = $false)] [string]$password,
         [parameter(mandatory = $false)] $prismCreds,
@@ -71,7 +71,7 @@ Generate one csv file per overview metric for the last 7 days for the vm names m
         [parameter(mandatory = $false)] [int]$interval,
         [parameter(mandatory = $false)] [Datetime]$startdate,
         [parameter(mandatory = $false)] [Datetime]$enddate,
-        [parameter(mandatory = $true)] [string]$vm,
+        [parameter(mandatory = $false)] [string]$vm,
         
         [parameter(mandatory = $false)]
         [ValidateSet(
@@ -178,10 +178,21 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 03/24/2022 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\get-ntnxVmStats.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -190,17 +201,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -245,7 +256,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -300,7 +311,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -394,6 +405,9 @@ public class ServerCertificateValidationCallback
 
 #region parameters validation
 
+    if (!$cluster -or !$vm) {
+        Throw "$(Get-Date) [ERROR] You must specify -cluster -vm!"
+    }
     #make sure we have a time period specified
     if ((!$hour) -and (!$day) -and (!$week) -and (!$month) -and (!($startdate -and $enddate))) {
         Throw "$(get-date) [ERROR] You must specify a time period with -day, -week, -month or with -startdate and -enddate!"

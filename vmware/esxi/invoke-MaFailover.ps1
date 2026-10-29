@@ -86,17 +86,17 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
 #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -141,7 +141,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -196,7 +196,7 @@ Trigger a manual failover of all metro protection domains and put esxi hosts in 
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -316,22 +316,22 @@ public class ServerCertificateValidationCallback
     #>
 
         Param(
-            [parameter(mandatory = $true,
+            [parameter(mandatory = $false,
             HelpMessage = "Enter a VM DRS group name")]
                 [String]$VMGroup,
-            [parameter(mandatory = $true,
+            [parameter(mandatory = $false,
             HelpMessage = "Enter a DRS rule key")]
                 [String]$RuleKey,
-            [parameter(mandatory = $true,
+            [parameter(mandatory = $false,
             HelpMessage = "Enter a DRS rule uuid")]
                 [String]$RuleUuid,
-            [parameter(mandatory = $true,
+            [parameter(mandatory = $false,
             HelpMessage = "Enter a host DRS group name")]
                 [String]$HostGroup,
-            [parameter(mandatory = $true,
+            [parameter(mandatory = $false,
             HelpMessage = "Enter a cluster entity")]
                 [PSObject]$Cluster,
-            [parameter(mandatory = $true,
+            [parameter(mandatory = $false,
             HelpMessage = "Enter a name for the group")]
                 [String]$Name,
                 [Switch]$AntiAffine,
@@ -648,12 +648,19 @@ Date       By   Updates (newest updates at the top)
 10/25/2021 sb   Fixed an issue where maxConcurrentRepl was set to 1 and not 
                  being correctly enforced when running on PowerShell 5.1
 ################################################################################
-'
+'@
     $myvarScriptName = ".\invoke-MAFailover.ps1"
 
-    if ($help) 
-    {#display online help
-        get-help $myvarScriptName
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
         exit
     }
     if ($History) 
@@ -791,7 +798,7 @@ Function GetDrsObjectNames
 {
     param
     (
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $cluster_name
     )
@@ -1697,6 +1704,7 @@ $drs_rule2_name = "VMs_Should_In_GS"
             #... rest of the script would continue here
             # For brevity, the re-enable logic is similar to above
         #endregion
+        }
 
     Write-Host ""
     Write-Host "$(get-date) [STEP] Disconnecting from vCenter server $($myvar_vcenter_ip)..." -ForegroundColor Green

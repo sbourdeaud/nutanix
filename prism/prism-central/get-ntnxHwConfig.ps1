@@ -32,7 +32,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the hardware c
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$prism,
+        [parameter(mandatory = $false)] [string]$prism,
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $false)] [string]$csv
     )
@@ -53,10 +53,21 @@ Date       By   Updates (newest updates at the top)
 12/02/2021 sb   Removing dependency on sbourdeaud module
 10/12/2022 sb   Added HA information to cluster results csv
 ################################################################################
-'
+'@
     $myvarScriptName = ".\get-ntnxHwConfig.ps1"
 
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -65,17 +76,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -120,7 +131,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -175,7 +186,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -270,6 +281,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
+    if (!$prism) {
+        Throw "$(Get-Date) [ERROR] You must specify -prism!"
+    }
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
@@ -349,7 +363,7 @@ public class ServerCertificateValidationCallback
             }
 
             #prepare the json payload for the next batch of entities/response
-            $content.offset = $content.offset + $content.length
+            $content.offset = $resp.metadata.offset + $resp.metadata.length
             $payload = (ConvertTo-Json $content -Depth 4)
         }
         catch {
@@ -361,7 +375,7 @@ public class ServerCertificateValidationCallback
             #add any last words here; this gets processed no matter what
         }
     }
-    While ($resp.metadata.length -eq $length)
+    While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
 
     if ($debugme) {
         Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
@@ -442,7 +456,7 @@ public class ServerCertificateValidationCallback
                 #add any last words here; this gets processed no matter what
             }
         }
-        While ($resp.metadata.length -eq $length)
+        While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
 
         if ($debugme) {
             Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
@@ -587,7 +601,7 @@ public class ServerCertificateValidationCallback
             }
 
             #prepare the json payload for the next batch of entities/response
-            $content.offset = $content.offset + $content.length
+            $content.offset = $resp.metadata.offset + $resp.metadata.length
             $payload = (ConvertTo-Json $content -Depth 4)
         }
         catch {
@@ -599,7 +613,7 @@ public class ServerCertificateValidationCallback
             #add any last words here; this gets processed no matter what
         }
     }
-    While ($resp.metadata.length -eq $length)
+    While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
 
     if ($debugme) {
         Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White

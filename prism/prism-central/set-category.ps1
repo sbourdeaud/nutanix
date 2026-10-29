@@ -67,9 +67,20 @@ Date       By   Updates (newest updates at the top)
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 01/31/2025 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\set-category.ps1"
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -78,17 +89,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -133,7 +144,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -188,7 +199,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -345,7 +356,7 @@ public class ServerCertificateValidationCallback
             
             $myvarCategories += $resp.entities
             
-            $content.offset = $content.offset + $content.length
+            $content.offset = $resp.metadata.offset + $resp.metadata.length
             $payload = (ConvertTo-Json $content -Depth 4)
         }
         catch {
@@ -353,7 +364,7 @@ public class ServerCertificateValidationCallback
             Throw "$(get-date) [ERROR] $($_.Exception.Message)"
         }
     }
-    While ($resp.metadata.length -eq $length)
+    While ($content.offset -lt $resp.metadata.total_matches -and $resp.metadata.length -eq $length)
 
     Write-Host "$(Get-Date) [SUCCESS] Retrieved $($myvarCategories.count) existing categories" -ForegroundColor Cyan
     #endregion get categories
@@ -448,7 +459,7 @@ public class ServerCertificateValidationCallback
                 }
 
                 #update vm with category
-                Write-Host "$(Get-Date) [INFO] Adding category $category:$value to VM $vm_name..." -ForegroundColor Green
+                Write-Host "$(Get-Date) [INFO] Adding category ${category}:${value} to VM $vm_name..." -ForegroundColor Green
                 $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
                 $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, $api_server_endpoint
                 $method = "PUT"
@@ -460,7 +471,7 @@ public class ServerCertificateValidationCallback
                 $payload = (ConvertTo-Json $vm_spec -Depth 4)
                 try {
                     $resp = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $payload
-                    Write-Host "$(Get-Date) [SUCCESS] Added category $category:$value to VM $vm_name" -ForegroundColor Cyan
+                    Write-Host "$(Get-Date) [SUCCESS] Added category ${category}:${value} to VM $vm_name" -ForegroundColor Cyan
                 }
                 catch {
                     Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
@@ -471,7 +482,7 @@ public class ServerCertificateValidationCallback
         }
         elseif ($action -eq "remove") {
             #region remove category:value from vm
-                Write-Host "$(Get-Date) [INFO] Removing category $category:$value from VM $vm_name..." -ForegroundColor Green
+                Write-Host "$(Get-Date) [INFO] Removing category ${category}:${value} from VM $vm_name..." -ForegroundColor Green
                 $api_server_endpoint = "/api/nutanix/v3/vms/{0}" -f $vm_uuid
                 $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, $api_server_endpoint
                 $method = "PUT"

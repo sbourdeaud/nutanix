@@ -43,7 +43,7 @@ Start the Nutanix cluster of your choice
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $true)] [string]$cluster,
+        [parameter(mandatory = $false)] [string]$cluster,
         [parameter(mandatory = $false)] [switch]$start,
         [parameter(mandatory = $false)] [string]$cvm,
         [parameter(mandatory = $false)] [string]$vcentervmname,
@@ -64,9 +64,20 @@ Date       By   Updates (newest updates at the top)
 05/11/2020 sb   Multiple fixes in params and help.
 04/17/2018 sb   Initial release.
 ################################################################################
-'
+'@
     $myvarScriptName = ".\ntnx-clusterShutdown.ps1"
-    if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
     if ($History) {$HistoryText; exit}
 
     #check PoSH version
@@ -128,17 +139,17 @@ Date       By   Updates (newest updates at the top)
     #region helper functions (previously from sbourdeaud module)
     function Invoke-PrismAPICall {
         param (
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [ValidateSet("POST","GET","DELETE","PUT")]
             [string]$method,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$url,
 
             [parameter(mandatory = $false)]
             [string]$payload,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [System.Management.Automation.PSCredential]$credential
         )
 
@@ -183,7 +194,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -238,7 +249,7 @@ Date       By   Updates (newest updates at the top)
             [parameter(mandatory = $false)]
             [string]$path,
 
-            [parameter(mandatory = $true)]
+            [parameter(mandatory = $false)]
             [string]$credname
         )
 
@@ -325,6 +336,9 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
+    if (!$cluster) {
+        Throw "$(Get-Date) [ERROR] You must specify -cluster!"
+    }
     if (!$prismCreds) 
     {
         $prismCredentials = Get-Credential -Message "Please enter Prism credentials"

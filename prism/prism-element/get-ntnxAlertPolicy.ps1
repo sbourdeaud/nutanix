@@ -65,12 +65,12 @@ Makes a POST api call to the specified endpoint with the specified payload.
 #>
 param
 (
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [ValidateSet("POST","GET","DELETE","PUT")]
     [string] 
     $method,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [string] 
     $url,
 
@@ -78,7 +78,7 @@ param
     [string] 
     $payload,
     
-    [parameter(mandatory = $true)]
+    [parameter(mandatory = $false)]
     [System.Management.Automation.PSCredential]
     $credential,
     
@@ -164,7 +164,7 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
         [string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -267,7 +267,7 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
 		[string] 
         $path,
 		
-        [parameter(mandatory = $true)]
+        [parameter(mandatory = $false)]
         [string] 
         $credname
 	)
@@ -432,9 +432,20 @@ public class ServerCertificateValidationCallback
  01/23/2023 sb   Removing dependency on sbourdeaud module and adding functions.
  09/13/2023 sb   Custom creds functions were missing...
 ################################################################################
-'
+'@
   $myvarScriptName = ".\get-ntnxAlertPolicy.ps1"
-  if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
   if ($History) {$HistoryText; exit}
 
   #check PoSH version

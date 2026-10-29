@@ -66,7 +66,18 @@ Date       By   Updates (newest updates at the top)
 '@
 $myvarScriptName = ".\set-hostconfig.ps1"
  
-if ($help) {get-help $myvarScriptName; exit}
+    if ($help) {
+        $helpContent = Get-Content $PSCommandPath -Raw
+        $inHelp = $false
+        $helpLines = @()
+        foreach ($line in $helpContent -split "`n") {
+            if ($line -match '^<#') { $inHelp = $true; continue }
+            if ($line -match '^#>') { break }
+            if ($inHelp) { $helpLines += $line }
+        }
+        $helpLines -join "`n" | Write-Host
+        exit
+    }
 if ($History) {$HistoryText; exit}
 
 #region Load/Install VMware.PowerCLI
