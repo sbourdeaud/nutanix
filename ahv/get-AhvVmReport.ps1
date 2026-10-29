@@ -403,7 +403,7 @@ public class ServerCertificateValidationCallback
       try 
       {
           $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$pageLimit"
-          Write-Host "$(Get-Date) [INFO] Fetching VMs page $page" -ForegroundColor Green
+          Write-Host "$(Get-Date) [INFO] Fetching VMs page $($page + 1)" -ForegroundColor Green
           if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $vmsUri" -ForegroundColor White }
           
           $invokeParams = @{
