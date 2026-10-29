@@ -3,7 +3,7 @@
   This script retrieves the complete list of virtual machines from Prism Central using v4 API.
 .DESCRIPTION
   This script retrieves the complete list of virtual machines from Prism Central, including each VM specs and exports the results to csv in the current directory.
-  Uses Nutanix Prism Central v4 APIs (VMM for VMs, Prism for clusters).
+  Uses Nutanix Prism Central v4 API (VMM for VMs) and v3 API (for clusters, since v4 doesn't have clusters endpoint).
 .PARAMETER help
   Displays a help message.
 .PARAMETER history
@@ -23,7 +23,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 29th 2026 - Migrated to v4 API
+  Revision: October 29th 2026 - Migrated to v4 API (VMs) with v3 fallback for clusters
 #>
 
 #region parameters
@@ -46,7 +46,7 @@ Connect to a Nutanix Prism Central VM of your choice and retrieve the list of VM
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
-10/29/2026 sb   Migrated to Prism Central v4 API (VMM for VMs, Prism for clusters); inline helpers; fixed SSL for PS7+
+10/29/2026 sb   Migrated to Prism Central v4 API (VMM for VMs), v3 for clusters; inline helpers; fixed SSL for PS7+
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 10/20/2026 sb   Fix Set-PoSHSSLCerts/Set-PoshTls for PowerShell 7 (avoid SYSLIB0014 Add-Type errors).
 06/21/2019 sb   Initial release.
@@ -140,9 +140,17 @@ Date       By   Updates (newest updates at the top)
       )
       $attempt = 0
       $delayMs = 1000
+      # For PS7+, add SSL certificate bypass parameters
+      $sslParams = @{}
+      if ($PSVersionTable.PSVersion.Major -gt 5) {
+          $sslParams = @{
+              SkipCertificateCheck = $true
+              SslProtocol          = 'Tls12'
+          }
+      }
       while ($true) {
           try {
-              $response = Invoke-RestMethod @InvokeParams
+              $response = Invoke-RestMethod @InvokeParams @sslParams
               return $response
           }
           catch {
@@ -344,78 +352,60 @@ public class ServerCertificateValidationCallback
       'Authorization' = "Basic $base64"
   }
   $baseUri = "https://${prismcentral}:${api_server_port}/api"
+  
+  # v3 clusters endpoint (v4 doesn't have clusters list)
+  $v3ClustersUrl = "https://${prismcentral}:${api_server_port}/api/nutanix/v3/clusters/list"
+  $v3Payload = '{"kind":"cluster","offset":0,"length":100}'
 #endregion
 
 
 #region main processing
 
-  #region make v4 api call for clusters (if -ngt)
-    if ($ngt) 
-    {
-      [System.Collections.ArrayList]$myvarClusterResults = New-Object System.Collections.ArrayList($null)
-      $page = 0
-      $select = [uri]::EscapeDataString('extId,name,spec.resources.network.external_ip,spec.resources.config.software_map.NOS.version')
-      
-      Write-Host "$(Get-Date) [INFO] Retrieving clusters information from Prism Central $($prismcentral)" -ForegroundColor Green
-      Do 
-      {
-          try 
+  #region Build cluster lookup table (using v3 API since v4 doesn't have clusters endpoint)
+  [System.Collections.Hashtable]$clusterLookup = @{}
+  [System.Collections.Hashtable]$clusterNameLookup = @{}
+  
+  Write-Host "$(Get-Date) [INFO] Retrieving clusters information from Prism Central $($prismcentral) (v3 API)" -ForegroundColor Green
+  try 
+  {
+      $resp = Invoke-PrismAPICall -method "POST" -url $v3ClustersUrl -payload $v3Payload -credential $prismCredentials
+      if ($resp.entities) {
+          ForEach ($entity in $resp.entities) 
           {
-              $clustersUri = "${baseUri}/prism/v4.0/config/clusters?`$page=$page&`$limit=$pageLimit&`$select=$select"
-              Write-Host "$(Get-Date) [INFO] Fetching clusters page $page" -ForegroundColor Green
-              $invokeParams = @{
-                  Uri         = $clustersUri
-                  Method      = 'GET'
-                  Headers     = $v4Headers
-                  TimeoutSec  = 60
+              $clusterUuid = $entity.metadata.uuid
+              $clusterLookup[$clusterUuid] = $entity.spec.resources.network.external_ip
+              $clusterNameLookup[$clusterUuid] = $entity.spec.name
+              if ($debugme) {
+                  Write-Host "$(Get-Date) [DEBUG] Cluster: $($entity.spec.name) UUID=$clusterUuid IP=$($entity.spec.resources.network.external_ip)" -ForegroundColor White
               }
-              $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
-              
-              if ($resp.data) {
-                  ForEach ($entity in $resp.data) 
-                  {
-                      $myvarClusterInfo = [ordered]@{
-                          "name" = $entity.spec.name;
-                          "extId" = $entity.extId;
-                          "external_ip" = $entity.spec.resources.network.external_ip;
-                          "AOS" = $entity.spec.resources.config.software_map.NOS.version
-                      }
-                      $myvarClusterResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
-                  }
-              }
-              if (-not $resp.data -or (@($resp.data)).Count -eq 0) { break }
-              $page++
-          }
-          catch 
-          {
-              Write-Host "$(Get-Date) [ERROR] $($_.Exception.Message)" -ForegroundColor Red
-              Throw "$(get-date) [ERROR] $($_.Exception.Message)"
           }
       }
-      While ($resp.data -and $resp.data.Count -eq $pageLimit)
-      
-      if ($debugme) 
-      {
-          Write-Host "$(Get-Date) [DEBUG] Showing cluster results:" -ForegroundColor White
-          $myvarClusterResults
-      }
-    }
+  }
+  catch 
+  {
+      Write-Host "$(Get-Date) [ERROR] Failed to retrieve clusters: $($_.Exception.Message)" -ForegroundColor Red
+      Throw "$(get-date) [ERROR] $($_.Exception.Message)"
+  }
+  
+  if ($debugme) 
+  {
+      Write-Host "$(Get-Date) [DEBUG] Cluster lookup table has $($clusterLookup.Count) entries" -ForegroundColor White
+  }
   #endregion
 
   #region make v4 api call for vms
-  # v4 VMM API uses GET with $page, $limit, and $select
+  # v4 VMM API uses GET with $page, $limit (no $select needed - we get full objects)
   $page = 0
-  # Select only the fields we need to reduce payload size
-  $selectFields = 'extId,name,spec.resources.num_sockets,spec.resources.memory_size_mib,spec.resources.power_state,spec.cluster_reference.extId,spec.resources.nic_list,spec.resources.disk_list,status.resources.hypervisor_type,status.resources.protection_type,metadata.creation_time,metadata.owner_reference.name,status.resources.gpu_list'
-  $select = [uri]::EscapeDataString($selectFields)
   
-  Write-Host "$(Get-Date) [INFO] Retrieving VM information from Prism Central $($prismcentral)" -ForegroundColor Green
+  Write-Host "$(Get-Date) [INFO] Retrieving VM information from Prism Central $($prismcentral) (v4 API)" -ForegroundColor Green
   Do 
   {
       try 
       {
-          $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$pageLimit&`$select=$select"
+          $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$pageLimit"
           Write-Host "$(Get-Date) [INFO] Fetching VMs page $page" -ForegroundColor Green
+          if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $vmsUri" -ForegroundColor White }
+          
           $invokeParams = @{
               Uri        = $vmsUri
               Method     = 'GET'
@@ -427,76 +417,147 @@ public class ServerCertificateValidationCallback
           if ($resp.data) {
               ForEach ($entity in $resp.data) 
               {
+                # Map v4 VM fields
+                $vmExtId = $entity.extId
+                $vmName = $entity.name
+                $numSockets = $entity.numSockets
+                $numCoresPerSocket = $entity.numCoresPerSocket
+                $numVcpus = $numSockets * $numCoresPerSocket
+                $memorySizeBytes = $entity.memorySizeBytes
+                $memorySizeMiB = [math]::Round($memorySizeBytes / 1MB)
+                $powerState = $entity.powerState
+                $clusterExtId = $entity.cluster.extId
+                $clusterName = $clusterNameLookup[$clusterExtId] ?? "Unknown"
+                $hostExtId = $entity.host.extId
+                $description = $entity.description
+                $createTime = $entity.createTime
+                $ownerExtId = $entity.ownershipInfo.owner.extId
+                $disks = $entity.disks
+                $nics = $entity.nics
+                
+                # Count disks and calculate total size
+                $vdiskCount = 0
+                $vdiskTotalMiB = 0
+                if ($disks) {
+                    foreach ($disk in $disks) {
+                        # v4 disk structure: diskAddress.busType (SCSI/IDE/VIRTIO), backingInfo.diskSizeBytes
+                        # All disks in this array are virtual disks (no CDROM differentiation)
+                        $vdiskCount++
+                        if ($disk.backingInfo.diskSizeBytes) {
+                            $vdiskTotalMiB += [math]::Round($disk.backingInfo.diskSizeBytes / 1MB)
+                        }
+                    }
+                }
+                
+                # NIC info
+                $vnicCount = 0
+                $vnicVlans = @()
+                $vnicMacs = @()
+                $vnic0Vlan = ""
+                $vnic0Mac = ""
+                $vnic1Vlan = ""
+                $vnic1Mac = ""
+                if ($nics) {
+                    $vnicCount = $nics.Count
+                    $i = 0
+                    foreach ($nic in $nics) {
+                        # v4 NIC structure: nicNetworkInfo.subnet.extId, nicBackingInfo.macAddress
+                        $subnetExtId = $nic.nicNetworkInfo.subnet.extId
+                        $macAddr = $nic.nicBackingInfo.macAddress
+                        $vnicVlans += $subnetExtId  # Using extId since name not in response
+                        $vnicMacs += $macAddr
+                        if ($i -eq 0) { $vnic0Vlan = $subnetExtId; $vnic0Mac = $macAddr }
+                        if ($i -eq 1) { $vnic1Vlan = $subnetExtId; $vnic1Mac = $macAddr }
+                        $i++
+                    }
+                }
+                $vnicVlansStr = $vnicVlans -join ','
+                $vnicMacsStr = $vnicMacs -join ','
+                $vnicVlansStr = $vnicVlans -join ','
+                $vnicMacsStr = $vnicMacs -join ','
+                
                 if ($ngt) 
                 {
-                  # v4 uses extId for cluster reference
-                  $myvarClusterIp = ($myvarClusterResults | Where-Object {$_.extId -eq $entity.spec.cluster_reference.extId}).external_ip
-                  if (!$myvarClusterIp) {throw "$(get-date) [ERROR] Could not find external ip address of cluster $($entity.spec.cluster_reference.name)"}
+                  # Get cluster IP for NGT
+                  $myvarClusterIp = $clusterLookup[$clusterExtId]
+                  if (!$myvarClusterIp) {throw "$(get-date) [ERROR] Could not find external ip address of cluster $clusterName (extId=$clusterExtId)"}
+                  
                   # NGT still uses Prism Element REST API (unchanged)
-                  $api_server_endpoint = "/PrismGateway/services/rest/v1/vms/?filterCriteria=vm_uuid%3D%3D{0}" -f $entity.extId
+                  $api_server_endpoint = "/PrismGateway/services/rest/v1/vms/?filterCriteria=vm_uuid%3D%3D{0}" -f $vmExtId
                   $url = "https://{0}:{1}{2}" -f $myvarClusterIp,$api_server_port, $api_server_endpoint
                   $method = "GET"
                   try 
                   {
-                    Write-Host "$(Get-Date) [INFO] Retrieving detailed VM information for $($entity.spec.name) from cluster $($entity.spec.cluster_reference.name)" -ForegroundColor Green
+                    Write-Host "$(Get-Date) [INFO] Retrieving detailed VM information for $vmName from cluster $clusterName" -ForegroundColor Green
                     $myvarVmDetails = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-                    Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved detailed VM information for $($entity.spec.name) from cluster $($entity.spec.cluster_reference.name)" -ForegroundColor Cyan
+                    Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved detailed VM information for $vmName from cluster $clusterName" -ForegroundColor Cyan
                   }
                   catch 
                   {
                     Throw "$(get-date) [ERROR] $($_.Exception.Message)"
                   }
                   $myvarVmInfo = [ordered]@{
-                    "name" = $entity.spec.name;
+                    "name" = $vmName;
                     #"os" = $myvarVmDetails.entities.guestOperatingSystem;
                     "ip_addresses" = $myvarVmDetails.entities.ipAddresses -join ',';
                     "virtual_disks" = $myvarVmDetails.entities.nutanixVirtualDisks -join ',';
                     "flash_mode" = $myvarVmDetails.entities.vmFeatures.FLASH_MODE;
-                    "description" = $myvarVmDetails.entities.description;
+                    "description" = $description;
                     "ngt_status" = $myvarVmDetails.entities.nutanixGuestTools.enabled;
                     "ngt_version" = $myvarVmDetails.entities.nutanixGuestTools.installedVersion;
                     "ngt_vss_snapshot" = $myvarVmDetails.entities.nutanixGuestTools.applications.vss_snapshot;
                     "ngt_vss_file_level_restore" = $myvarVmDetails.entities.nutanixGuestTools.applications.file_level_restore;
                     "ngt_iso_mounted" = $myvarVmDetails.entities.nutanixGuestTools.toolsMounted;
                     "ngt_communication_alive" = $myvarVmDetails.entities.nutanixGuestTools.communicationLinkActive;
-                    "num_sockets" = $entity.spec.resources.num_sockets;
-                    "memory_size_mib" = $entity.spec.resources.memory_size_mib;
-                    "power_state" = $entity.spec.resources.power_state;
-                    "cluster" = $entity.spec.cluster_reference.name;
-                    "hypervisor" = $entity.status.resources.hypervisor_type;
-                    "creation_time" = $entity.metadata.creation_time;
-                    "owner" = $entity.metadata.owner_reference.name;
-                    "protection_type" = $entity.status.resources.protection_type;
-                    "vdisk_count" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"}).Count;
-                    "vdisk_total_mib" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"} | Measure-Object disk_size_mib -Sum).Sum;
-                    "vnic_count" = ($entity.spec.resources.nic_list).Count;
-                    "vnic_vlans" = (($entity.spec.resources.nic_list | Select-Object -Property subnet_reference).subnet_reference.name) -join ',';
-                    "vnic_macs" = (($entity.spec.resources.nic_list | Select-Object -Property mac_address).mac_address) -join ',';
-                    "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
-                    "extId" = $entity.extId
+                    "num_sockets" = $numSockets;
+                    "num_cores_per_socket" = $numCoresPerSocket;
+                    "num_vcpus" = $numVcpus;
+                    "memory_size_mib" = $memorySizeMiB;
+                    "power_state" = $powerState;
+                    "cluster" = $clusterName;
+                    "cluster_extId" = $clusterExtId;
+                    "host_extId" = $hostExtId;
+                    "creation_time" = $createTime;
+                    "owner_extId" = $ownerExtId;
+                    "protection_type" = "N/A";  # Not available in v4 VM response
+                    "vdisk_count" = $vdiskCount;
+                    "vdisk_total_mib" = $vdiskTotalMiB;
+                    "vnic_count" = $vnicCount;
+                    "vnic_vlans" = $vnicVlansStr;
+                    "vnic_macs" = $vnicMacsStr;
+                    "vnic0_vlan" = $vnic0Vlan;
+                    "vnic0_mac" = $vnic0Mac;
+                    "vnic1_vlan" = $vnic1Vlan;
+                    "vnic1_mac" = $vnic1Mac;
+                    "gpu" = "N/A";  # Not available in v4 VM response
+                    "extId" = $vmExtId
                   }
                 } 
                 else 
                 {
                   $myvarVmInfo = [ordered]@{
-                      "name" = $entity.spec.name;
-                      "num_sockets" = $entity.spec.resources.num_sockets;
-                      "memory_size_mib" = $entity.spec.resources.memory_size_mib;
-                      "power_state" = $entity.spec.resources.power_state;
-                      "cluster" = $entity.spec.cluster_reference.name;
-                      "hypervisor" = $entity.status.resources.hypervisor_type;
-                      "creation_time" = $entity.metadata.creation_time;
-                      "owner" = $entity.metadata.owner_reference.name;
-                      "protection_type" = $entity.status.resources.protection_type;
-                      "vdisk_count" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"}).Count;
-                      "vdisk_total_mib" = ($entity.spec.resources.disk_list | where-object {$_.device_properties.device_type -eq "DISK"} | Measure-Object disk_size_mib -Sum).Sum;
-                      "vnic_count" = ($entity.spec.resources.nic_list).Count;
-                      "vnic0_vlan" = $entity.spec.resources.nic_list[0].subnet_reference.name;
-                      "vnic0_mac" = $entity.spec.resources.nic_list[0].mac_address;
-                      "vnic1_vlan" = $entity.spec.resources.nic_list[1].subnet_reference.name;
-                      "vnic1_mac" = $entity.spec.resources.nic_list[1].mac_address;
-                      "gpu" = $entity.status.resources.gpu_list | Select-Object -First 1;
-                      "extId" = $entity.extId
+                      "name" = $vmName;
+                      "num_sockets" = $numSockets;
+                      "num_cores_per_socket" = $numCoresPerSocket;
+                      "num_vcpus" = $numVcpus;
+                      "memory_size_mib" = $memorySizeMiB;
+                      "power_state" = $powerState;
+                      "cluster" = $clusterName;
+                      "cluster_extId" = $clusterExtId;
+                      "host_extId" = $hostExtId;
+                      "creation_time" = $createTime;
+                      "owner_extId" = $ownerExtId;
+                      "protection_type" = "N/A";  # Not available in v4 VM response
+                      "vdisk_count" = $vdiskCount;
+                      "vdisk_total_mib" = $vdiskTotalMiB;
+                      "vnic_count" = $vnicCount;
+                      "vnic_vlans" = $vnicVlansStr;
+                      "vnic0_vlan" = $vnic0Vlan;
+                      "vnic0_mac" = $vnic0Mac;
+                      "vnic1_vlan" = $vnic1Vlan;
+                      "vnic1_mac" = $vnic1Mac;
+                      "gpu" = "N/A";  # Not available in v4 VM response
+                      "extId" = $vmExtId
                   }
                 }
                 #store the results for this entity in our overall result variable
@@ -547,4 +608,8 @@ public class ServerCertificateValidationCallback
   Remove-Variable api_server_port -ErrorAction SilentlyContinue
   Remove-Variable v4Headers -ErrorAction SilentlyContinue
   Remove-Variable baseUri -ErrorAction SilentlyContinue
+  Remove-Variable v3ClustersUrl -ErrorAction SilentlyContinue
+  Remove-Variable v3Payload -ErrorAction SilentlyContinue
+  Remove-Variable clusterLookup -ErrorAction SilentlyContinue
+  Remove-Variable clusterNameLookup -ErrorAction SilentlyContinue
 #endregion
