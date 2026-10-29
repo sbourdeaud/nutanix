@@ -40,7 +40,7 @@
   Specifies you just want to reconnect the virtual NICs of the VMs in the specified protection domain (applies to vSphere cluster only).
 .EXAMPLE
 .\Invoke-AsyncDr.ps1 -cluster <ip> -migrate -prismCreds prism_api-user -pd <protection domain name>
-Trigger a planned failover workflow for the specified protection domain. Use the previously stored credentials in the %USERPROFILE%\Documents\WindowsPowerShell\Credentials\prism_api-user.txt file (use the Set-CustomCredentials function in the sbourdeaud module to create the credentials file).
+Trigger a planned failover workflow for the specified protection domain.
 .EXAMPLE
 .\Invoke-AsyncDr.ps1 -cluster <ip> -activate -username admin -password <secret>
 Trigger an uplanned failover for all protection domains.
@@ -51,7 +51,7 @@ Disable the specified protection domain and delete VMs.
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 29th 2026
   Version: 0.2
 #>
 
@@ -73,131 +73,269 @@ Param
 )
 #endregion
 
-#region functions
-    function Write-LogOutput
+
+#region prepwork
+
+    $HistoryText = @'
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
+02/06/2021 sb   Replaced username with get-credential
+06/09/2020 sb   Do over with new sbourdeaud module
+10/08/2018 sb   Initial release.
+################################################################################
+'
+    $myvarScriptName = ".\Invoke-AsyncDr.ps1"
+
+    if ($help) 
     {
-    <#
-    .SYNOPSIS
-    Outputs color coded messages to the screen and/or log file based on the category.
+        get-help $myvarScriptName
+        exit
+    }
+    if ($History) 
+    {
+        $HistoryText
+        exit
+    }
 
-    .DESCRIPTION
-    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+    #region parameter validation
+        if (($activate -and $migrate) -or ($activate -and $deactivate) -or ($migrate -and $deactivate) -or ($activate -and $reconnectVnicsOnly) -or ($deactivate -and $reconnectVnicsOnly) -or ($reconnectVnicsOnly -and $migrate))
+        {#multiple actions
+            Write-Host "$(Get-Date) [ERROR] You can only use -activate OR -deactivate OR -migrate OR -reconnectVnicsOnly. Don't try to combine them together." -ForegroundColor Red
+            Exit
+        }
 
-    .PARAMETER Category
-    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+        if ($deactivate -and $powerOnVms)
+        {#invalid power on request
+            Write-Host "$(Get-Date) [ERROR] You have used -powerOnVms and -deactivate together which is not a valid combination." -ForegroundColor Red
+            Exit
+        }
 
-    .PARAMETER Message
-    This is the actual message you want to display.
+        if (!$activate -and !$migrate -and !$deactivate -and !$reconnectVnicsOnly)
+        {#no action specified
+            Write-Host "$(Get-Date) [ERROR] You must specify an action: -migrate, -activate, -deactivate or -reconnectVnicsOnly." -ForegroundColor Red
+            Exit
+        }
 
-    .PARAMETER LogFile
-    If you want to log output to a file as well, use logfile to pass the log file full path name.
+        if (!$prismCreds) 
+        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
+        } 
+        else 
+        { #we are using custom credentials, so let's grab the username and password from that
+            try 
+            {
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            catch 
+            {
+                Set-CustomCredentials -credname $prismCreds
+                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
+                $username = $prismCredentials.UserName
+                $PrismSecurePassword = $prismCredentials.Password
+            }
+            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
+        }
 
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+    #endregion
 
-    .EXAMPLE
-    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-    Displays an error message.
+    #check PoSH version
+    if ($PSVersionTable.PSVersion.Major -lt 6)
+    {#PoSH version <6
+        Write-Host "$(Get-Date) [ERROR] Your version of Powershell is too old, please update to Powershell Core version 6 or above!" -ForegroundColor Red
+        Exit
+    }
 
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+    #region helper functions (previously from sbourdeaud module)
+    function Invoke-PrismAPICall {
+        param (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string]$method,
 
-        param
-        (
-            [Parameter(Mandatory)]
-            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG')]
-            [string]
-            $Category,
+            [parameter(mandatory = $true)]
+            [string]$url,
 
-            [string]
-            $Message,
+            [parameter(mandatory = $false)]
+            [string]$payload,
 
-            [string]
-            $LogFile
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]$credential
         )
 
-        process
-        {
-            $Date = get-date #getting the date so we can timestamp the output entry
-            $FgColor = "Gray" #resetting the foreground/text color
-            switch ($Category) #we'll change the text color depending on the selected category
-            {
-                "INFO" {$FgColor = "Green"}
-                "WARNING" {$FgColor = "Yellow"}
-                "ERROR" {$FgColor = "Red"}
-                "SUM" {$FgColor = "Magenta"}
-                "SUCCESS" {$FgColor = "Cyan"}
-                "STEP" {$FgColor = "Magenta"}
-                "DEBUG" {$FgColor = "White"}
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        try {
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $headers = @{
+                    "Content-Type" = "application/json"
+                    "Accept"       = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
+            } else {
+                $username = $credential.UserName
+                $password = $credential.Password
+                $headers = @{
+                    "Authorization" = "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username + ":" + ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))))
+                    "Content-Type"  = "application/json"
+                    "Accept"        = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
             }
+            Write-Host "$(Get-Date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White }
+        }
+        catch {
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
+        }
+        return $resp
+    }
 
-            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-            if ($LogFile) #add the entry to the log file if -LogFile has been specified
-            {
-                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+    function Set-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Set path to $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+        $user = $credentials.UserName
+        $securePassword = $credentials.Password
+
+        try {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Type Directory $path -ErrorAction Stop | Out-Null
+            }
+            catch {
+                throw "$(Get-Date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
             }
         }
 
-    }#end function Write-LogOutput
+        try {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
 
-    function New-PercentageBar
+        Write-Host "$(Get-Date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan
+    }
+
+    function Get-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        if (!(Test-Path $credentialsFilePath)) {
+            throw "$(Get-Date) [ERROR] Could not access file $credentialsFilePath"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+        $user = $credFile[0]
+        $securePassword = $credFile[1] | ConvertTo-SecureString
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(Get-Date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan
+        return $customCredentials
+    }
+
+    function Set-PoshTls {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = (
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        )
+    }
+
+    function Set-PoSHSSLCerts {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
     {
-        
-    <#
-    .SYNOPSIS
-        Create percentage bar.
-    .DESCRIPTION
-        This cmdlet creates percentage bar.
-    .PARAMETER Percent
-        Value in percents (%).
-    .PARAMETER Value
-        Value in arbitrary units.
-    .PARAMETER MaxValue
-        100% value.
-    .PARAMETER BarLength
-        Bar length in chars.
-    .PARAMETER BarView
-        Different char sets to build the bar.
-    .PARAMETER GreenBorder
-        Percent value to change bar color from green to yellow (relevant with -DrawBar parameter only).
-    .PARAMETER YellowBorder
-        Percent value to change bar color from yellow to red (relevant with -DrawBar parameter only).
-    .PARAMETER NoPercent
-        Exclude percentage number from the bar.
-    .PARAMETER DrawBar
-        Directly draw the colored bar onto the PowerShell console (unsuitable for calculated properties).
-    .EXAMPLE
-        PS C:\> New-PercentageBar -Percent 90 -DrawBar
-        Draw single bar with all default settings.
-    .EXAMPLE
-        PS C:\> New-PercentageBar -Percent 95 -DrawBar -GreenBorder 70 -YellowBorder 90
-        Draw the bar and move the both color change borders.
-    .EXAMPLE
-        PS C:\> 85 |New-PercentageBar -DrawBar -NoPercent
-        Pipeline the percent value to the function and exclude percent number from the bar.
-    .EXAMPLE
-        PS C:\> For ($i=0; $i -le 100; $i+=10) {New-PercentageBar -Percent $i -DrawBar -Length 100 -BarView AdvancedThin2; "`r"}
-        Demonstrates advanced bar view with custom bar length and different percent values.
-    .EXAMPLE
-        PS C:\> $Folder = 'C:\reports\'
-        PS C:\> $FolderSize = (Get-ChildItem -Path $Folder |measure -Property Length -Sum).Sum
-        PS C:\> Get-ChildItem -Path $Folder -File |sort Length -Descending |select -First 10 |select Name,Length,@{N='SizeBar';E={New-PercentageBar -Value $_.Length -MaxValue $FolderSize}} |ft -au
-        Get file size report and add calculated property 'SizeBar' that contains the percent of each file size from the folder size.
-    .EXAMPLE
-        PS C:\> $VolumeC = gwmi Win32_LogicalDisk |? {$_.DeviceID -eq 'c:'}
-        PS C:\> Write-Host -NoNewline "Volume C Usage:" -ForegroundColor Yellow; `
-        PS C:\> New-PercentageBar -Value ($VolumeC.Size-$VolumeC.Freespace) -MaxValue $VolumeC.Size -DrawBar; "`r"
-        Get system volume usage report.
-    .NOTES
-        Author      :: Roman Gelman @rgelman75
-        Version 1.0 :: 04-Jul-2016 :: [Release] :: Publicly available
-    .LINK
-        https://ps1code.com/2016/07/16/percentage-bar-powershell
-    #>
-        
+        if (ServicePointManager.ServerCertificateValidationCallback == null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback +=
+                delegate (Object obj, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }
+        [ServerCertificateValidationCallback]::Ignore()
+    }
+
+    function New-PercentageBar {
         [CmdletBinding(DefaultParameterSetName = 'PERCENT')]
         Param (
             [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'PERCENT')]
@@ -238,20 +376,11 @@ Param
         
         Begin
         {
-            
             If ($PSBoundParameters.ContainsKey('VALUE'))
             {
-                
-                If ($Value -gt $MaxValue)
-                {
-                    Throw "The [-Value] parameter cannot be greater than [-MaxValue]!"
-                }
-                Else
-                {
-                    $Percent = $Value/$MaxValue * 100 -as [int]
-                }
+                If ($Value -gt $MaxValue) { Throw "The [-Value] parameter cannot be greater than [-MaxValue]!" }
+                Else { $Percent = $Value/$MaxValue * 100 -as [int] }
             }
-            
             If ($YellowBorder -le $GreenBorder) { Throw "The [-YellowBorder] value must be greater than [-GreenBorder]!" }
             
             Function Set-BarView ($View)
@@ -265,1293 +394,616 @@ Param
                     "AdvancedThin2"	{ $GreenChar = [char]9642; $YellowChar = [char]9642; $RedChar = [char]9642; $EmptyChar = [char]9643; Break }
                     "AdvancedThick"	{ $GreenChar = [char]9617; $YellowChar = [char]9618; $RedChar = [char]9619; $EmptyChar = [char]9482; Break }
                 }
-                $Properties = [ordered]@{
-                    Char1 = $GreenChar
-                    Char2 = $YellowChar
-                    Char3 = $RedChar
-                    Char4 = $EmptyChar
-                }
+                $Properties = [ordered]@{ Char1 = $GreenChar; Char2 = $YellowChar; Char3 = $RedChar; Char4 = $EmptyChar }
                 $Object = New-Object PSObject -Property $Properties
                 $Object
-            } #End Function Set-BarView
+            }
             
             $BarChars = Set-BarView -View $BarView
             $Bar = $null
             
             Function Draw-Bar
             {
-                
-                Param (
-                    [Parameter(Mandatory)]
-                    [string]$Char
-                    ,
-                    [Parameter(Mandatory = $false)]
-                    [string]$Color = 'White'
-                    ,
-                    [Parameter(Mandatory = $false)]
-                    [boolean]$Draw
-                )
-                
-                If ($Draw)
-                {
-                    Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char
-                }
-                Else
-                {
-                    return $Char
-                }
-                
-            } #End Function Draw-Bar
-            
-        } #End Begin
+                Param ([Parameter(Mandatory)][string]$Char, [Parameter(Mandatory = $false)][string]$Color = 'White', [Parameter(Mandatory = $false)][boolean]$Draw)
+                If ($Draw) { Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char }
+                Else { return $Char }
+            }
+        }
         
         Process
         {
-            
-            If ($NoPercent)
-            {
-                $Bar += Draw-Bar -Char "[ " -Draw $DrawBar
-            }
-            Else
-            {
+            If ($NoPercent) { $Bar += Draw-Bar -Char "[ " -Draw $DrawBar }
+            Else {
                 If ($Percent -eq 100) { $Bar += Draw-Bar -Char "$Percent% [ " -Draw $DrawBar }
                 ElseIf ($Percent -ge 10) { $Bar += Draw-Bar -Char " $Percent% [ " -Draw $DrawBar }
                 Else { $Bar += Draw-Bar -Char "  $Percent% [ " -Draw $DrawBar }
             }
-            
             For ($i = 1; $i -le ($BarValue = ([Math]::Round($Percent * $BarLength / 100))); $i++)
             {
-                
                 If ($i -le ($GreenBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char1) -Color 'DarkGreen' -Draw $DrawBar }
                 ElseIf ($i -le ($YellowBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char2) -Color 'Yellow' -Draw $DrawBar }
                 Else { $Bar += Draw-Bar -Char ($BarChars.Char3) -Color 'Red' -Draw $DrawBar }
             }
             For ($i = 1; $i -le ($EmptyValue = $BarLength - $BarValue); $i++) { $Bar += Draw-Bar -Char ($BarChars.Char4) -Draw $DrawBar }
             $Bar += Draw-Bar -Char " ]" -Draw $DrawBar
-            
-        } #End Process
-        
-        End
-        {
-            If (!$DrawBar) { return $Bar }
-        } #End End
-        
-    } #EndFunction New-PercentageBar
-    function Get-PrismTaskStatus
-    {
-        <#
-        .SYNOPSIS
-        Retrieves the status of a given task uuid from Prism and loops until it is completed.
-
-        .DESCRIPTION
-        Retrieves the status of a given task uuid from Prism and loops until it is completed.
-
-        .PARAMETER task
-        Prism task uuid.
-        .PARAMETER cluster
-        Prism IP or fqdn.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-
-        .NOTES
-        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-        .EXAMPLE
-        .\Get-PrismTaskStatus -Task $task -Cluster $cluster -credential $prism_credential
-        Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
-
-        .LINK
-        https://github.com/sbourdeaud
-        #>
-        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-        param
-        (
-            [Parameter(Mandatory)]
-            [String]
-            $task,
-            
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential   
-        )
-
-        begin
-        {
-            
         }
+        End { If (!$DrawBar) { return $Bar } }
+    }
 
-        process 
+    function Get-PrismTaskStatus {
+        param (
+            [Parameter(Mandatory)][String]$task,
+            [Parameter(Mandatory)][String]$cluster,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+        )
+        
+        Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
+        $method = "GET"
+        $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
+
+        if ($taskDetails.percentage_complete -ne "100") 
         {
-            #region get initial task details
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of task $task..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-                $method = "GET"
+            Do 
+            {
+                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+                Start-Sleep 5
                 $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved details of task $task"
-            #endregion
+                if ($taskDetails.progress_status -ne "Running") 
+                {
+                    if ($taskDetails.progress_status -ne "Succeeded")
+                    {
+                        Write-Host "$(Get-Date) [ERROR] Task $($taskDetails.meta_request.method_name) failed with status: $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)" -ForegroundColor Red
+                        $userChoice = Read-Host -Prompt "Task failed. Continue? (y/n)"
+                        if ($userChoice -eq "n") { Exit }
+                    }
+                }
+            }
+            While ($taskDetails.percentage_complete -ne "100")
+            New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
+        } 
+        else 
+        {
+            if ($taskDetails.progress_status -ne "Succeeded")
+            {
+                Write-Host "$(Get-Date) [ERROR] Task $($taskDetails.meta_request.method_name) failed with status: $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)" -ForegroundColor Red
+                $userChoice = Read-Host -Prompt "Task failed. Continue? (y/n)"
+                if ($userChoice -eq "n") { Exit }
+            }
+            else 
+            {
+                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+                Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
+            }
+        }
+    }
 
-            if ($taskDetails.percentage_complete -ne "100") 
+    function Get-PrismPdTaskStatus {
+        param (
+            [Parameter(Mandatory)]$time,
+            [Parameter(Mandatory)][String][ValidateSet('activate','deactivate')]$operation,
+            [Parameter(Mandatory)][String]$cluster,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+        )
+        
+        Write-Host ""
+        Write-Host "$(Get-Date) [INFO] Retrieving list of tasks on the cluster $cluster ..." -ForegroundColor Green
+        Start-Sleep 10
+        
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+        $method = "GET"
+        $response = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Retrieved list of tasks on the cluster $cluster" -ForegroundColor Cyan
+        
+        Do
+        {
+            $pdTasks = $response.entities | Where-Object {$_.operation -eq $operation} | Where-Object {($_.createTimeUsecs / 1000000) -ge $time}
+        }
+        While (!$pdTasks)
+
+        ForEach ($pdTask in $pdTasks) 
+        {
+            if ($pdTask.percentageCompleted -ne "100") 
             {
                 Do 
                 {
-                    New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+                    Write-Host "$(Get-Date) [WARNING] Waiting 5 seconds for task $($pdTask.taskName) to complete : $($pdTask.percentageCompleted)%" -ForegroundColor Yellow
                     Start-Sleep 5
-                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-                    $method = "GET"
-                    $taskDetails = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                    
-                    if ($taskDetails.progress_status -ne "Running") 
+                    $response = Invoke-PrismAPICall -method $method -url $url -credential $credential
+                    $task = $response.entities | Where-Object {$_.taskName -eq $pdTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $time}
+                    if ($task.status -ne "running") 
                     {
-                        if ($taskDetails.progress_status -ne "Succeeded")
+                        if ($task.status -ne "succeeded") 
                         {
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
-                            $userChoice = Write-CustomPrompt
-                            if ($userChoice -eq "n")
-                            {
-                                Exit
-                            }
+                            Write-Host "$(Get-Date) [ERROR] Task $($pdTask.taskName) failed with status: $($task.status) : $($task.errorCode)" -ForegroundColor Red
+                            Exit
                         }
                     }
                 }
-                While ($taskDetails.percentage_complete -ne "100")
-                
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"
+                While ($task.percentageCompleted -ne "100")
+                Write-Host "$(Get-Date) [SUCCESS] Protection domain $operation task $($pdTask.taskName) completed on the cluster $cluster" -ForegroundColor Cyan
+                Write-Host ""
             } 
             else 
             {
-                if ($taskDetails.progress_status -ne "Succeeded")
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
-                    $userChoice = Write-CustomPrompt
-                    if ($userChoice -eq "n")
-                    {
-                        Exit
-                    }
-                }
-                else 
-                {
-                    New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Task $($taskDetails.meta_request.method_name) completed successfully!"   
-                }
+                Write-Host "$(Get-Date) [SUCCESS] Protection domain $operation task $($pdTask.taskName) completed on the cluster $cluster" -ForegroundColor Cyan
+                Write-Host ""
             }
-        }
-        
-        end
-        {
-
         }
     }
 
-    function Get-PrismPdTaskStatus
-    {
-        <#
-        .SYNOPSIS
-        Retrieves the status of all protection domain deactivation tasks created after a specific time.
-
-        .DESCRIPTION
-        Retrieves the status of all protection domain deactivation tasks created after a specific time.
-
-        .PARAMETER time
-        Time in epoch seconds.
-        .PARAMETER cluster
-        Prism IP or fqdn.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-
-        .NOTES
-        Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-        .EXAMPLE
-        .\Get-PrismTaskStatus -Task $task -Cluster $cluster -credential $prism_credential
-        Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
-
-        .LINK
-        https://github.com/sbourdeaud
-        #>
-        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-        param
-        (
-            [Parameter(Mandatory)]
-            $time,
-            
-            [Parameter(Mandatory)]
-            [String]
-            [ValidateSet('activate','deactivate')]
-            $operation,
-
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential   
+    function Invoke-NtnxPdMigration {
+        param (
+            $pd,
+            [Parameter(Mandatory)][String]$cluster,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential            
         )
 
-        begin
-        {
-            
+        #let's retrieve the list of protection domains
+        Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+        $method = "GET"
+        $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
+
+        #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+        if (!$pd) 
+        {#no pd specified
+            $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
+        } 
+        else 
+        {#fetch specified pd
+            $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
         }
 
-        process 
+        if (!$pd) 
         {
-            Write-Host ""
-            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving list of tasks on the cluster $cluster ..."
-            Start-Sleep 10
-            
-            $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+            Write-Host "$(Get-Date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
+            Exit
+        }
+
+        #region process
+            #now let's call the migrate workflow
+            ForEach ($pd2migrate in $pd) 
+            {
+                #figure out if there is more than one remote site defined for the protection domain
+                $remoteSite = $PdList.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
+                if (!$remoteSite.remote_site_names) 
+                {#no remote site defined or no schedule on the pd with a remote site
+                    Write-Host "$(Get-Date) [ERROR] There is no remote site defined for protection domain $pd2migrate" -ForegroundColor Red
+                    Exit
+                }
+                if ($remoteSite -is [array]) 
+                {#more than 1 remote site target defined on the pd schedule
+                    Write-Host "$(Get-Date) [ERROR] There is more than one remote site for protection domain $pd2migrate" -ForegroundColor Red
+                    Exit
+                }
+
+                #region migrate the protection domain
+                    Write-Host ""
+                    Write-Host "$(Get-Date) [INFO] Migrating $pd2migrate to $($remoteSite.remote_site_names) ..." -ForegroundColor Green
+                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2migrate/migrate"
+                    $method = "POST"
+                    $content = @{ value = $($remoteSite.remote_site_names) }
+                    $body = (ConvertTo-Json $content -Depth 4)
+                    $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
+                    if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Migration request response is: $($response.metadata)" -ForegroundColor White }
+                    if ($response.metadata.count -ne 0)
+                    {#something went wrong with our migration request
+                        Write-Host "$(Get-Date) [ERROR] Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused by NGT being disabled on some VMs, or by delta disks due to old snapshots)." -ForegroundColor Red
+                        Exit
+                    }
+                    Write-Host "$(Get-Date) [SUCCESS] Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)" -ForegroundColor Cyan
+                #endregion
+            }
+        #endregion
+        return $pd #list of protection domains which were processed 
+    }
+
+    function Invoke-NtnxPdActivation {
+        param (
+            $pd,
+            [Parameter(Mandatory)][String]$cluster,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+        )
+
+        #let's retrieve the list of protection domains
+        Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+        $method = "GET"
+        $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
+
+        #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+        if (!$pd) 
+        {#no pd specified
+            $pd = ($PdList.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name
+        } 
+        else 
+        {#fetch specified pd
+            $pd = ($PdList.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+        }
+
+        if (!$pd) 
+        {
+            Write-Host "$(Get-Date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
+            Exit
+        }
+
+        #now let's call the activate workflow
+        ForEach ($pd2activate in $pd) 
+        {#activate each pd
+            #region activate the protection domain
+                Write-Host ""
+                Write-Host "$(Get-Date) [INFO] Activating protection domain $($pd2activate) on $cluster ..." -ForegroundColor Green
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pd2activate)/activate"
+                $method = "POST"
+                $content = @{}
+                $body = (ConvertTo-Json $content -Depth 4)
+                $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
+                Write-Host "$(Get-Date) [SUCCESS] Successfully activated protection domain $($pd2activate) on $cluster" -ForegroundColor Cyan
+            #endregion    
+        }
+        return $pd #list of protection domains which were processed
+    }
+
+    function Invoke-NtnxPdDeactivation {
+        param (
+            $pd,
+            [Parameter(Mandatory)][String]$cluster,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+        )
+
+        #let's retrieve the list of protection domains
+        Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+        $method = "GET"
+        $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
+
+        #first, we need to figure out which protection domains need to be deactivated. If none have been specified, we'll assume all of them which are active.
+        if (!$pd) 
+        {#no pd specified
+            $pd = Read-Host "Enter the name of the protection domain(s) you want to deactivate on $cluster. !!!WARNING!!! All VMs in that protection domain will be deleted!"
+            $pd = $pd.Split(",") #make sure we process protection_domains as an array
+            $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+        } 
+        else 
+        {#fetch specified pd
+            $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+        }
+
+        if (!$pd) 
+        {
+            Write-Host "$(Get-Date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
+            Exit
+        }
+
+        #region process
+            ForEach ($pd2deactivate in $pd) 
+            {#now let's call the deactivate workflow for each pd
+                Write-Host ""
+                Write-Host "$(Get-Date) [INFO] Deactivating protection domain $pd2deactivate on $cluster ..." -ForegroundColor Green
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
+                $method = "POST"
+                $content = @{}
+                $body = (ConvertTo-Json $content -Depth 4)
+                $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
+                Write-Host "$(Get-Date) [SUCCESS] Successfully started deactivation of protection domain $pd2deactivate on $cluster" -ForegroundColor Cyan
+            }
+        #endregion
+        return $response #this is the task uuid as sent back from the API
+    }
+
+    function Set-NtnxPdVmPowerOn {
+        param (
+            $pd,
+            [Parameter(Mandatory)][String]$cluster,
+            [parameter(mandatory = $true)][System.Management.Automation.PSCredential]$credential   
+        )
+
+        #let's retrieve the list of protection domains
+        Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+        $method = "GET"
+        $PdList = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
+
+        #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+        if (!$pd) 
+        {#no pd specified
+            $pd = Read-Host "Enter the name of the protection domain(s) you want to process on $cluster."
+            $pd = $pd.Split(",") #make sure we process protection_domains as an array
+            $pd = $PdList.entities | Where-Object {$_.active -eq $true} | Where-Object {$pd -contains $_.name}
+        } 
+        else 
+        {#fetch specified pd
+            $pd = $PdList.entities | Where-Object {$_.active -eq $true} | Where-Object {$pd -contains $_.name}
+        }
+
+        if (!$pd) 
+        {
+            Write-Host "$(Get-Date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
+            Exit
+        }
+
+        Write-Host "$($pd.vms)" -ForegroundColor Red
+
+        #region get vms
+            Write-Host "$(Get-Date) [INFO] Retrieving details of VMs on $cluster ..." -ForegroundColor Green
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
             $method = "GET"
-            $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Retrieved list of tasks on the cluster $cluster"
-            
-            Do
+            $vms_info = Invoke-PrismAPICall -method $method -url $url -credential $credential
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved details of VMs on $cluster" -ForegroundColor Cyan
+        #endregion
+
+        ForEach ($protection_domain in $pd)
+        {
+            ForEach ($vm in $protection_domain.vms)
             {
-                $pdTasks = $response.entities | Where-Object {$_.operation -eq $operation} | Where-Object {($_.createTimeUsecs / 1000000) -ge $time}
-            }
-            While (!$pdTasks)
-
-            #let's loop now until the task status is completed and successfull. If a task fails, we'll throw an exception.
-            ForEach ($pdTask in $pdTasks) 
-            {
-                if ($pdTask.percentageCompleted -ne "100") 
-                {
-                    Do 
-                    {
-                        Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Waiting 5 seconds for task $($pdTask.taskName) to complete : $($pdTask.percentageCompleted)%"
-                        Start-Sleep 5
-                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
-                        $method = "GET"
-                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                        $task = $response.entities | Where-Object {$_.taskName -eq $pdTask.taskName} | Where-Object {($_.createTimeUsecs / 1000000) -ge $StartEpochSeconds}
-                        if ($task.status -ne "running") 
-                        {#task is no longer running
-                            if ($task.status -ne "succeeded") 
-                            {#task failed
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Task $($pdTask.taskName) failed with the following status and error code : $($task.status) : $($task.errorCode)"
-                                Exit
-                            }
-                        }
+                #region get the vm uuid
+                    $vm_uuid = ($vms_info.entities | Where-Object {$_.name -eq $vm.vm_name}).uuid
+                    if ($vm_uuid -is [array])
+                    {#we have multiple vms with the same name...
+                        Write-Host "$(Get-Date) [WARNING] There is more than one VM with the name $($vm.vm_name) on $cluster. Setting uuid to what is in the protection domain ($($vm.vm_id))" -ForegroundColor Yellow
+                        $vm_uuid = $vm.vm_id
                     }
-                    While ($task.percentageCompleted -ne "100")
-                    
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdTask.taskName) completed on the cluster $cluster"
-                    Write-Host ""
-                } 
-                else 
-                {
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Protection domain migration task $($pdTask.taskName) completed on the cluster $cluster"
-                    Write-Host ""
-                }
-            }
-        }
-        
-        end
-        {
-
-        }
-    }
-
-    function Invoke-NtnxPdMigration
-    {
-        <#
-        .SYNOPSIS
-        Triggers an asynchronous protection domain migration.
-        .DESCRIPTION
-        Triggers an asynchronous protection domain migration which (1)shuts down VMs, (2)syncs data with the remote site defined in its schedule, (3)unregisters VMs at the source and (4)registers VM on the remote site.
-        .NOTES
-        Author: Stephane Bourdeaud
-        .PARAMETER pd
-        Asynchronous protection domain name.
-        .PARAMETER cluster
-        FQDN or IP of Nutanix cluster.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-        .EXAMPLE
-        Invoke-NtnxPdMigration -pd <pd_name> -cluster ntnx1.local -credential $prism_credential
-        #>
-        [CmdletBinding()]
-        param
-        (
-            $pd,
-
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential            
-        )
-
-        begin
-        {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
-        }
-
-        process
-        { 
-            #region get data
-                #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
-
-                #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
-                if (!$pd) 
-                {#no pd specified
-                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
-                } 
-                else 
-                {#fetch specified pd
-                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
-                }
-
-                if (!$pd) 
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
-                    Exit
-                }
-            #endregion
-
-            #region process
-                #now let's call the migrate workflow
-                ForEach ($pd2migrate in $pd) 
-                {
-                    #figure out if there is more than one remote site defined for the protection domain
-                    $remoteSite = $PdList.entities | Where-Object {$_.name -eq $pd2migrate} | Select-Object -Property remote_site_names
-                    if (!$remoteSite.remote_site_names) 
-                    {#no remote site defined or no schedule on the pd with a remote site
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $pd2migrate"
-                        Exit
-                    }
-                    if ($remoteSite -is [array]) 
-                    {#more than 1 remote site target defined on the pd schedule
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $pd2migrate"
-                        Exit
-                    }
-
-                    #region migrate the protection domain
-                        Write-Host ""
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Migrating $pd2migrate to $($remoteSite.remote_site_names) ..."
-                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2migrate/migrate"
-                        $method = "POST"
-                        $content = @{
-                                        value = $($remoteSite.remote_site_names)
-                                    }
-                        $body = (ConvertTo-Json $content -Depth 4)
-                        $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
-                        if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Migration request response is: $($response.metadata)"}
-                        if ($response.metadata.count -ne 0)
-                        {#something went wrong with our migration request
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not start migration of $pd2migrate to $($remoteSite.remote_site_names). Try to trigger it manually in Prism and see why it won't work (this could be caused ny NGT being disabled on some VMs, or by delta disks due to old snapshots)."
-                            Exit
-                        }
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started migration of $pd2migrate to $($remoteSite.remote_site_names)"
-                    #endregion
-
-                }
-            #endregion
-        }
-
-        end
-        {
-           return $pd #list of protection domains which were processed 
-        }
-    }
-
-    function Invoke-NtnxPdActivation
-    {
-        <#
-        .SYNOPSIS
-        Activates a Nutanix asynchronous protection domain (as part of an unplanned failover).
-        .DESCRIPTION
-        Activates a Nutanix asynchronous protection domain (as part of an unplanned failover), which will register VMs on the Nutanix cluster.
-        .NOTES
-        Author: Stephane Bourdeaud
-        .PARAMETER pd
-        Asynchronous protection domain name.
-        .PARAMETER cluster
-        FQDN or IP of Nutanix cluster.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-        .EXAMPLE
-        Invoke-NtnxPdActivation -pd <pd_name> -cluster ntnx1.local -credential $credential
-        #>
-        [CmdletBinding()]
-        param
-        (
-            $pd,
-
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [Parameter(Mandatory)]
-            [String]
-            $username,
-            
-            [Parameter(Mandatory)]
-            [SecureString]
-            $password
-        )
-
-        begin
-        {
-            $PrismSecurePassword = $password #some of the code included here was imported from other scripts where this was the name of the variable used for password.
-        }
-
-        process
-        {            
-            #region get data
-                #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
-
-                #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
-                if (!$pd) 
-                {#no pd specified
-                    $pd = ($PdList.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name
-                } 
-                else 
-                {#fetch specified pd
-                    $pd = ($PdList.entities | Where-Object {$_.active -eq $false} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
-                }
-
-                if (!$pd) 
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
-                    Exit
-                }
-            #endregion
-
-            #now let's call the activate workflow
-            ForEach ($pd2activate in $pd) 
-            {#activate each pd
-                #region activate the protection domain
-                    Write-Host ""
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Activating protection domain $($pd2activate) on $cluster ..."
-                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$($pd2activate)/activate"
-                    $method = "POST"
-                    $content = @{}
-                    $body = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully activated protection domain $($pd2activate) on $cluster"
-                #endregion    
-            }
-        }
-
-        end
-        {
-            return $pd #list of protection domains which were processed
-        }
-    }
-
-    function Invoke-NtnxPdDeactivation
-    {
-        <#
-        .SYNOPSIS
-        Deactivates a Nutanix asynchronous protection domain (and !!!DELETES ALL VMS IN THAT PROTECTION DOMAIN!!!).
-        .DESCRIPTION
-        Deactivates a Nutanix asynchronous protection domain which will (1)change the status of the protection domain to inactive and (2)!!!DELETE ALL VMS IN THAT PD!!!
-        .NOTES
-        Author: Stephane Bourdeaud
-        .PARAMETER pd
-        Asynchronous protection domain name.
-        .PARAMETER cluster
-        FQDN or IP of Nutanix cluster.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-        .EXAMPLE
-        Invoke-NtnxPdDeactivation -pd <pd_name> -cluster ntnx1.local -credential $credential
-        #>
-        [CmdletBinding()]
-        param
-        (
-            $pd,
-
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential   
-        )
-
-        begin
-        {
-            
-        }
-
-        process
-        {
-            #region get data
-                #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
-
-                #first, we need to figure out which protection domains need to be deactivated. If none have been specified, we'll assume all of them which are active.
-                if (!$pd) 
-                {#no pd specified
-                    $pd = Read-Host "Enter the name of the protection domain(s) you want to deactivate on $cluster. !!!WARNING!!! All VMs in that protection domain will be deleted!"
-                    $pd = $pd.Split(",") #make sure we process protection_domains as an array
-                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
-                } 
-                else 
-                {#fetch specified pd
-                    $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
-                }
-
-                if (!$pd) 
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
-                    Exit
-                }
-            #endregion
-
-            #region process
-                ForEach ($pd2deactivate in $pd) 
-                {#now let's call the deactivate workflow for each pd
-                    Write-Host ""
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Deactivating protection domain $pd2deactivate on $cluster ..."
-                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/$pd2deactivate/deactivate"
-                    $method = "POST"
-                    $content = @{}
-                    $body = (ConvertTo-Json $content -Depth 4)
-                    $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started deactivation of protection domain $pd2deactivate on $cluster"
-                }
-            #endregion
-        }
-
-        end
-        {
-            return $response #this is the task uuid as sent back from the API
-        }
-    }
-
-    function Set-NtnxPdVmPowerOn
-    {
-        <#
-        .SYNOPSIS
-        Powers on all VMs in a given protection domain.
-        .DESCRIPTION
-        Powers on all VMs in a given protection domain (meant to be called after a failover).
-        .NOTES
-        Author: Stephane Bourdeaud
-        .PARAMETER pd
-        Asynchronous protection domain name.
-        .PARAMETER cluster
-        FQDN or IP of Nutanix cluster.
-        .PARAMETER credential
-        PowerShell credential object for Nutanix cluster API user.
-        .EXAMPLE
-        Set-NtnxPdVmPowerOn -pd <pd_name> -cluster ntnx1.local -credential $credential
-        #>
-        [CmdletBinding()]
-        param
-        (
-            $pd,
-
-            [Parameter(Mandatory)]
-            [String]
-            $cluster,
-            
-            [parameter(mandatory = $true)]
-            [System.Management.Automation.PSCredential]
-            $credential   
-        )
-
-        begin
-        {
-            
-        }
-
-        process
-        {
-            #region get data
-                #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $credential
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
-
-                #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
-                if (!$pd) 
-                {#no pd specified
-                    $pd = Read-Host "Enter the name of the protection domain(s) you want to process on $cluster."
-                    $pd = $pd.Split(",") #make sure we process protection_domains as an array
-                    $pd = $PdList.entities | Where-Object {$_.active -eq $active} | Where-Object {$pd -contains $_.name}
-                } 
-                else 
-                {#fetch specified pd
-                    $pd = $PdList.entities | Where-Object {$_.active -eq $true} | Where-Object {$pd -contains $_.name}
-                }
-
-                if (!$pd) 
-                {
-                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There are no protection domains in the correct status on $cluster!"
-                    Exit
-                }
-            #endregion
-            
-            Write-Host "$($pd.vms)" -ForegroundColor Red
-
-            #region process
-
-                #region get vms
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of VMs on $cluster ..."
-                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
-                    $method = "GET"
-                    $vms_info = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of VMs on $cluster"
                 #endregion
 
-                ForEach ($protection_domain in $pd)
-                {
-                    ForEach ($vm in $protection_domain.vms)
-                    {
-                        #region get the vm uuid
-                            $vm_uuid = ($vms_info.entities | Where-Object {$_.name -eq $vm.vm_name}).uuid
-                            if ($vm_uuid -is [array])
-                            {#we have multiple vms with the same name...
-                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "There is more than one VM with the name $($vm.vm_name) on $cluster. Setting uuid to what is in the protection domain ($($vm.vm_id))"
-                                $vm_uuid = $vm.vm_id
-                            }
-                        #endregion
-
-                        #region power the vm on
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VM $($vm.vm_name) on $cluster ..."
-                            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/set_power_state"
-                            $method = "POST"
-                            $content = @{
-                                transition = "ON"
-                                uuid = $vm_uuid
-                            }
-                            $body = (ConvertTo-Json $content -Depth 4)
-                            $response = Invoke-PrismRESTCall -method $method -url $url -credential $credential -payload $body
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully created task to power on VM $($vm.vm_name) on $cluster"
-                            
-                            Get-PrismTaskStatus -task $response.task_uuid -cluster $cluster -credential $prismCredentials
-                        #endregion
+                #region power the vm on
+                    Write-Host "$(Get-Date) [INFO] Powering on VM $($vm.vm_name) on $cluster ..." -ForegroundColor Green
+                    $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/set_power_state"
+                    $method = "POST"
+                    $content = @{
+                        transition = "ON"
+                        uuid = $vm_uuid
                     }
-                }
-            #endregion
-        }
-
-        end
-        {
-
+                    $body = (ConvertTo-Json $content -Depth 4)
+                    $response = Invoke-PrismAPICall -method $method -url $url -credential $credential -payload $body
+                    Write-Host "$(Get-Date) [SUCCESS] Successfully created task to power on VM $($vm.vm_name) on $cluster" -ForegroundColor Cyan
+                    Get-PrismTaskStatus -task $response.task_uuid -cluster $cluster -credential $credential
+                #endregion
+            }
         }
     }
+    #endregion
 
-#endregion
-
-#region prepare
+    Set-PoSHSSLCerts
+    Set-PoshTls
 
     #region set variables
         $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
         $StartEpochSeconds = Get-Date (Get-Date).ToUniversalTime() -UFormat %s #used to get tasks generated in Prism after the script was invoked
-        $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-        $myvarOutputLogFile += "Invoke-AsyncDr_OutputLog.log"
-        $remote_site_ips = @() #initialize array here to collect remote site ips
     #endregion
 
     Write-Host ""
-    Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Preparing--"
-
-    #check if we need to display help and/or history
-    $HistoryText = @'
- Maintenance Log
- Date       By   Updates (newest updates at the top)
- ---------- ---- ---------------------------------------------------------------
- 10/08/2018 sb   Initial release.
- 06/09/2020 sb   Do over with new sbourdeaud module
- 02/06/2021 sb   Replaced username with get-credential
-################################################################################
-'@
-    $myvarScriptName = ".\Invoke-AsyncDr.ps1"
-
-    if ($help) 
-    {
-        get-help $myvarScriptName
-        exit
-    }
-    if ($History) 
-    {
-        $HistoryText
-        exit
-    }
-
-    #region parameter validation
-        if (($activate -and $migrate) -or ($activate -and $deactivate) -or ($migrate -and $deactivate) -or ($activate -and $reconnectVnicsOnly) -or ($deactivate -and $reconnectVnicsOnly) -or ($reconnectVnicsOnly -and $migrate))
-        {#multiple actions
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You can only use -activate OR -deactivate OR -migrate OR -reconnectVnicsOnly. Don't try to combine them together."
-            Exit
-        }
-
-        if ($deactivate -and $powerOnVms)
-        {#invalid power on request
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You have used -powerOnVms and -deactivate together which is not a valid combination."
-            Exit
-        }
-
-        if (!$activate -and !$migrate -and !$deactivate -and !$reconnectVnicsOnly)
-        {#no action specified
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "You must specify an action: -migrate, -activate, -deactivate or -reconnectVnicsOnly."
-            Exit
-        }
-
-        if (!$prismCreds) 
-        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-        $prismCredentials = Get-Credential -Message "Please enter Prism credentials"
-        } 
-        else 
-        { #we are using custom credentials, so let's grab the username and password from that
-            try 
-            {
-                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-                $username = $prismCredentials.UserName
-                $PrismSecurePassword = $prismCredentials.Password
-            }
-            catch 
-            {
-                Set-CustomCredentials -credname $prismCreds
-                $prismCredentials = Get-CustomCredentials -credname $prismCreds -ErrorAction Stop
-                $username = $prismCredentials.UserName
-                $PrismSecurePassword = $prismCredentials.Password
-            }
-            $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
-        }
-
-    #endregion
-
-    #region modules
-        #check if we have all the required PoSH modules
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
-
-        #TODO: insert here PoSH version check
-        if ($psversiontable.PSVersion.Major -lt 6)
-        {#PoSH version <6
-            Write-LogOutput -LogFile $myvarOutputLogFile -Category "ERROR" -Message "Your version of Powershell is too old, please update to Powershell Core version 6 or above!"
-            Exit
-        }
-
-        #TODO: review this code region for errors
-        #region module sbourdeaud is used for facilitating Prism REST calls
-            $required_version = "3.0.8"
-            if (!(Get-Module -Name sbourdeaud)) {
-            Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-            try
-            {
-                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-            }#end try
-            catch #we couldn't import the module, so let's install it
-            {
-                Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-                try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-                catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
-
-                try
-                {
-                    Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-                }#end try
-                catch #we couldn't import the module
-                {
-                    Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-                    Exit
-                }#end catch
-            }#end catch
-            }#endif module sbourdeaud
-            $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-            if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-            Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-            Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-            Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-            try {
-                Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop
-                Import-Module -Name sbourdeaud -ErrorAction Stop
-            }
-            catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-            }
-            if ($PSVersionTable.PSVersion.Major -le 5) {
-                Set-PoSHSSLCerts
-                Set-PoshTls
-            }
-        #endregion
-    #endregion
+    Write-Host "$(Get-Date) [STEP] --Preparing--" -ForegroundColor Magenta
 
 #endregion
 
+
 #region processing
-    
+
     #region get stuff we'll need regardless
         
         #get cluster information
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $cluster ..."
+        Write-Host "$(Get-Date) [INFO] Retrieving details of Nutanix cluster $cluster ..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
         $method = "GET"
-        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $cluster"
+        $cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+        Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved details of Nutanix cluster $cluster" -ForegroundColor Cyan
 
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)."
+        Write-Host "$(Get-Date) [INFO] Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)." -ForegroundColor Green
 
     #endregion
 
     #TODO: if the cluster hypervisor is vSphere, check for the presence of VM snapshots as this prevents pd migration.
     #TODO: also check that NGT is enabled (not sure how to do that in the API)
+    
     #region migrate
         if ($migrate)
         {   
             Write-Host ""
-            Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain migration workflow--"
+            Write-Host "$(Get-Date) [STEP] --Triggering protection domain migration workflow--" -ForegroundColor Magenta
 
             #get vms and networks if AHV (for later when we will try to reconnect to dvportgroups)
             if ($cluster_details.hypervisor_types -eq "kKvm")
             {
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving Vm details on Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true&include_vm_nic_config=true"
+                Write-Host "$(Get-Date) [INFO] Retrieving VMs from cluster $cluster ..." -ForegroundColor Green
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
                 $method = "GET"
-                $cluster_vms = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved VM details on Nutanix cluster $cluster"
+                $vms_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved VMs from $cluster" -ForegroundColor Cyan
 
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving networks on Nutanix cluster $cluster ..."
+                Write-Host "$(Get-Date) [INFO] Retrieving networks from cluster $cluster ..." -ForegroundColor Green
                 $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
                 $method = "GET"
-                $cluster_networks = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved networks on Nutanix cluster $cluster"
+                $networks_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved networks from $cluster" -ForegroundColor Cyan
             }
 
-            $processed_pds = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -credential $prismCredentials
-            if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "deactivate"
-            
-            #region check remote
-                #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
+            $pdList = Invoke-NtnxPdMigration -pd $pd -cluster $cluster -credential $prismCredentials
 
-                ForEach ($protection_domain in $processed_pds)
-                {#figure out the remote site ips
-                    #region figure out the remote site
-                        #figure out if there is more than one remote site defined for the protection domain
-                        $remoteSite = $PdList.entities | Where-Object {$_.name -eq $protection_domain} | Select-Object -Property remote_site_names
-                        if (!$remoteSite.remote_site_names) 
-                        {#no remote site defined or no schedule on the pd with a remote site
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $protection_domain"
-                            Exit
-                        }
-                        if ($remoteSite -is [array]) 
-                        {#more than 1 remote site target defined on the pd schedule
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $protection_domain"
-                            Exit
-                        }
+            if ($powerOnVms)
+            {
+                Write-Host ""
+                Write-Host "$(Get-Date) [STEP] --Powering on VMs on remote site--" -ForegroundColor Magenta
+                Set-NtnxPdVmPowerOn -pd $pdList -cluster $cluster -credential $prismCredentials
+            }
 
-                        #get the remote site IP address
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about remote site $($remoteSite.remote_site_names) ..."
-                        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
-                        $method = "GET"
-                        $remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about remote site $($remoteSite.remote_site_names)"
-
-                        if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
-                        {#there are multiple IPs defined for the remote site
-                            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than 1 IP configured for the remote site $remoteSite"
-                            Exit
-                        }
-                    #endregion
-                    
-                    if ($remote_site_ips -notcontains $remote_site.remote_ip_ports.psobject.properties.name)
-                    {#we haven't had that remote site yet
-                        $remote_site_ips += $remote_site.remote_ip_ports.psobject.properties.name #add remote site ip to an array here
-                    }
-                    
-                }
-
-                ForEach ($remote_site_ip in $remote_site_ips)
-                {#check the protection domains have been successfully activated on each remote site
-                    Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $remote_site_ip -credential $prismCredentials -operation "activate"
-                }
-            #endregion
+            Write-Host ""
+            Write-Host "$(Get-Date) [INFO] Retrieving list of tasks on the cluster $cluster ..." -ForegroundColor Green
+            Start-Sleep 10
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+            $method = "GET"
+            $response = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(Get-Date) [SUCCESS] Retrieved list of tasks on the cluster $cluster" -ForegroundColor Cyan
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -operation migrate -cluster $cluster -credential $prismCredentials
         }
     #endregion
 
     #region activate
         if ($activate)
-        {
+        {   
             Write-Host ""
-            Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain activation workflow--"
-            $processed_pds = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
-            if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "Processed pds: $processed_pds"}
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "activate"
-        }
-    #endregion
+            Write-Host "$(Get-Date) [STEP] --Triggering protection domain activation workflow--" -ForegroundColor Magenta
 
-    #region reconnect vnics to dvportgroups (vSphere only): applies only to migrate & activate. If migrate, figure out remote site ips, otherwise, use cluster
-        if ($migrate -or $activate -or $reconnectVnicsOnly)
-        {#we are either in the activate or migrate workflow
-            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking if we need to reconnect vNICs ..."
-            $clusters = @()
-            if ($activate -or $reconnectVnicsOnly)
-            {#we are in the activating workflow
-                $clusters += $cluster
-            }
-            else 
-            {#we are in the migrate workflow
-                $clusters = $remote_site_ips
-            }
-
-            ForEach ($prism in $clusters)
-            {#check the protection domains have been successfully activated on each remote site
-                #get cluster information
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details of Nutanix cluster $prism ..."
-                $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/cluster/"
+            #get vms and networks if AHV (for later when we will try to reconnect to dvportgroups)
+            if ($cluster_details.hypervisor_types -eq "kKvm")
+            {
+                Write-Host "$(Get-Date) [INFO] Retrieving VMs from cluster $cluster ..." -ForegroundColor Green
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
                 $method = "GET"
-                $prism_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details of Nutanix cluster $prism"
+                $vms_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved VMs from $cluster" -ForegroundColor Cyan
 
-                if ($prism_details.hypervisor_types -contains "kVMware")
-                {#we have a vsphere cluster
-                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is running VMware vSphere..."
-                    
-                    if ($debugme) {Write-LogOutput -Category "DEBUG" -LogFile $myvarOutputLogFile -Message "$prism.management_servers.count is $($prism_details.management_servers.count)"}
-                    
-                    if ($prism_details.management_servers.count -eq 1)
-                    {#let's grab our vCenter IP
-                        $vCenter_ip = $prism_details.management_servers.ip_address
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Nutanix cluster $prism is managed by vCenter server $vCenter_ip ..."
-                        
-                        #region load powercli
-                            if (!(Get-Module VMware.VimAutomation.Core,VMware.VimAutomation.Common)) 
-                            {#module isn't loaded
-                                try 
-                                {#load powercli
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Loading modules VMware.VimAutomation.Core,VMware.VimAutomation.Common..."
-                                    Import-Module VMware.VimAutomation.Core,VMware.VimAutomation.Common -ErrorAction Stop
-                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Loaded VMware.PowerCLI module"
-                                }
-                                catch 
-                                {#couldn't load powercli
-                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not load modules VMware.VimAutomation.Core,VMware.VimAutomation.Common! We can't check for dvPortGroups!"
-                                    Exit
-                                }
-                            }
-
-                            try 
-                            {#configure ssl
-                                $result = Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false -ErrorAction Stop
-                            }
-                            catch 
-                            {#couldn't configure ssl
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not change the VMware.PowerCLI module configuration to accept self-signed certificates: $($_.Exception.Message)"
-                                exit
-                            }
-                        #endregion
-
-                        #region connect to vCenter
-                            try 
-                            {#connect to vCenter
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting to vCenter server $vcenter_ip ..."
-                                $vCenter_Connect = Connect-VIServer -Server $vcenter_ip -ErrorAction Stop
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully connected to vCenter server $vcenter_ip"
-                            }
-                            catch 
-                            {#couldn't connect to vCenter
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect to vCenter server $vcenter_ip : $($_.Exception.Message)"
-                                Exit
-                            }
-                        #endregion
-
-                        #region figure out which protection domains to process on this specific remote site
-                            
-                            #step 1: retrieve protection domains on this remote site
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $prism ..."
-                            $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                            $method = "GET"
-                            $prism_PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $prism"
-                            
-                            #step 2: compare list of active protection domains on this remote site with the list of processed protection domains returned by the activate or migrate workflow in $processed_pds
-                            if ($migrate -or $activate)
-                            {#we have activate or migrated pds already, so we have a list of pds processed
-                                $prism_processed_pds = $prism_PdList.entities | Where-Object {$processed_pds -contains $_.name} | Where-Object {$_.active -eq $true}
-                            }
-                            else 
-                            {#we are only reconnecting vnics, so our list of pds to process is what was passed in the pd parameter
-                                $prism_processed_pds = $prism_PdList.entities | Where-Object {$pd -contains $_.name} | Where-Object {$_.active -eq $true}
-                            }
-                            if ($debugme) {Write-LogOutput -LogFile $myvarOutputLogFile -Category "DEBUG" -Message "List of active protection domains which were processed on this site: $prism_processed_pds"}
-                            if (!$prism_processed_pds)
-                            {
-                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not find applicable protection domains on Nutanix cluster $prism ..."
-                                Continue
-                            }
-                        #endregion
-                        
-                        #region process vms inside protection domains
-                            
-                            #step 1: foreach protection domain loop
-                            ForEach ($prism_processed_pd in $prism_processed_pds)
-                            {#process each applicable protection domain
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VMs for protection domain $($prism_processed_pd.name) on $prism ..."
-                                #step 2: process each vm inside the protection domain
-                                ForEach ($prism_processed_pd_vm in $prism_processed_pd.vms)
-                                {#process all vms in the applicable protection domain
-                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Processing VM $($prism_processed_pd_vm.vm_name) ..."
-                                    try
-                                    {#get vm object from vCenter
-                                        $vm_vCenter_object = Get-VM -Name $prism_processed_pd_vm.vm_name -ErrorAction Stop
-                                    }
-                                    catch
-                                    {#couldn't get vm object from vCenter
-                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not get VM object from vCenter server $vcenter_ip : $($_.Exception.Message)"
-                                        Continue
-                                    }
-                                    try
-                                    {#get the vnics for that vm from vCenter
-                                        $vm_vCenter_vnics = $vm_vCenter_object | Get-NetworkAdapter -ErrorAction Stop
-                                    }
-                                    catch
-                                    {#couldn't get vnics for that vm from vCenter
-                                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not vNICs for that VM object from vCenter server $vcenter_ip : $($_.Exception.Message)"
-                                        Continue
-                                    }
-                                    
-                                    #step 3: if migrate, and if source was AHV, based on vm name, figure out the list of vnics and which portgroup they are connected to at the source
-                                    if (($cluster_details.hypervisor_types -eq "kKvm") -and ($migrate))
-                                    {#source was AHV and we are migrating, so there is a chance that VMs will end up without vnics if those are connected to a network mapped to a dvportgroup
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "We are migrating from an AHV cluster."
-                                        #step 4: get remote site details and figure out network mappings
-                                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving network mappings for remote site $($cluster_details.name) on $prism ..."
-                                        $url = "https://$($prism):9440/PrismGateway/services/rest/v2.0/remote_sites/$($cluster_details.name)"
-                                        $method = "GET"
-                                        $cluster_remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                                        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved network mappings for remote site $($cluster_details.name) on $prism"
-                                        
-                                        #step 5: foreach vm vnic defined at the source, figure out if the vnic already exists on the target. if not, add it and connect it to the right dvportgroup
-                                        #get the vnics on the vm
-                                        $vm_ahv_cluster_vnics = ($cluster_vms.entities | Where-Object {$_.name -eq $prism_processed_pd_vm.vm_name}).vm_nics
-                                        ForEach ($vm_ahv_cluster_vnic in $vm_ahv_cluster_vnics)
-                                        {#foreach vnic that existed at the source on AHV
-                                            #figure out network name
-                                            #TODO: add logic to make sure we get something here
-                                            $cluster_network_name = ($cluster_networks.entities | Where-Object {$_.uuid -eq $vm_ahv_cluster_vnic.network_uuid}).name
-                                            #figure out the mapped network name
-                                            #TODO: add logic to make sure we get something here
-                                            $prism_mapped_network_name = ($cluster_remote_site.network_mapping.l2_network_mappings | Where-Object {$_.dest_network_name -eq $cluster_network_name}).src_network_name
-                                            
-                                            #figure out if this is a dvportgroup
-                                            try 
-                                            {#get vdportgroup
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Searching for $prism_mapped_network_name ..."
-                                                $mapped_network_vdportgroup = Get-VDPortgroup -Name $prism_mapped_network_name -ErrorAction Stop
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "$prism_mapped_network_name is a VDPortGroup."
-                                            }
-                                            catch 
-                                            {#no vdportgroup
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "$prism_mapped_network_name is not a VDPortGroup or we could not retrieve it from vCenter. Skipping this vnic."
-                                                Continue
-                                            }
-                                            #if it is a dvportgroup, add a vnic and map it to the correct dvportgroup
-                                            if ($mapped_network_vdportgroup)
-                                            {#got a vdportgroup
-                                                try 
-                                                {#add vnic
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Connecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $prism_mapped_network_name ..."
-                                                    $add_vnic = new-networkadapter -vm $vm_vCenter_object -type vmxnet3 -StartConnected -PortGroup $mapped_network_vdportgroup -ErrorAction Stop
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully connected $($prism_processed_pd_vm.vm_name) to VDPortGroup $prism_mapped_network_name ..."
-                                                }
-                                                catch 
-                                                {#couldn't add vnic
-                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not connect $($prism_processed_pd_vm.vm_name) to VDPortGroup $prism_mapped_network_name : $($_.Exception.Message)"
-                                                }
-                                            }
-                                        }
-                                    }
-                                    else 
-                                    {#source was not AHV and we could be migrate or activate, but we're on vSphere
-                                        #foreach vnic, figure out if the connected portgroup is a dvportgroup.  If it is, reconnect it via vCenter
-                                        ForEach ($vm_vCenter_vnic in $vm_vCenter_vnics)
-                                        {
-                                            try 
-                                            {#get vdportgroup
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Searching for $($vm_vCenter_vnic.NetworkName) ..."
-                                                $vdportgroup = Get-VDPortgroup -Name $vm_vCenter_vnic.NetworkName -ErrorAction Stop
-                                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "$($vm_vCenter_vnic.NetworkName) is a VDPortGroup."
-                                            }
-                                            catch 
-                                            {#no vdportgroup
-                                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "$($vm_vCenter_vnic.NetworkName) is not a VDPortGroup or we could not retrieve it from vCenter. Skipping this vnic."
-                                                Continue
-                                            }
-                                            if ($vdportgroup)
-                                            {#got a vdportgroup
-                                                try 
-                                                {#add vnic
-                                                    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Reconnecting $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
-                                                    $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -PortGroup $vdportgroup -ErrorAction Stop -Confirm:$false
-                                                    $connect_vnic = Set-NetworkAdapter -NetworkAdapter $vm_vCenter_vnic -StartConnected:$true -Connected:$true -ErrorAction Stop -Confirm:$false
-                                                    Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully reconnected $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) ..."
-                                                }
-                                                catch 
-                                                {#couldn't add vnic
-                                                    Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not reconnect $($prism_processed_pd_vm.vm_name) to VDPortGroup $($vm_vCenter_vnic.NetworkName) : $($_.Exception.Message)"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        #endregion
-                    
-                        #region disconnect from vCenter
-                            try 
-                            {
-                                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Disconnecting from vCenter server..."
-                                $vCenter_Disconnect = Disconnect-VIServer * -Confirm:$false -ErrorAction Stop
-                                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully disconnected from vCenter server."
-                            }
-                            catch 
-                            {
-                                Write-LogOutput -Category "WARNING" -LogFile $myvarOutputLogFile -Message "Could not disconnect from vCenter server : $($_.Exception.Message)"
-                            }
-                        #endregion
-                    }
-                    else 
-                    {#we have either no or multiple management servers...
-                        Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no or more than one management server(s) defined on $prism"
-                        Exit
-                    }
-                }
+                Write-Host "$(Get-Date) [INFO] Retrieving networks from cluster $cluster ..." -ForegroundColor Green
+                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
+                $method = "GET"
+                $networks_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+                Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved networks from $cluster" -ForegroundColor Cyan
             }
-            
-        }
-    #endregion
 
-    #region powerOnVms
-        if ($migrate -or $activate)
-        {#we migrated or activated, so there are vms to power on
+            $pdList = Invoke-NtnxPdActivation -pd $pd -cluster $cluster -credential $prismCredentials
+
             if ($powerOnVms)
-            {#user wants to power on vms
+            {
                 Write-Host ""
-                Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering VM power on workflow in 60 seconds--"
-                Start-Sleep -Seconds 60
-
-                #let's retrieve the list of protection domains
-                Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving protection domains from Nutanix cluster $cluster ..."
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
-                $method = "GET"
-                $PdList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved protection domains from Nutanix cluster $cluster"
-
-                #region process
-                    ForEach ($protection_domain in $processed_pds)
-                    {
-                        #region figure out the remote site
-                            #figure out if there is more than one remote site defined for the protection domain
-                            $remoteSite = $PdList.entities | Where-Object {$_.name -eq $protection_domain} | Select-Object -Property remote_site_names
-                            if (!$remoteSite.remote_site_names) 
-                            {#no remote site defined or no schedule on the pd with a remote site
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is no remote site defined for protection domain $protection_domain"
-                                Exit
-                            }
-                            if ($remoteSite -is [array]) 
-                            {#more than 1 remote site target defined on the pd schedule
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than one remote site for protection domain $protection_domain"
-                                Exit
-                            }
-
-                            #get the remote site IP address
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about remote site $($remoteSite.remote_site_names) ..."
-                            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/remote_sites/$($remoteSite.remote_site_names)"
-                            $method = "GET"
-                            $remote_site = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about remote site $($remoteSite.remote_site_names)"
-
-                            if ($remote_site.remote_ip_ports.psobject.properties.count -gt 1)
-                            {#there are multiple IPs defined for the remote site
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "There is more than 1 IP configured for the remote site $remoteSite"
-                                Exit
-                            }
-                        #endregion
-
-                        if ($migrate)
-                        {#we are migrating, so the cluster where we power on vms is the remote site
-                            $powerOn_cluster = $remote_site.remote_ip_ports.psobject.properties.name
-                        }
-                        if ($activate)
-                        {#we are activating, so the cluster where we power on is the same cluster where we activated
-                            $powerOn_cluster = $cluster
-                        }
-
-                        
-                        #region check the protection domain is active
-                            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving details about protection domain $($protection_domain) on cluster $powerOn_cluster ..."
-                            $url = "https://$($powerOn_cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/?names=$($protection_domain)"
-                            $method = "GET"
-                            $response = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-                            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved details about protection domain $($protection_domain) on cluster $powerOn_cluster"
-
-                            if ($response.entities.active -ne "true")
-                            {#pd is not active
-                                Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Protection domain $protection_domain is not active on cluster $($powerOn_cluster)"
-                                Exit
-                            }
-                        #endregion
-
-                        Write-Host ""
-                        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Powering on VMs in protection domain $($protection_domain) on cluster $powerOn_cluster ..."
-                        Set-NtnxPdVmPowerOn -pd $protection_domain -cluster $powerOn_cluster -credential $prismCredentials
-                    }
-                #endregion
+                Write-Host "$(Get-Date) [STEP] --Powering on VMs--" -ForegroundColor Magenta
+                Set-NtnxPdVmPowerOn -pd $pdList -cluster $cluster -credential $prismCredentials
             }
+
+            Write-Host ""
+            Write-Host "$(Get-Date) [INFO] Retrieving list of tasks on the cluster $cluster ..." -ForegroundColor Green
+            Start-Sleep 10
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+            $method = "GET"
+            $response = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(Get-Date) [SUCCESS] Retrieved list of tasks on the cluster $cluster" -ForegroundColor Cyan
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -operation activate -cluster $cluster -credential $prismCredentials
         }
-    #endregion 
+    #endregion
 
     #region deactivate
         if ($deactivate)
-        {
+        {   
             Write-Host ""
-            Write-LogOutput -Category "STEP" -LogFile $myvarOutputLogFile -Message "--Triggering protection domain deactivation workflow--"
+            Write-Host "$(Get-Date) [STEP] --Triggering protection domain deactivation workflow--" -ForegroundColor Magenta
+            Write-Host "$(Get-Date) [WARNING] This will DELETE ALL VMs in the specified protection domain(s)!" -ForegroundColor Yellow
+
             $response = Invoke-NtnxPdDeactivation -pd $pd -cluster $cluster -credential $prismCredentials
-            Get-PrismPdTaskStatus -time $StartEpochSeconds -cluster $cluster -credential $prismCredentials -operation "deactivate"
+
+            Write-Host ""
+            Write-Host "$(Get-Date) [INFO] Retrieving list of tasks on the cluster $cluster ..." -ForegroundColor Green
+            Start-Sleep 10
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v1/progress_monitors"
+            $method = "GET"
+            $response = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(Get-Date) [SUCCESS] Retrieved list of tasks on the cluster $cluster" -ForegroundColor Cyan
+            Get-PrismPdTaskStatus -time $StartEpochSeconds -operation deactivate -cluster $cluster -credential $prismCredentials
+        }
+    #endregion
+
+    #region reconnectVnicsOnly
+        if ($reconnectVnicsOnly)
+        {   
+            Write-Host ""
+            Write-Host "$(Get-Date) [STEP] --Reconnecting virtual NICs--" -ForegroundColor Magenta
+            
+            Write-Host "$(Get-Date) [INFO] Retrieving VMs from cluster $cluster ..." -ForegroundColor Green
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/"
+            $method = "GET"
+            $vms_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved VMs from $cluster" -ForegroundColor Cyan
+
+            Write-Host "$(Get-Date) [INFO] Retrieving networks from cluster $cluster ..." -ForegroundColor Green
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/networks/"
+            $method = "GET"
+            $networks_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved networks from $cluster" -ForegroundColor Cyan
+
+            #first, we need to figure out which protection domains need to be failed over. If none have been specified, we'll assume all of them which are active.
+            Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $cluster ..." -ForegroundColor Green
+            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/protection_domains/"
+            $method = "GET"
+            $PdList = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved protection domains from Nutanix cluster $cluster" -ForegroundColor Cyan
+
+            if (!$pd) 
+            {#no pd specified
+                $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name
+            } 
+            else 
+            {#fetch specified pd
+                $pd = ($PdList.entities | Where-Object {$_.active -eq $true} | Select-Object -Property name).name | Where-Object {$pd -contains $_}
+            }
+
+            if (!$pd) 
+            {
+                Write-Host "$(Get-Date) [ERROR] There are no protection domains in the correct status on $cluster!" -ForegroundColor Red
+                Exit
+            }
+
+            ForEach ($pd2reconnect in $pd) 
+            {#reconnect vnics for each pd
+                Write-Host ""
+                Write-Host "$(Get-Date) [INFO] Reconnecting virtual NICs for protection domain $($pd2reconnect) on $cluster ..." -ForegroundColor Green
+                
+                #get the vms in this pd
+                $pdVms = $PdList.entities | Where-Object {$_.name -eq $pd2reconnect} | Select-Object -ExpandProperty vms
+                
+                ForEach ($vm in $pdVms) 
+                {
+                    $vm_uuid = ($vms_info.entities | Where-Object {$_.name -eq $vm.vm_name}).uuid
+                    if ($vm_uuid -is [array])
+                    {#we have multiple vms with the same name...
+                        Write-Host "$(Get-Date) [WARNING] There is more than one VM with the name $($vm.vm_name) on $cluster. Using uuid from protection domain ($($vm.vm_id))" -ForegroundColor Yellow
+                        $vm_uuid = $vm.vm_id
+                    }
+                    
+                    #get the network uuid for each nic
+                    ForEach ($nic in $vm.vnics)
+                    {
+                        $network_uuid = ($networks_info.entities | Where-Object {$_.name -eq $nic.network_name}).uuid
+                        if ($network_uuid)
+                        {
+                            Write-Host "$(Get-Date) [INFO] Reconnecting NIC $($nic.mac_address) of VM $($vm.vm_name) to network $($nic.network_name) ..." -ForegroundColor Green
+                            $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/$($vm_uuid)/nics/$($nic.mac_address)/connect"
+                            $method = "POST"
+                            $content = @{ network_uuid = $network_uuid }
+                            $body = (ConvertTo-Json $content -Depth 4)
+                            $response = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $body
+                            Write-Host "$(Get-Date) [SUCCESS] Successfully reconnected NIC $($nic.mac_address) of VM $($vm.vm_name) to network $($nic.network_name)" -ForegroundColor Cyan
+                        }
+                    }
+                }
+            }
         }
     #endregion
 
 #endregion
 
+
 #region cleanup
     #let's figure out how much time this all took
     Write-Host ""
-    Write-LogOutput -Category "SUM" -LogFile $myvarOutputLogFile -Message "total processing time: $($myvarElapsedTime.Elapsed.ToString())"
-
+    Write-Host "$(Get-Date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+    
     #cleanup after ourselves and delete all custom variables
     Remove-Variable myvar* -ErrorAction SilentlyContinue
     Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
     Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
-    Remove-Variable log -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable pd -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable migrate -ErrorAction SilentlyContinue
+    Remove-Variable activate -ErrorAction SilentlyContinue
+    Remove-Variable deactivate -ErrorAction SilentlyContinue
+    Remove-Variable powerOnVms -ErrorAction SilentlyContinue
+    Remove-Variable reconnectVnicsOnly -ErrorAction SilentlyContinue
+    Remove-Variable StartEpochSeconds -ErrorAction SilentlyContinue
 #endregion

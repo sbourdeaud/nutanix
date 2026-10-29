@@ -7,8 +7,6 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
@@ -32,7 +30,7 @@ Creates a volume group called myvm_data, adds five 100 GiB disks to it, then att
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 29th 2026
 #>
 
 #region parameters
@@ -41,7 +39,6 @@ Creates a volume group called myvm_data, adds five 100 GiB disks to it, then att
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
-        [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true,HelpMessage = "Enter the Nutanix AHV cluster name or address")] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
@@ -53,89 +50,20 @@ Creates a volume group called myvm_data, adds five 100 GiB disks to it, then att
     )
 #endregion
 
-#region functions
-    function Write-LogOutput
-    {
-    <#
-    .SYNOPSIS
-    Outputs color coded messages to the screen and/or log file based on the category.
-
-    .DESCRIPTION
-    This function is used to produce screen and log output which is categorized, time stamped and color coded.
-
-    .PARAMETER Category
-    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-
-    .PARAMETER Message
-    This is the actual message you want to display.
-
-    .PARAMETER LogFile
-    If you want to log output to a file as well, use logfile to pass the log file full path name.
-
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-    .EXAMPLE
-    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-    Displays an error message.
-
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-        param
-        (
-            [Parameter(Mandatory)]
-            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG')]
-            [string]
-            $Category,
-
-            [string]
-            $Message,
-
-            [string]
-            $LogFile
-        )
-
-        process
-        {
-            $Date = get-date #getting the date so we can timestamp the output entry
-            $FgColor = "Gray" #resetting the foreground/text color
-            switch ($Category) #we'll change the text color depending on the selected category
-            {
-                "INFO" {$FgColor = "Green"}
-                "WARNING" {$FgColor = "Yellow"}
-                "ERROR" {$FgColor = "Red"}
-                "SUM" {$FgColor = "Magenta"}
-                "SUCCESS" {$FgColor = "Cyan"}
-                "STEP" {$FgColor = "Magenta"}
-                "DEBUG" {$FgColor = "White"}
-            }
-
-            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-            if ($LogFile) #add the entry to the log file if -LogFile has been specified
-            {
-                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-            }
-        }
-
-    }#end function Write-LogOutput
-#endregion
 
 #region prepwork
-    #check if we need to display help and/or history
+
     $HistoryText = @'
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 12/13/2018 sb   Initial release. Happy birthday to my beloved wife, Elodie!
 04/03/2020 sb   Do over with sbourdeaud module
 01/28/2021 sb   Added ability to specify multiple VMs
 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
-'@
+'
     $myvarScriptName = ".\new-AhvVg.ps1"
 
     if ($help) {get-help $myvarScriptName; exit}
@@ -144,60 +72,239 @@ Date       By   Updates (newest updates at the top)
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-    #check if we have all the required PoSH modules
-    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
+    #region helper functions (previously from sbourdeaud module)
+    function Invoke-PrismAPICall {
+        param (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string]$method,
 
-    #region module sbourdeaud is used for facilitating Prism REST calls
-        $required_version = "3.0.8"
-        if (!(Get-Module -Name sbourdeaud)) {
-        Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-        try
-        {
-            Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-            Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-        }#end try
-        catch #we couldn't import the module, so let's install it
-        {
-            Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-            try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-            catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
+            [parameter(mandatory = $true)]
+            [string]$url,
 
-            try
-            {
-                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-            }#end try
-            catch #we couldn't import the module
-            {
-                Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-                Exit
-            }#end catch
-        }#end catch
-        }#endif module sbourdeaud
-        $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-        if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-        Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-        Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-        Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+            [parameter(mandatory = $false)]
+            [string]$payload,
+
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]$credential
+        )
+
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
         try {
-            Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-            Import-Module -Name sbourdeaud -ErrorAction Stop
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $headers = @{
+                    "Content-Type" = "application/json"
+                    "Accept"       = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
+            } else {
+                $username = $credential.UserName
+                $password = $credential.Password
+                $headers = @{
+                    "Authorization" = "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username + ":" + ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))))
+                    "Content-Type"  = "application/json"
+                    "Accept"        = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
+            }
+            Write-Host "$(Get-Date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White }
         }
-        catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+        catch {
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
         }
+        return $resp
+    }
+
+    function Set-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Set path to $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+        $user = $credentials.UserName
+        $securePassword = $credentials.Password
+
+        try {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Type Directory $path -ErrorAction Stop | Out-Null
+            }
+            catch {
+                throw "$(Get-Date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+            }
+        }
+
+        try {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        Write-Host "$(Get-Date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan
+    }
+
+    function Get-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        if (!(Test-Path $credentialsFilePath)) {
+            throw "$(Get-Date) [ERROR] Could not access file $credentialsFilePath"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+        $user = $credFile[0]
+        $securePassword = $credFile[1] | ConvertTo-SecureString
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(Get-Date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan
+        return $customCredentials
+    }
+
+    function Set-PoshTls {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = (
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        )
+    }
+
+    function Set-PoSHSSLCerts {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if (ServicePointManager.ServerCertificateValidationCallback == null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback +=
+                delegate (Object obj, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }
+        [ServerCertificateValidationCallback]::Ignore()
+    }
+
+    function Get-PrismTaskStatus {
+        param (
+            [Parameter(Mandatory)]
+            $Task,
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]
+            $credential,
+            [parameter(mandatory = $true)]
+            [String]
+            $cluster
+        )
+
+        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$Task"
+        $method = "GET"
+        
+        Write-Host "$(Get-Date) [INFO] Retrieving details of task $Task..." -ForegroundColor Green
+        $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $Task" -ForegroundColor Cyan
+
+        While ($taskDetails.progress_status -ne "Succeeded")
+        {
+            if ($taskDetails.progress_status -eq "Failed") 
+            {
+                Write-Host "$(Get-Date) [ERROR] Task failed with status: $($taskDetails.progress_status)" -ForegroundColor Red
+                throw "$(get-date) [ERROR] Task $Task failed. Exiting!"
+            }
+            else 
+            {
+                Write-Host "$(get-date) [WARNING] Task $Task status is $($taskDetails.progress_status) with $($taskDetails.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 5
+            }
+            $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+        }
+        Write-Host "$(Get-Date) [SUCCESS] Task $Task completed successfully!" -ForegroundColor Cyan
+    }
     #endregion
 
-    if ($PSVersionTable.PSVersion.Major -le 5) {
-        Set-PoSHSSLCerts
-        Set-PoshTls
-    }
+    Set-PoSHSSLCerts
+    Set-PoshTls
 #endregion
+
 
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
     $myvar_vm_list = @()
 #endregion
+
 
 #region parameters validation
     if (!$prismCreds) 
@@ -226,13 +333,14 @@ Date       By   Updates (newest updates at the top)
     $myvar_vm_list = $vm.Split(",") #make sure we parse the argument in case it contains several entries
 #endregion
 
+
 #region processing	
 
     #region check cluster is running AHV
         Write-Host "$(get-date) [INFO] Retrieving details of Nutanix cluster $cluster ..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
         $method = "GET"
-        $cluster_details = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+        $cluster_details = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of Nutanix cluster $cluster" -ForegroundColor Cyan
 
         Write-Host "$(get-date) [INFO] Hypervisor on Nutanix cluster $cluster is of type $($cluster_details.hypervisor_types)." -ForegroundColor Green
@@ -249,7 +357,7 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Retrieving VMs from cluster $cluster..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/vms/?include_vm_disk_config=true"
             $method = "GET"
-            $vmList = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $vmList = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved VMs from $cluster!" -ForegroundColor Cyan
             
             if (!($vmDetails = $vmList.entities | Where-Object {$_.name -eq $myvar_vm}))
@@ -278,7 +386,7 @@ Date       By   Updates (newest updates at the top)
                         Write-Host "$(get-date) [INFO] Retrieving details of disk $diskUuid..." -ForegroundColor Green
                         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/virtual_disks/$diskUuid"
                         $method = "GET"
-                        $diskDetails = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        $diskDetails = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                         Write-Host "$(get-date) [SUCCESS] Successfully retrieved details of disk $diskUuid!" -ForegroundColor Cyan
 
                         $diskContainerUUid = $diskDetails.storage_container_uuid
@@ -294,7 +402,7 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(get-date) [INFO] Retrieving storage containers from Nutanix cluster $cluster ..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/storage_containers/"
             $method = "GET"
-            $storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $storage_containers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved storage containers from Nutanix cluster $cluster" -ForegroundColor Cyan
 
             if (!($diskContainerUUid = ($storage_containers.entities | Where-Object {$_.name -eq $container}).storage_container_uuid))
@@ -308,62 +416,48 @@ Date       By   Updates (newest updates at the top)
         Write-Host "$(get-date) [INFO] Creating volume group $vg with $qty disk(s) of size $size bytes to $vm in container $diskContainerUUid..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/volume_groups/"
         $method = "POST"
+        
+        $disk_list = @()
+        while ($qty -ne 0) {
+            $disk_list += @{
+                create_config = @{
+                    size = $size
+                    storage_container_uuid = $diskContainerUUid
+                }
+            }
+            $qty = $qty - 1
+        }
+        
         $content = @{
             description = "Volume group attached to vm $vm"
-            disk_list = 
-            @(
-                while ($qty -ne 0) {
-                    @{
-                    create_config = 
-                        @{
-                            size = $size
-                            storage_container_uuid = $diskContainerUUid
-                        }
-                    }
-                    $qty = $qty - 1
-                }
-            )
+            disk_list = $disk_list
             flash_mode_enabled = "false"
             is_shared = "true"
             name = "$vg"
         }
         $body = (ConvertTo-Json $content -Depth 4)
         if ($debugme) {Write-Host $body -ForegroundColor White}
-        $taskUuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
+        $taskUuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $body
         Write-Host "$(get-date) [SUCCESS] Successfully requested creation of volume group $vg in container $diskContainerUUid!" -ForegroundColor Cyan
 
         Write-Host "$(get-date) [INFO] Checking status of the volume group creation task $($taskUuid.task_uuid)..." -ForegroundColor Green
-        $task = (Get-NTNXTask -TaskId $taskUuid -credential $prismCredentials -cluster $cluster)
-        While ($task.progress_status -ne "Succeeded")
-        {
-            if ($task.progress_status -eq "Failed") 
-            {#task failed
-                throw "$(get-date) [ERROR] Volume group creation task $($taskUuid.task_uuid) failed. Exiting!"
-            }
-            else 
-            {#task hasn't completed yet
-                Write-Host "$(get-date) [WARNING] Volume group creation task $($taskUuid.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
-                Start-Sleep -Seconds 5
-            }
-            $task = (Get-NTNXTask -TaskId $taskUuid -credential $prismCredentials -cluster $cluster)
-        } 
-        Write-Host "$(get-date) [SUCCESS] Volume group creation task $($taskUuid.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
+        Get-PrismTaskStatus -Task $taskUuid.task_uuid -credential $prismCredentials -cluster $cluster
     #endregion
 
     #region retrieving details about the created vg
-        Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Retrieving cluster volume groups information..."
+        Write-Host "$(get-date) [INFO] Retrieving cluster volume groups information..." -ForegroundColor Green
         $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/volume_groups/?include_disk_size=true"
         $method = "GET"
-        $vgInfo = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
-        Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully retrieved information cluster volume groups!"
+        $vgInfo = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
+        Write-Host "$(get-date) [SUCCESS] Successfully retrieved information cluster volume groups!" -ForegroundColor Cyan
 
         if ($createdVg = $vgInfo.entities | Where-Object {$_.name -eq $vg})
         {#found our created vg
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Found $($vg) with uuid $($createdVg.uuid)"
+            Write-Host "$(get-date) [SUCCESS] Found $($vg) with uuid $($createdVg.uuid)" -ForegroundColor Cyan
         }
         else
         {#could not find our created vg
-            Write-LogOutput -Category "ERROR" -LogFile $myvarOutputLogFile -Message "Could not find volume group $vg on cluster $cluster"
+            Write-Host "$(get-date) [ERROR] Could not find volume group $vg on cluster $cluster" -ForegroundColor Red
             exit
         }
     #endregion
@@ -376,7 +470,7 @@ Date       By   Updates (newest updates at the top)
                 Throw "$(get-date) [ERROR] Could not find VM $myvar_vm on $cluster!"
             }
 
-            Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Attaching volume group $($createdVg.name) with uuid $($createdVg.uuid) to vm $myvar_vm with uuid $($vmDetails.uuid)..."
+            Write-Host "$(get-date) [INFO] Attaching volume group $($createdVg.name) with uuid $($createdVg.uuid) to vm $myvar_vm with uuid $($vmDetails.uuid)..." -ForegroundColor Green
             $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/volume_groups/$($createdVg.uuid)/attach"
             $method = "POST"
             $content = @{
@@ -384,31 +478,18 @@ Date       By   Updates (newest updates at the top)
                 vm_uuid = $($vmDetails.uuid)
             }
             $body = (ConvertTo-Json $content)
-            $vgAttachTaskUuid = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials -payload $body
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvarOutputLogFile -Message "Successfully started task to attach volume group $($createdVg.name) to vm $vm!"
+            $vgAttachTaskUuid = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials -payload $body
+            Write-Host "$(get-date) [SUCCESS] Successfully started task to attach volume group $($createdVg.name) to vm $vm!" -ForegroundColor Cyan
 
             Start-Sleep -Seconds 5
 
             Write-Host "$(get-date) [INFO] Checking status of the volume group attach task $($vgAttachTaskUuid.task_uuid)..." -ForegroundColor Green
-            $task = (Get-NTNXTask -TaskId $vgAttachTaskUuid -credential $prismCredentials -cluster $cluster)
-            While ($task.progress_status -ne "Succeeded")
-            {
-                if ($task.progress_status -eq "Failed") 
-                {#task failed
-                    throw "$(get-date) [ERROR] Volume group attach task $($vgAttachTaskUuid.task_uuid) failed. Exiting!"
-                }
-                else 
-                {#task hasn't completed yet
-                    Write-Host "$(get-date) [WARNING] Volume group attach task $($vgAttachTaskUuid.task_uuid) status is $($task.progress_status) with $($task.percentage_complete)% completion, waiting 5 seconds..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds 5
-                }
-                $task = (Get-NTNXTask -TaskId $vgAttachTaskUuid -credential $prismCredentials -cluster $cluster)
-            } 
-            Write-Host "$(get-date) [SUCCESS] Volume group attach task $($vgAttachTaskUuid.task_uuid) has $($task.progress_status)!" -ForegroundColor Cyan
+            Get-PrismTaskStatus -Task $vgAttachTaskUuid.task_uuid -credential $prismCredentials -cluster $cluster
         }
     #endregion
 
 #endregion
+
 
 #region cleanup
 	#let's figure out how much time this all took
@@ -419,7 +500,12 @@ Date       By   Updates (newest updates at the top)
 	Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
 	Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
-	Remove-Variable log -ErrorAction SilentlyContinue
+	Remove-Variable debugme -ErrorAction SilentlyContinue
 	Remove-Variable cluster -ErrorAction SilentlyContinue
-    Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable vg -ErrorAction SilentlyContinue
+    Remove-Variable vm -ErrorAction SilentlyContinue
+    Remove-Variable qty -ErrorAction SilentlyContinue
+    Remove-Variable size -ErrorAction SilentlyContinue
+    Remove-Variable container -ErrorAction SilentlyContinue
 #endregion

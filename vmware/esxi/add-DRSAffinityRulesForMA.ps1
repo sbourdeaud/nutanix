@@ -7,8 +7,6 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER ntnx_cluster1
@@ -31,7 +29,7 @@ Create DRS affinity groups and rules for ntnxc1 and ntnxc2 on vcenter1:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 16th 2021
+  Revision: October 29th 2026
 #>
 
 #region A - parameters
@@ -40,7 +38,6 @@ Param
     #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
     [parameter(mandatory = $false)] [switch]$help,
     [parameter(mandatory = $false)] [switch]$history,
-    [parameter(mandatory = $false)] [switch]$log,
     [parameter(mandatory = $false)] [switch]$debugme,
     [parameter(mandatory = $false)] [string]$ntnx_cluster1,
 	[parameter(mandatory = $false)] [string]$ntnx_cluster2,
@@ -51,114 +48,29 @@ Param
 )
 #endregion
 
-#region B - functions
-#this function is used to output log data
-Function OutputLogData
-{
-	#input: log category, log message
-	#output: text to standard output
-<#
-.SYNOPSIS
-  Outputs messages to the screen and/or log file.
-.DESCRIPTION
-  This function is used to produce screen and log output which is categorized, time stamped and color coded.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER myCategory
-  This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-.PARAMETER myMessage
-  This is the actual message you want to display.
-.EXAMPLE
-  PS> OutputLogData -mycategory "ERROR" -mymessage "You must specify a cluster name!"
-#>
-	param
-	(
-		[string] $category,
-		[string] $message
-	)
+#region helper functions (previously from sbourdeaud module)
+    function Invoke-PrismAPICall {
+        param (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string]$method,
 
-    begin
-    {
-	    $myvarDate = get-date
-	    $myvarFgColor = "Gray"
-	    switch ($category)
-	    {
-		    "INFO" {$myvarFgColor = "Green"}
-		    "WARNING" {$myvarFgColor = "Yellow"}
-		    "ERROR" {$myvarFgColor = "Red"}
-		    "SUM" {$myvarFgColor = "Magenta"}
-	    }
-    }
+            [parameter(mandatory = $true)]
+            [string]$url,
 
-    process
-    {
-	    Write-Host -ForegroundColor $myvarFgColor "$myvarDate [$category] $message"
-	    if ($log) {Write-Output "$myvarDate [$category] $message" >>$myvarOutputLogFile}
-    }
+            [parameter(mandatory = $false)]
+            [string]$payload,
 
-    end
-    {
-        Remove-variable category
-        Remove-variable message
-        Remove-variable myvarDate
-        Remove-variable myvarFgColor
-    }
-}#end function OutputLogData
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]$credential
+        )
 
-#this function is used to connect to Prism REST API
-Function Invoke-PrismRESTCall
-{
-	#input: username, password, url, method, body
-	#output: REST response
-<#
-.SYNOPSIS
-  Connects to Nutanix Prism REST API.
-.DESCRIPTION
-  This function is used to connect to Prism REST API.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER username
-  Specifies the Prism username.
-.PARAMETER password
-  Specifies the Prism password.
-.PARAMETER url
-  Specifies the Prism url.
-.EXAMPLE
-  PS> PrismRESTCall -username admin -password admin -url https://10.10.10.10:9440/PrismGateway/services/rest/v1/ 
-#>
-    param
-    (
-        [parameter(mandatory = $true)]
-        [ValidateSet("POST","GET","DELETE","PUT")]
-        [string] 
-        $method,
-        
-        [parameter(mandatory = $true)]
-        [string] 
-        $url,
-
-        [parameter(mandatory = $false)]
-        [string] 
-        $payload,
-        
-        [parameter(mandatory = $true)]
-        [System.Management.Automation.PSCredential]
-        $credential
-    )
-
-    begin
-    {
- 
-    }
-    process
-    {
         Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
         try {
-            #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
             if ($PSVersionTable.PSVersion.Major -gt 5) {
                 $headers = @{
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
+                    "Content-Type" = "application/json"
+                    "Accept"       = "application/json"
                 }
                 if ($payload) {
                     $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
@@ -166,10 +78,12 @@ Function Invoke-PrismRESTCall
                     $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
                 }
             } else {
+                $username = $credential.UserName
+                $password = $credential.Password
                 $headers = @{
-                    "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($PrismSecurePassword))) ));
-                    "Content-Type"="application/json";
-                    "Accept"="application/json"
+                    "Authorization" = "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username + ":" + ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))))
+                    "Content-Type"  = "application/json"
+                    "Accept"        = "application/json"
                 }
                 if ($payload) {
                     $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
@@ -177,210 +91,155 @@ Function Invoke-PrismRESTCall
                     $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
                 }
             }
-            Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-            if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+            Write-Host "$(Get-Date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White }
         }
         catch {
-            $saved_error = $_.Exception.Message
-            # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
             Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-            Throw "$(get-date) [ERROR] $saved_error"
+            throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
         }
-        finally {
-            #add any last words here; this gets processed no matter what
-        }
-    }
-    end
-    {
         return $resp
     }
-}#end function Get-PrismRESTCall
 
-#Function Get-RESTError
-Function Get-RESTError 
-{
-    $global:helpme = $body
-    $global:helpmoref = $moref
-    $global:result = $_.Exception.Response.GetResponseStream()
-    $global:reader = New-Object System.IO.StreamReader($global:result)
-    $global:responseBody = $global:reader.ReadToEnd();
+    function Set-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
 
-    return $global:responsebody
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
 
-    break
-}#end function Get-RESTError
-
-#this function is used to create saved credentials for the current user
-function Set-CustomCredentials 
-{
-#input: path, credname
-	#output: saved credentials file
-<#
-.SYNOPSIS
-  Creates a saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to create a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
-Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
-#>
-	param
-	(
-		[parameter(mandatory = $false)]
-        [string] 
-        $path,
-		
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-	)
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
                 $path = $home
-            }
-            else 
-            {
+            } else {
                 $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
             }
-            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
-        #prompt for credentials
+            Write-Host "$(Get-Date) [INFO] Set path to $path" -ForegroundColor Green
+        }
+
         $credentialsFilePath = "$path\$credname.txt"
-		$credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
-		
-		#put details in hashed format
-		$user = $credentials.UserName
-		$securePassword = $credentials.Password
-        
-        #convert secureString to text
-        try 
-        {
+        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+        $user = $credentials.UserName
+        $securePassword = $credentials.Password
+
+        try {
             $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
         }
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        catch {
+            throw "$(Get-Date) [ERROR] Could not convert password : $($_.Exception.Message)"
         }
 
-        #create directory to store creds if it does not already exist
-        if(!(Test-Path $path))
-		{
-            try 
-            {
-                $result = New-Item -type Directory $path -ErrorAction Stop
-            } 
-            catch 
-            {
-                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Type Directory $path -ErrorAction Stop | Out-Null
             }
-		}
+            catch {
+                throw "$(Get-Date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+            }
+        }
 
-        #save creds to file
-        try 
-        {
+        try {
             Set-Content $credentialsFilePath $user -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
         }
-        try 
-        {
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try {
             Add-Content $credentialsFilePath $password -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
         }
 
-        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
+        Write-Host "$(Get-Date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan
     }
-    end
-    {}
-}
 
-#this function is used to retrieve saved credentials for the current user
-function Get-CustomCredentials 
-{
-#input: path, credname
-	#output: credential object
-<#
-.SYNOPSIS
-  Retrieves saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
-Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
-#>
-	param
-	(
-        [parameter(mandatory = $false)]
-		[string] 
-        $path,
-		
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-	)
+    function Get-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
 
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
                 $path = $home
-            }
-            else 
-            {
+            } else {
                 $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
             }
-            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
+            Write-Host "$(Get-Date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+
         $credentialsFilePath = "$path\$credname.txt"
-        if(!(Test-Path $credentialsFilePath))
-	    {
-            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
+        if (!(Test-Path $credentialsFilePath)) {
+            throw "$(Get-Date) [ERROR] Could not access file $credentialsFilePath"
         }
 
         $credFile = Get-Content $credentialsFilePath
-		$user = $credFile[0]
-		$securePassword = $credFile[1] | ConvertTo-SecureString
-
+        $user = $credFile[0]
+        $securePassword = $credFile[1] | ConvertTo-SecureString
         $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
 
-        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
-    }
-    end
-    {
+        Write-Host "$(Get-Date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan
         return $customCredentials
     }
-}
 
+    function Set-PoshTls {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = (
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        )
+    }
+
+    function Set-PoSHSSLCerts {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if (ServicePointManager.ServerCertificateValidationCallback == null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback +=
+                delegate (Object obj, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }
+        [ServerCertificateValidationCallback]::Ignore()
+    }
+    #endregion
+
+    Set-PoSHSSLCerts
+    Set-PoshTls
+#endregion
+
+#region B - functions
 #this function is used to create a DRS host group
 Function New-DrsHostGroup
 {
@@ -744,24 +603,24 @@ Function Update-DRSVMToHostRule
         #if (!$debugme) {$ErrorActionPreference = "SilentlyContinue"}
 #check if we need to display help and/or history
 $HistoryText = @'
- Maintenance Log
- Date       By   Updates (newest updates at the top)
- ---------- ---- ---------------------------------------------------------------
- 10/06/2015 sb   Initial release.
- 06/21/2016 sb   Updated code to support refresh of existing rules as well as
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter and OutputLogData function
+10/06/2015 sb   Initial release.
+06/21/2016 sb   Updated code to support refresh of existing rules as well as
                  partial groups and rules creation.  Changed default groups and
                  rule naming to simplify them.  Added the -noruleupdate switch.
- 09/15/2016 sb   Changed password input to secure string
- 06/05/2018 sb   Updated script to use REST API instead of NTNX cmdlets
- 06/27/2018 sb   Added BetterTls module for Tls 1.2
- 07/17/2018 sb   Added check for PoSH version and removed silentlycontinue as
+09/15/2016 sb   Changed password input to secure string
+06/05/2018 sb   Updated script to use REST API instead of NTNX cmdlets
+06/27/2018 sb   Added BetterTls module for Tls 1.2
+07/17/2018 sb   Added check for PoSH version and removed silentlycontinue as
                  default for erroractionpreference
- 10/26/2018 sb   Added additional error control.
- 09/03/2019 sb   Added yet additional error control.  Removed dependencies on
+09/03/2019 sb   Added yet additional error control.  Removed dependencies on
                  sbourdeaud and BetterTls modules.
- 02/06/2021 sb   Replaced username with get-credential
+02/06/2021 sb   Replaced username with get-credential
 ################################################################################
-'@
+'
         $myvarScriptName = ".\add-DRSAffinityRulesForMA.ps1"
 
         if ($help) 
@@ -773,7 +632,6 @@ $HistoryText = @'
         $HistoryText
         exit
     }
-
     
         if ($PSVersionTable.PSVersion.Major -lt 5) 
         {#check PoSH version
@@ -831,55 +689,6 @@ $HistoryText = @'
             }
         }
     #endregion
-
-    #region C5 - get ready to use the Nutanix REST API
-# ignore SSL warnings
-Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
-if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
-    $certCallback = @"
-    using System;
-    using System.Net;
-    using System.Net.Security;
-    using System.Security.Cryptography.X509Certificates;
-    public class ServerCertificateValidationCallback
-    {
-        public static void Ignore()
-        {
-            if(ServicePointManager.ServerCertificateValidationCallback ==null)
-            {
-                ServicePointManager.ServerCertificateValidationCallback += 
-                    delegate
-                    (
-                        Object obj, 
-                        X509Certificate certificate, 
-                        X509Chain chain, 
-                        SslPolicyErrors errors
-                    )
-                    {
-                        return true;
-                    };
-            }
-        }
-    }
-"@
-    Add-Type $certCallback
-}
-[ServerCertificateValidationCallback]::Ignore()
-
-# add Tls12 support
-Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
-[Net.ServicePointManager]::SecurityProtocol = `
-    ([Net.ServicePointManager]::SecurityProtocol -bor `
-    [Net.SecurityProtocolType]::Tls12)
-    #endregion
-
-    #region C6 - set some runtime variables
-        $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-        $myvarvCenterServers = @() #used to store the list of all the vCenter servers we must connect to
-        $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-        $myvarOutputLogFile += "OutputLog.log"
-    #endregion
-
 #endregion
 
 #region D - parameters validation	
@@ -958,7 +767,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarNTNXCluster1Info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $myvarNTNXCluster1Info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -972,7 +781,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $NTNXHosts = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -986,7 +795,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $myvarMaActivePDs = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -1002,7 +811,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarNTNXCluster2Info = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $myvarNTNXCluster2Info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             }
             catch
             {
@@ -1016,7 +825,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try
             {
-                $NTNXHosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $NTNXHosts = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             }
             catch 
             {
@@ -1030,7 +839,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
             $method = "GET"
             try 
             {
-                $myvarMaActivePDs = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                $myvarMaActivePDs = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             }
             catch 
             {
@@ -1072,16 +881,16 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
 	foreach ($myvarvCenter in $myvarvCenterServers)
     {#connect to vcenter now
         #region connect
-		OutputLogData -category "INFO" -message "Connecting to vCenter server $myvarvCenter..."
+		Write-Host "$(get-date) [INFO] Connecting to vCenter server $myvarvCenter..." -ForegroundColor Green
 		if (!($myvarvCenterObject = Connect-VIServer $myvarvCenter -Credential $vcenterCredentials))
 		{#make sure we can connect to the vCenter server
 			$myvarerror = $error[0].Exception.Message
-			OutputLogData -category "ERROR" -message "$myvarerror"
+			Write-Host "$(get-date) [ERROR] $myvarerror" -ForegroundColor Red
 			return
 		}
 		else 
 		{#...otherwise show the error message
-			OutputLogData -category "INFO" -message "Connected to vCenter server $myvarvCenter."
+			Write-Host "$(get-date) [SUCCESS] Connected to vCenter server $myvarvCenter." -ForegroundColor Cyan
         }#endelse
         #endregion
 
@@ -1146,7 +955,7 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                 }
 
                 #check all vmhosts are part of the same vSphere cluster
-                OutputLogData -category "INFO" -message "Checking that all hosts are part of the same compute cluster..."
+                Write-Host "$(get-date) [INFO] Checking that all hosts are part of the same compute cluster..." -ForegroundColor Green
                 try 
                 {#we look at which cluster the first vmhost in cluster 1 belongs to.
                     $myvarvSphereCluster = $myvarNtnxC1_vmhosts[0] | Get-Cluster -ErrorAction Stop 
@@ -1170,7 +979,6 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                     throw "$(get-date) [ERROR] Could not retrieve vSphere object for cluster $myvarvSphereClusterName : $($_.Exception.Message)"
                 }
                 
-
                 #get existing DRS rules
                 try 
                 {
@@ -1182,7 +990,6 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                     throw "$(get-date) [ERROR] Could not retrieve existing DRS rules for cluster $myvarvSphereClusterName : $($_.Exception.Message)"
                 }
                 
-
                 foreach ($myvarvSphereClusterVMHost in $myvarvSphereClusterVMHosts) 
                 {#let's now look at each vmhost and which cluster they belong to
                     try 
@@ -1198,18 +1005,18 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                     {#let's check if it's the same cluster as our first host
                         $myvarVMHostName = $myvarvSphereClusterVMHost.Name
                         $myvarVMHostClusterName = $myvarVMHostCluster.Name
-                        OutputLogData -category "ERROR" -message "$myvarVMHostName belongs to vSphere cluster $myvarVMHostClusterName when it should be in $myvarvSphereClusterName..."
+                        Write-Host "$(get-date) [ERROR] $myvarVMHostName belongs to vSphere cluster $myvarVMHostClusterName when it should be in $myvarvSphereClusterName..." -ForegroundColor Red
                         break #we'l stop right here since at least one vmhost is not in the right compute cluster
                     }
                 }#end foreach cluster vmhost loop
 
                 #check that vSphere cluster has HA and DRS enabled
-                OutputLogData -category "INFO" -message "Checking HA is enabled on vSphere cluster $myvarvSphereClusterName..."
-                if ($myvarvSphereCluster.HaEnabled -ne $true) {OutputLogData -category "WARN" -message "HA is not enabled on vSphere cluster $myvarvSphereClusterName!"}
-                OutputLogData -category "INFO" -message "Checking DRS is enabled on vSphere cluster $myvarvSphereClusterName..."
+                Write-Host "$(get-date) [INFO] Checking HA is enabled on vSphere cluster $myvarvSphereClusterName..." -ForegroundColor Green
+                if ($myvarvSphereCluster.HaEnabled -ne $true) {Write-Host "$(get-date) [WARNING] HA is not enabled on vSphere cluster $myvarvSphereClusterName!" -ForegroundColor Yellow}
+                Write-Host "$(get-date) [INFO] Checking DRS is enabled on vSphere cluster $myvarvSphereClusterName..." -ForegroundColor Green
                 if ($myvarvSphereCluster.DrsEnabled -ne $true)
                 {
-                    OutputLogData -category "ERROR" -message "DRS is not enabled on vSphere cluster $myvarvSphereClusterName!"
+                    Write-Host "$(get-date) [ERROR] DRS is not enabled on vSphere cluster $myvarvSphereClusterName!" -ForegroundColor Red
                     break #exit since DRS is not enabled
                 }
 
@@ -1223,161 +1030,171 @@ Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
                 #do we have an existing DRS host group for c1 already?
                 if ($myvarDRSHostGroups | Where-Object {$_.Name -eq $myvarNtnxC1_DRSHostGroupName})
                 { #yes, so let's update it
-                    OutputLogData -category "INFO" -message "Updating DRS Host Group $myvarNtnxC1_DRSHostGroupName on cluster $myvarvSphereCluster"
+                    Write-Host "$(get-date) [INFO] Updating DRS Host Group $myvarNtnxC1_DRSHostGroupName on cluster $myvarvSphereCluster" -ForegroundColor Green
                     Update-DrsHostGroup -cluster $myvarvSphereCluster -Hosts $myvarNtnxC1_vmhosts -groupHostName $myvarNtnxC1_DRSHostGroupName
                 }
                 else
                 { #no, so let's create it
-                    OutputLogData -category "INFO" -message "Creating DRS Host Group $myvarNtnxC1_DRSHostGroupName on cluster $myvarvSphereClusterName for $ntnx_cluster1..."
+                    Write-Host "$(get-date) [INFO] Creating DRS Host Group $myvarNtnxC1_DRSHostGroupName on cluster $myvarvSphereClusterName for $ntnx_cluster1..." -ForegroundColor Green
                     $myvarNtnxC1_vmhosts | New-DrsHostGroup -Name $myvarNtnxC1_DRSHostGroupName -Cluster $myvarvSphereCluster
                 }
 
                 #do we have an existing DRS host group for c2 already?
                 if ($myvarDRSHostGroups | Where-Object {$_.Name -eq $myvarNtnxC2_DRSHostGroupName})
                 { #yes, so let's update it
-                    OutputLogData -category "INFO" -message "Updating DRS Host Group $myvarNtnxC2_DRSHostGroupName on cluster $myvarvSphereCluster"
+                    Write-Host "$(get-date) [INFO] Updating DRS Host Group $myvarNtnxC2_DRSHostGroupName on cluster $myvarvSphereCluster" -ForegroundColor Green
                     Update-DrsHostGroup -cluster $myvarvSphereCluster -Hosts $myvarNtnxC2_vmhosts -groupHostName $myvarNtnxC2_DRSHostGroupName
                 }
                 else
                 { #no, so let's create it
-                    OutputLogData -category "INFO" -message "Creating DRS Host Group $myvarNtnxC2_DRSHostGroupName on cluster $myvarvSphereClusterName for $ntnx_cluster2..."
+                    Write-Host "$(get-date) [INFO] Creating DRS Host Group $myvarNtnxC2_DRSHostGroupName on cluster $myvarvSphereClusterName for $ntnx_cluster2..." -ForegroundColor Green
                     $myvarNtnxC2_vmhosts | New-DrsHostGroup -Name $myvarNtnxC2_DRSHostGroupName -Cluster $myvarvSphereCluster
                 }
-            #endregion
 
-			#region vms and rules
+                #now let's process the datastores
+                Write-Host "$(get-date) [INFO] Getting datastores registered in vCenter server $myvarvCenter..." -ForegroundColor Green
+                try 
+                {#get all the datastores registered in vCenter
+                    $myvarDatastores = Get-Datastore -ErrorAction Stop 
+                    Write-Host "$(get-date) [SUCCESS] Successfully retrieved datastores from vCenter server $myvarvCenter" -ForegroundColor Cyan
+                }
+                catch
+                {#couldn't get all the datastores registered in vCenter
+                    throw "$(get-date) [ERROR] Could not retrieve datastores from vCenter server $myvarvCenter : $($_.Exception.Message)"
+                }
 
-                #check existing vm groups
-                $myvarDRSVMGroups = $myvarDRSGroups |Where-Object {$_.vm} #keep vm groups
-
-                #retrieve names of VMs in each active datastore
-                $myvarNtnxC1_vms = @()
-                $myvarNtnxC2_vms = @()
-
-                #region process cluster 1
-                    foreach ($myvarDatastore in $myvarNtnxC1_MaActiveCtrs)
-                    {#process each datastore
-                        OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
-                        try 
-                        { 
-                            $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
-                            if (!$vm_objects)
-                            {#no vms in the datastore...
-                                OutputLogData -category "ERROR" -message "There are no VMs in datastore $myvarDatastore. Please put at least 1 VM in that datastore and run the script again."
-                                Exit
-                            }
-                            $myvarNtnxC1_vms = [Array]$myvarNtnxC1_vms + $vm_objects
+                #let's match datastore names we got from the Nutanix clusters to Datastore objects in vCenter
+                $myvarNtnxC1_Datastores = @() #this is where we will save the datastores which make up the first Nutanix cluster
+                $myvarNtnxC2_Datastores = @() #this is where we will save the datastores which make up the second Nutanix cluster
+                foreach ($myvarDatastore in $myvarDatastores) 
+                {#let's look at each datastore and determine which is which
+                    foreach ($myvarCtrName in $myvarNtnxC1_MaActiveCtrs) 
+                    {#compare to the container names we got from the Nutanix cluster 1
+                        if ($myvarDatastore.Name -eq $myvarCtrName)
+                        {#if we get a match, that datastore is in cluster 1
+                            Write-Host "$(get-date) [INFO] $($myvarDatastore.Name) is a container in Nutanix cluster $ntnx_cluster1..." -ForegroundColor Green
+                            $myvarNtnxC1_Datastores += $myvarDatastore
                         }
-                        catch 
-                        {
-                            throw "$(get-date) [ERROR] Could not retrieve VMs in datastore $myvarDatastore : $($_.Exception.Message)"
+                    }#end foreach container C1 loop
+                    foreach ($myvarCtrName in $myvarNtnxC2_MaActiveCtrs) 
+                    {#compare to the container names we got from the Nutanix cluster 2
+                        if ($myvarDatastore.Name -eq $myvarCtrName)
+                        {#if we get a match, that datastore is in cluster 2
+                            Write-Host "$(get-date) [INFO] $($myvarDatastore.Name) is a container in Nutanix cluster $ntnx_cluster2..." -ForegroundColor Green
+                            $myvarNtnxC2_Datastores += $myvarDatastore 
                         }
+                    }#end foreach container C2 loop
+                }#end foreach datastore loop
 
-                        $myvarDRSVMGroupName = "DRS_VM_MA_" + $myvarDatastore
+                if (!$myvarNtnxC1_Datastores) 
+                {#couldn't find containers in cluster1
+                    throw "$(get-date) [ERROR] No metro availability datastores were found for Nutanix cluster $ntnx_cluster1 in vCenter server $myvarvCenter"
+                }
+                if (!$myvarNtnxC2_Datastores) 
+                {#couldn't find containers in cluster2
+                    throw "$(get-date) [ERROR] No metro availability datastores were found for Nutanix cluster $ntnx_cluster2 in vCenter server $myvarvCenter"
+                }
 
-                        if (!($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName})) #the DRS VM Group does not exist, so let's create it
-                        {#vm groups ain't there, create it
-                            OutputLogData -category "INFO" -message "Creating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster1..."
-                            $vm_objects | New-DrsVMGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
-                        }
-                        else
-                        {#vm group exists already, update it
-                            OutputLogData -category "INFO" -message "Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster1..."
-                            Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $vm_objects -groupVMName $myvarDRSVMGroupName
-                        }
+                #now let's create VM groups and rules for each datastore
+                foreach ($myvarDatastore in $myvarNtnxC1_Datastores) 
+                {#process each datastore from cluster 1
+                    #CUSTOMIZATION: if you want to edit the object names, check out the section below
+                    $myvarDRSVMGroupName = "DRS_VMG_MA_" + $myvarDatastore.Name
+                    $myvarDRSRuleName = "MA_" + $myvarDatastore.Name + "_Should_Run_On_" + $myvarNTNXCluster1Name
 
-                        $myvarDRSRuleName = "DRS_Rule_MA_" + $myvarDatastore
-
-                        if (!($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName})) #the DRS VM Group does not exist, so let's create it
-                        {#drs rule ain't there, create it
-                            OutputLogData -category "INFO" -message "Creating DRS rule $myvarDRSRuleName on cluster $myvarvSphereCluster so that VMs in $myvarDRSVMGroupName should run on hosts in $myvarNtnxC1_DRSHostGroupName..."
-                            New-DrsVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC1_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster
-                        }
-                        else
-                        {#drs rule is there, update it
-                            if (!($noruleupdate))
-                            {#check we didn't want to skip update
-                                OutputLogData -category "INFO" -message "Updating DRS rule $myvarDRSRuleName on cluster $myvarvSphereCluster for $myvarDatastore..."
-                                Update-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC1_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -RuleKey $(($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}).Key) -RuleUuid $(($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}).RuleUuid)
-                            }
-                    }
-                    }#end foreach datastore in C1 loop
-                #endregion
-
-                #region process cluster 2
-                    foreach ($myvarDatastore in $myvarNtnxC2_MaActiveCtrs)
-                    {
-                        OutputLogData -category "INFO" -message "Getting VMs in datastore $myvarDatastore..."
-                        try 
-                        {
-                            $vm_objects = Get-Datastore -Name $myvarDatastore -ErrorAction Stop | Get-VM -ErrorAction Stop
-                            if (!$vm_objects)
-                            {#no vms in the datastore...
-                                OutputLogData -category "ERROR" -message "There are no VMs in datastore $myvarDatastore. Please put at least 1 VM in that datastore and run the script again."
-                                Exit
-                            }
-                            $myvarNtnxC2_vms = [Array]$myvarNtnxC2_vms + $vm_objects
-                        }
-                        catch 
-                        {
-                            throw "$(get-date) [ERROR] Could not retrieve VMs in datastore $myvarDatastore : $($_.Exception.Message)"
-                        }
-                        
-
-                        $myvarDRSVMGroupName = "DRS_VM_MA_" + $myvarDatastore
-
-                        if (!($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName}))
-                        {#drs vm group ain't there, create it
-                            OutputLogData -category "INFO" -message "Creating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster2..."
-                            $vm_objects | New-DrsVMGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
-                        }
-                        else
-                        {#drs vm group is there, update it
-                            OutputLogData -category "INFO" -message "Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $myvarDatastore which is active on $ntnx_cluster2..."
-                            Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $vm_objects -groupVMName $myvarDRSVMGroupName
-                        }
-
-
-                        $myvarDRSRuleName = "DRS_Rule_MA_" + $myvarDatastore
+                    Write-Host "$(get-date) [INFO] Getting VMs running on datastore $($myvarDatastore.Name)..." -ForegroundColor Green
+                    $myvarDatastoreVMs = $myvarDatastore | Get-VM -ErrorAction Stop
                     
-                        if (!($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}))
-                        {#drs rule ain't there, create it
-                            OutputLogData -category "INFO" -message "Creating DRS rule $myvarDRSVMGroupName on cluster $myvarvSphereClusterName so that VMs in $myvarDRSVMGroupName should run on hosts in $myvarNtnxC2_DRSHostGroupName..."
-                            New-DrsVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC2_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster
+                    #do we have an existing DRS VM group already?
+                    $myvarDRSVMGroups = $myvarDRSGroups | Where-Object {$_.VM} #keep VM groups
+                    if ($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName})
+                    { #yes, so let's update it
+                        Write-Host "$(get-date) [INFO] Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereCluster" -ForegroundColor Green
+                        Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $myvarDatastoreVMs -groupVMName $myvarDRSVMGroupName
+                    }
+                    else
+                    { #no, so let's create it
+                        Write-Host "$(get-date) [INFO] Creating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $($myvarDatastore.Name)..." -ForegroundColor Green
+                        $myvarDatastoreVMs | New-DrsVmGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
+                    }
+
+                    #do we have an existing DRS rule already?
+                    if (!$noruleupdate)
+                    {
+                        if ($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName})
+                        { #yes, so let's update it
+                            $myvarExistingRule = $myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}
+                            Write-Host "$(get-date) [INFO] Updating DRS Rule $myvarDRSRuleName on cluster $myvarvSphereCluster" -ForegroundColor Green
+                            Update-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC1_DRSHostGroupName -RuleKey $myvarExistingRule.Key -RuleUuid $myvarExistingRule.RuleUuid -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -Mandatory
                         }
                         else
-                        {#drs rule is there, update it
-                            if (!($noruleupdate))
-                            {#check we didn't want to skip updating the rule
-                                OutputLogData -category "INFO" -message "Updating DRS rule $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for $myvarDatastore..."
-                                Update-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC2_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -RuleKey $(($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}).Key) -RuleUuid $(($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}).RuleUuid)
-                            }
+                        { #no, so let's create it
+                            Write-Host "$(get-date) [INFO] Creating DRS Rule $myvarDRSRuleName on cluster $myvarvSphereClusterName..." -ForegroundColor Green
+                            New-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC1_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -Mandatory
                         }
-                    }#end foreach datastore in C2 loop
-                #endregion
+                    }
+                }#end foreach datastore C1 loop
 
-            #endregion
+                foreach ($myvarDatastore in $myvarNtnxC2_Datastores) 
+                {#process each datastore from cluster 2
+                    #CUSTOMIZATION: if you want to edit the object names, check out the section below
+                    $myvarDRSVMGroupName = "DRS_VMG_MA_" + $myvarDatastore.Name
+                    $myvarDRSRuleName = "MA_" + $myvarDatastore.Name + "_Should_Run_On_" + $myvarNTNXCluster2Name
 
-		}#endif
-        OutputLogData -category "INFO" -message "Disconnecting from vCenter server $vcenter..."
-        Disconnect-viserver -Confirm:$False #cleanup after ourselves and disconnect from vcenter
+                    Write-Host "$(get-date) [INFO] Getting VMs running on datastore $($myvarDatastore.Name)..." -ForegroundColor Green
+                    $myvarDatastoreVMs = $myvarDatastore | Get-VM -ErrorAction Stop
+                    
+                    #do we have an existing DRS VM group already?
+                    $myvarDRSVMGroups = $myvarDRSGroups | Where-Object {$_.VM} #keep VM groups
+                    if ($myvarDRSVMGroups | Where-Object {$_.Name -eq $myvarDRSVMGroupName})
+                    { #yes, so let's update it
+                        Write-Host "$(get-date) [INFO] Updating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereCluster" -ForegroundColor Green
+                        Update-DrsVMGroup -cluster $myvarvSphereCluster -VMs $myvarDatastoreVMs -groupVMName $myvarDRSVMGroupName
+                    }
+                    else
+                    { #no, so let's create it
+                        Write-Host "$(get-date) [INFO] Creating DRS VM Group $myvarDRSVMGroupName on cluster $myvarvSphereClusterName for datastore $($myvarDatastore.Name)..." -ForegroundColor Green
+                        $myvarDatastoreVMs | New-DrsVmGroup -Name $myvarDRSVMGroupName -Cluster $myvarvSphereCluster
+                    }
+
+                    #do we have an existing DRS rule already?
+                    if (!$noruleupdate)
+                    {
+                        if ($myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName})
+                        { #yes, so let's update it
+                            $myvarExistingRule = $myvarClusterDRSRules | Where-Object {$_.Name -eq $myvarDRSRuleName}
+                            Write-Host "$(get-date) [INFO] Updating DRS Rule $myvarDRSRuleName on cluster $myvarvSphereCluster" -ForegroundColor Green
+                            Update-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC2_DRSHostGroupName -RuleKey $myvarExistingRule.Key -RuleUuid $myvarExistingRule.RuleUuid -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -Mandatory
+                        }
+                        else
+                        { #no, so let's create it
+                            Write-Host "$(get-date) [INFO] Creating DRS Rule $myvarDRSRuleName on cluster $myvarvSphereClusterName..." -ForegroundColor Green
+                            New-DRSVMToHostRule -VMGroup $myvarDRSVMGroupName -HostGroup $myvarNtnxC2_DRSHostGroupName -Name $myvarDRSRuleName -Cluster $myvarvSphereCluster -Mandatory
+                        }
+                    }
+                }#end foreach datastore C2 loop
+
         #endregion
+        }#endelse process vcenter
+        Write-Host "$(get-date) [INFO] Disconnecting from vCenter server $vcenter..." -ForegroundColor Green
+		Disconnect-viserver -Confirm:$False #cleanup after ourselves and disconnect from vcenter
     }#end foreach vCenter
-    #endregion
 #endregion
 
-#region F - cleanup
+#region cleanup
 	#let's figure out how much time this all took
-	OutputLogData -category "SUM" -message "total processing time: $($myvarElapsedTime.Elapsed.ToString())"
-
+	Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+	
 	#cleanup after ourselves and delete all custom variables
 	Remove-Variable myvar* -ErrorAction SilentlyContinue
 	Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
 	Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
-	Remove-Variable log -ErrorAction SilentlyContinue
+	Remove-Variable debugme -ErrorAction SilentlyContinue
 	Remove-Variable ntnx_cluster1 -ErrorAction SilentlyContinue
-	Remove-Variable ntnx_cluster2 -ErrorAction SilentlyContinue
-	Remove-Variable vcenter -ErrorAction SilentlyContinue
-    Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable ntnx_cluster2 -ErrorAction SilentlyContinue
+    Remove-Variable vcenter -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable vcenterCreds -ErrorAction SilentlyContinue
+    Remove-Variable noruleupdate -ErrorAction SilentlyContinue
 #endregion

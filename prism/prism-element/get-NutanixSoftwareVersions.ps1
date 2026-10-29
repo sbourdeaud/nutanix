@@ -2,13 +2,11 @@
 .SYNOPSIS
   Use this script to collect software versions from a Nutanix cluster.
 .DESCRIPTION
-  Th script will collect information about the following components: AOS, NCC, Foundation, Hypervisor, LCM.
+  The script will collect information about the following components: AOS, NCC, Foundation, Hypervisor, LCM.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
@@ -32,7 +30,7 @@ Connect to a Nutanix cluster of your choice and collect software information:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 29th 2026
 #>
 
 #region parameters
@@ -41,7 +39,6 @@ Connect to a Nutanix cluster of your choice and collect software information:
       #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
       [parameter(mandatory = $false)] [switch]$help,
       [parameter(mandatory = $false)] [switch]$history,
-      [parameter(mandatory = $false)] [switch]$log,
       [parameter(mandatory = $false)] [switch]$debugme,
       [parameter(mandatory = $false)] [string]$cluster,
       [parameter(mandatory = $false)] [string]$prismcentral,
@@ -53,8 +50,7 @@ Connect to a Nutanix cluster of your choice and collect software information:
   )
 #endregion
 
-#region functions
-
+#region helper functions (previously from sbourdeaud module)
 function Invoke-PrismAPICall
 {
 <#
@@ -427,90 +423,184 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
         return $customCredentials
     }
 }
-  
-  Function Get-PrismTaskStatus
-  {
-      <#
-  .SYNOPSIS
-  Retrieves the status of a given task uuid from Prism and loops until it is completed.
+   
+   Function Get-PrismTaskStatus
+   {
+       <#
+   .SYNOPSIS
+   Retrieves the status of a given task uuid from Prism and loops until it is completed.
 
-  .DESCRIPTION
-  Retrieves the status of a given task uuid from Prism and loops until it is completed.
+   .DESCRIPTION
+   Retrieves the status of a given task uuid from Prism and loops until it is completed.
 
-  .PARAMETER Task
-  Prism task uuid.
+   .PARAMETER Task
+   Prism task uuid.
 
-  .NOTES
-  Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+   .NOTES
+   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
 
-  .EXAMPLE
-  .\Get-PrismTaskStatus -Task $task
-  Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
+   .EXAMPLE
+   .\Get-PrismTaskStatus -Task $task
+   Prints progress on task $task until successfull completion. If the task fails, print the status and error code and details and exits.
 
-  .LINK
-  https://github.com/sbourdeaud
-  #>
-  [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+   .LINK
+   https://github.com/sbourdeaud
+   #>
+   [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
 
-      param
-      (
-          [Parameter(Mandatory)]
-          $task,
-          
-          [parameter(mandatory = $true)]
-          [System.Management.Automation.PSCredential]
-          $credential,
+       param
+       (
+           [Parameter(Mandatory)]
+           $task,
+           
+           [parameter(mandatory = $true)]
+           [System.Management.Automation.PSCredential]
+           $credential,
 
-          [parameter(mandatory = $true)]
-          [String]
-          $cluster
-      )
+           [parameter(mandatory = $true)]
+           [String]
+           $cluster
+       )
 
-      begin
-      {}
-      process 
-      {
-          #region get initial task details
-              Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
-              $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-              $method = "GET"
-              $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-              Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
-          #endregion
+       begin
+       {}
+       process 
+       {
+           #region get initial task details
+               Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
+               $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
+               $method = "GET"
+               $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+               Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
+           #endregion
 
-          if ($taskDetails.percentage_complete -ne "100") 
-          {
-              Do 
-              {
-                  New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                  Sleep 5
-                  $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-                  $method = "GET"
-                  $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-                  
-                  if ($taskDetails.status -ine "running") 
-                  {
-                      if ($taskDetails.status -ine "succeeded") 
-                      {
-                          Throw "$(Get-Date) [INFO] Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
-                      }
-                  }
-              }
-              While ($taskDetails.percentage_complete -ne "100")
-              
-              New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-              Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
-          } 
-          else 
-          {
-              New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-              Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
-          }
-      }
-      end
-      {}
-  }
+           if ($taskDetails.percentage_complete -ne "100") 
+           {
+               Do 
+               {
+                   New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+                   Sleep 5
+                   $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
+                   $method = "GET"
+                   $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
+                   
+                   if ($taskDetails.status -ine "running") 
+                   {
+                       if ($taskDetails.status -ine "succeeded") 
+                       {
+                           Throw "$(Get-Date) [INFO] Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
+                       }
+                   }
+               }
+               While ($taskDetails.percentage_complete -ne "100")
+               
+               New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+               Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
+           } 
+           else 
+           {
+               New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
+               Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
+           }
+       }
+       end
+       {}
+   }
 
+function New-PercentageBar {
+    [CmdletBinding(DefaultParameterSetName = 'PERCENT')]
+    Param (
+        [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'PERCENT')]
+        [ValidateRange(0, 100)]
+        [int]$Percent
+        ,
+        [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'VALUE')]
+        [ValidateRange(0, [double]::MaxValue)]
+        [double]$Value
+        ,
+        [Parameter(Mandatory, Position = 2, ParameterSetName = 'VALUE')]
+        [ValidateRange(1, [double]::MaxValue)]
+        [double]$MaxValue
+        ,
+        [Parameter(Mandatory = $false, Position = 3)]
+        [Alias("BarSize", "Length")]
+        [ValidateRange(10, 100)]
+        [int]$BarLength = 20
+        ,
+        [Parameter(Mandatory = $false, Position = 4)]
+        [ValidateSet("SimpleThin", "SimpleThick1", "SimpleThick2", "AdvancedThin1", "AdvancedThin2", "AdvancedThick")]
+        [string]$BarView = "SimpleThin"
+        ,
+        [Parameter(Mandatory = $false, Position = 5)]
+        [ValidateRange(50, 80)]
+        [int]$GreenBorder = 60
+        ,
+        [Parameter(Mandatory = $false, Position = 6)]
+        [ValidateRange(80, 90)]
+        [int]$YellowBorder = 80
+        ,
+        [Parameter(Mandatory = $false)]
+        [switch]$NoPercent
+        ,
+        [Parameter(Mandatory = $false)]
+        [switch]$DrawBar
+    )
+    
+    Begin
+    {
+        If ($PSBoundParameters.ContainsKey('VALUE'))
+        {
+            If ($Value -gt $MaxValue) { Throw "The [-Value] parameter cannot be greater than [-MaxValue]!" }
+            Else { $Percent = $Value/$MaxValue * 100 -as [int] }
+        }
+        If ($YellowBorder -le $GreenBorder) { Throw "The [-YellowBorder] value must be greater than [-GreenBorder]!" }
+        
+        Function Set-BarView ($View)
+        {
+            Switch -exact ($View)
+            {
+                "SimpleThin"    { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = "-"; Break }
+                "SimpleThick1"  { $GreenChar = [char]9608; $YellowChar = [char]9608; $RedChar = [char]9608; $EmptyChar = "-"; Break }
+                "SimpleThick2"  { $GreenChar = [char]9612; $YellowChar = [char]9612; $RedChar = [char]9612; $EmptyChar = "-"; Break }
+                "AdvancedThin1" { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = [char]9476; Break }
+                "AdvancedThin2" { $GreenChar = [char]9642; $YellowChar = [char]9642; $RedChar = [char]9642; $EmptyChar = [char]9643; Break }
+                "AdvancedThick" { $GreenChar = [char]9617; $YellowChar = [char]9618; $RedChar = [char]9619; $EmptyChar = [char]9482; Break }
+            }
+            $Properties = [ordered]@{ Char1 = $GreenChar; Char2 = $YellowChar; Char3 = $RedChar; Char4 = $EmptyChar }
+            $Object = New-Object PSObject -Property $Properties
+            $Object
+        }
+        
+        $BarChars = Set-BarView -View $BarView
+        $Bar = $null
+        
+        Function Draw-Bar
+        {
+            Param ([Parameter(Mandatory)][string]$Char, [Parameter(Mandatory = $false)][string]$Color = 'White', [Parameter(Mandatory = $false)][boolean]$Draw)
+            If ($Draw) { Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char }
+            Else { return $Char }
+        }
+    }
+    
+    Process
+    {
+        If ($NoPercent) { $Bar += Draw-Bar -Char "[ " -Draw $DrawBar }
+        Else {
+            If ($Percent -eq 100) { $Bar += Draw-Bar -Char "$Percent% [ " -Draw $DrawBar }
+            ElseIf ($Percent -ge 10) { $Bar += Draw-Bar -Char " $Percent% [ " -Draw $DrawBar }
+            Else { $Bar += Draw-Bar -Char "  $Percent% [ " -Draw $DrawBar }
+        }
+        For ($i = 1; $i -le ($BarValue = ([Math]::Round($Percent * $BarLength / 100))); $i++)
+        {
+            If ($i -le ($GreenBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char1) -Color 'DarkGreen' -Draw $DrawBar }
+            ElseIf ($i -le ($YellowBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char2) -Color 'Yellow' -Draw $DrawBar }
+            Else { $Bar += Draw-Bar -Char ($BarChars.Char3) -Color 'Red' -Draw $DrawBar }
+        }
+        For ($i = 1; $i -le ($EmptyValue = $BarLength - $BarValue); $i++) { $Bar += Draw-Bar -Char ($BarChars.Char4) -Draw $DrawBar }
+        $Bar += Draw-Bar -Char " ]" -Draw $DrawBar
+    }
+    End { If (!$DrawBar) { return $Bar } }
+}
 #endregion
 
 #region prepwork
@@ -518,10 +608,11 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 04/16/2020 sb   Initial release.
 06/25/2020 sb   Added the -startinventory and -nowait parameters.
 ################################################################################
-'@
+'
   $myvarScriptName = ".\get-NutanixSoftwareVersions.ps1"
 
   if ($help) {get-help $myvarScriptName; exit}
@@ -530,13 +621,8 @@ Date       By   Updates (newest updates at the top)
   #check PoSH version
   if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-  #check if we have all the required PoSH modules
-  Write-Host "$(get-date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
-
-  #Set-PoSHSSLCerts
-  if ($PSVersionTable.PSVersion.Major -le 5) {
-      Set-PoshTls
-  }
+  Set-PoSHSSLCerts
+  Set-PoshTls
 #endregion
 
 #region variables
@@ -656,7 +742,7 @@ Date       By   Updates (newest updates at the top)
             }
         #endregion
       Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prismcentral!" -ForegroundColor Cyan
-  #endregion
+    #endregion
     }
     else 
     {#we are only targeting a single cluster
@@ -672,7 +758,7 @@ Date       By   Updates (newest updates at the top)
         $method = "POST"
         $myvar_inventory_task = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully triggered LCM inventory on Nutanix cluster $($cluster): task $($myvar_inventory_task.data.task_uuid)!" -ForegroundColor Cyan
-  
+   
         if (!$nowait) 
         {#we are waiting for the lcm inventory to complete
           Get-PrismTaskStatus -task $myvar_inventory_task.data.task_uuid -cluster $myvar_cluster -credential $prismCredentials
@@ -680,7 +766,7 @@ Date       By   Updates (newest updates at the top)
       } 
       else 
       {#we are not doing an lcm inventory
-  
+
         #region get cluster information
             Write-Host "$(get-date) [INFO] Retrieving cluster information..." -ForegroundColor Green
             $url = "https://$($myvar_cluster):9440/PrismGateway/services/rest/v2.0/cluster/"
@@ -688,7 +774,7 @@ Date       By   Updates (newest updates at the top)
             $myvar_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             Write-Host "$(get-date) [SUCCESS] Successfully retrieved cluster information!" -ForegroundColor Cyan
         #endregion
-  
+   
         #region get nodes information
             #building the list of nodes
             $myvar_cluster_nodes_uuids = @()
@@ -696,7 +782,7 @@ Date       By   Updates (newest updates at the top)
             {#process each node
                 $myvar_cluster_nodes_uuids += $myvar_block.node_uuids
             }
-  
+   
             #querying each node
             $myvar_cluster_hypervisors = @()
             $myvar_cluster_node_types = @()
@@ -711,7 +797,7 @@ Date       By   Updates (newest updates at the top)
                 $method = "GET"
                 $myvar_node_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved information for node uuid $($myvar_node)!" -ForegroundColor Cyan
-  
+   
                 #capturing node reference for lcm data cross-check
                 if (!$nolcm) {
                     $myvar_node_reference = [ordered]@{
@@ -721,7 +807,7 @@ Date       By   Updates (newest updates at the top)
                     }
                     $myvar_nodes_reference.Add((New-Object PSObject -Property $myvar_node_reference)) | Out-Null
                 }
-  
+   
                 #capturing relevant data for generic report
                 if ($myvar_cluster_hypervisors -notcontains $myvar_node_info.hypervisor_full_name) {
                     $myvar_cluster_hypervisors += $myvar_node_info.hypervisor_full_name
@@ -735,7 +821,7 @@ Date       By   Updates (newest updates at the top)
                 if ($myvar_cluster_bmc_versions -notcontains $myvar_node_info.bmc_version) {
                     $myvar_cluster_bmc_versions += $myvar_node_info.bmc_version
                 }
-  
+   
                 #processsing disks information
                 ($myvar_node_info.disk_hardware_configs | Get-Member -MemberType NoteProperty).Name | ForEach-Object {
                     if ($myvar_cluster_disk_types -notcontains $myvar_node_info.disk_hardware_configs.$_.model) {
@@ -747,7 +833,7 @@ Date       By   Updates (newest updates at the top)
                 }
             }
         #endregion
-  
+   
         #region get lcm version
             if (!$nolcm) 
             {#we are getting lcm information
@@ -763,7 +849,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved lcm information!" -ForegroundColor Cyan
             }
         #endregion
-  
+   
         #region get lcm updates
             if (!$nolcm) 
             {#we are getting lcm updates
@@ -801,7 +887,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved lcm updates!" -ForegroundColor Cyan
             }
         #endregion
-  
+   
         #region get lcm entities
             if (!$nolcm) 
             {#we are getting lcm entities
@@ -846,7 +932,7 @@ Date       By   Updates (newest updates at the top)
                 Write-Host "$(get-date) [SUCCESS] Successfully retrieved lcm entities!" -ForegroundColor Cyan
             }
         #endregion
-  
+   
         #region process generic results
             $myvar_software_versions = [ordered]@{
                 #from cluster information
@@ -872,13 +958,13 @@ Date       By   Updates (newest updates at the top)
             Write-Host "$(Get-Date) [INFO] Writing results to $(Get-Date -UFormat "%Y_%m_%d_%H_%M_")$($myvar_cluster_info.name)_sw_versions.csv" -ForegroundColor Green
             $myvar_generic_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($myvar_cluster_info.name)+"_sw_versions.csv")
         #endregion
-  
+   
         #region process lcm detailed results
             if (!$nolcm) 
             {#we are using lcm information
                 [System.Collections.ArrayList]$myvar_entity_results = New-Object System.Collections.ArrayList($null)
                 [System.Collections.ArrayList]$myvar_update_results = New-Object System.Collections.ArrayList($null)
-  
+   
                 Foreach ($group_result in $myvar_lcm_updates.group_results) 
                 {#process each group result from lcm info
                     Foreach ($entity_id in $group_result.entity_results) 
@@ -915,7 +1001,7 @@ Date       By   Updates (newest updates at the top)
                         $myvar_software_versions.update_version = (($myvar_update_results | Where-Object {$_.entity_uuid -eq $myvar_software_versions.lcm_entity_uuid}).version) | Select-Object -Last 1
                         $myvar_software_versions.update_status = (($myvar_update_results | Where-Object {$_.entity_uuid -eq $myvar_software_versions.lcm_entity_uuid}).status) | Select-Object -Last 1
                         #$myvar_software_versions.update_dependencies = (($myvar_update_results | Where-Object {$_.entity_uuid -eq $myvar_software_versions.lcm_entity_uuid}).dependencies) -join ','
-  
+   
                         if ($group_result.group_by_column_value -like "cluster:*") {
                             $myvar_software_versions.component_name = $myvar_cluster_info.name;
                             $myvar_software_versions.component_ip = $myvar_cluster_info.cluster_external_ipaddress
@@ -933,7 +1019,7 @@ Date       By   Updates (newest updates at the top)
                 $myvar_entity_results | export-csv -NoTypeInformation $($(Get-Date -UFormat "%Y_%m_%d_%H_%M_")+$($myvar_cluster_info.name)+"_lcm_report.csv")
             }
         #endregion
-    
+     
       }
     }
 
@@ -948,7 +1034,12 @@ Date       By   Updates (newest updates at the top)
   Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
   Remove-Variable help -ErrorAction SilentlyContinue
   Remove-Variable history -ErrorAction SilentlyContinue
-  Remove-Variable log -ErrorAction SilentlyContinue
-  Remove-Variable cluster -ErrorAction SilentlyContinue
   Remove-Variable debugme -ErrorAction SilentlyContinue
+  Remove-Variable cluster -ErrorAction SilentlyContinue
+  Remove-Variable prismcentral -ErrorAction SilentlyContinue
+  Remove-Variable prismCreds -ErrorAction SilentlyContinue
+  Remove-Variable nolcm -ErrorAction SilentlyContinue
+  Remove-Variable csv -ErrorAction SilentlyContinue
+  Remove-Variable startinventory -ErrorAction SilentlyContinue
+  Remove-Variable nowait -ErrorAction SilentlyContinue
 #endregion

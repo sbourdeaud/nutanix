@@ -13,9 +13,6 @@
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart 
   enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as 
-  well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prismcentral
@@ -47,7 +44,7 @@
 .\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com
 Power on all VMs in the specified Prism Central based on their labels: boot_priority_1 labelled Vms will power on first, then boot_priority_2 labelled Vms, etc... up to boot_priority_5 labelled VMs.  All remaining Vms (with no label) will remain untouched.  The script will wait 180 seconds between each group/sequence of VMs.
 .EXAMPLE
-.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -labels group1,group2 -delay 60 -leaveOtherVmsOff
+.\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -labels group1,group2 -delay 60
 Power on VMs labeled group1 and group2 in the specified order. All other Vms will remain untouched.  The script will wait 60 seconds between each group/sequence of VMs.
 .EXAMPLE
 .\Invoke-PcVmPowerOnSequence.ps1 -prismCentral pc.domain.com -tag .\vm-sequence.csv
@@ -56,7 +53,7 @@ Tag VMs listed in the specified csv file (csv file content is vm_name;integer): 
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 29th 2026
 #>
 
 #region parameters
@@ -65,7 +62,6 @@ Tag VMs listed in the specified csv file (csv file content is vm_name;integer): 
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
-        [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$prismcentral,
         [parameter(mandatory = $false)] [string]$prismCreds,
@@ -86,13 +82,14 @@ Tag VMs listed in the specified csv file (csv file content is vm_name;integer): 
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 07/10/2019 sb   Initial release.
 07/11/2019 sb   First tested version. Missing -sequence still (wip).
 07/12/2019 sb   Implementing -sequence
 04/21/2020 sb   Do over with sbourdeaud module.
 02/06/2021 sb   Replaced username with get-credential
 ################################################################################
-'@
+'
     $myvarScriptName = ".\Invoke-PcVmPowerOnSequence.ps1"
 
     if ($help) {get-help $myvarScriptName; exit}
@@ -101,51 +98,197 @@ Date       By   Updates (newest updates at the top)
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-    #region module sbourdeaud is used for facilitating Prism REST calls
-        $required_version = "3.0.8"
-        if (!(Get-Module -Name sbourdeaud)) {
-        Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-        try
-        {
-            Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-            Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-        }#end try
-        catch #we couldn't import the module, so let's install it
-        {
-            Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-            try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-            catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
+    #region helper functions (previously from sbourdeaud module)
+    function Invoke-PrismAPICall {
+        param (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string]$method,
 
-            try
-            {
-                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-            }#end try
-            catch #we couldn't import the module
-            {
-                Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-                Exit
-            }#end catch
-        }#end catch
-        }#endif module sbourdeaud
-        $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-        if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-        Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-        Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-        Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
+            [parameter(mandatory = $true)]
+            [string]$url,
+
+            [parameter(mandatory = $false)]
+            [string]$payload,
+
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]$credential
+        )
+
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
         try {
-            Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop
-            Import-Module -Name sbourdeaud -ErrorAction Stop
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $headers = @{
+                    "Content-Type" = "application/json"
+                    "Accept"       = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
+            } else {
+                $username = $credential.UserName
+                $password = $credential.Password
+                $headers = @{
+                    "Authorization" = "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username + ":" + ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))))
+                    "Content-Type"  = "application/json"
+                    "Accept"        = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
+            }
+            Write-Host "$(Get-Date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White }
         }
-        catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
+        catch {
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
         }
-    #endregion
-    if ($PSVersionTable.PSVersion.Major -le 5) {
-        Set-PoSHSSLCerts
-        Set-PoshTls
+        return $resp
     }
+
+    function Set-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Set path to $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+        $user = $credentials.UserName
+        $securePassword = $credentials.Password
+
+        try {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Type Directory $path -ErrorAction Stop | Out-Null
+            }
+            catch {
+                throw "$(Get-Date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
+            }
+        }
+
+        try {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
+
+        Write-Host "$(Get-Date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan
+    }
+
+    function Get-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        if (!(Test-Path $credentialsFilePath)) {
+            throw "$(Get-Date) [ERROR] Could not access file $credentialsFilePath"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+        $user = $credFile[0]
+        $securePassword = $credFile[1] | ConvertTo-SecureString
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(Get-Date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan
+        return $customCredentials
+    }
+
+    function Set-PoshTls {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = (
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        )
+    }
+
+    function Set-PoSHSSLCerts {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if (ServicePointManager.ServerCertificateValidationCallback == null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback +=
+                delegate (Object obj, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }
+        [ServerCertificateValidationCallback]::Ignore()
+    }
+    #endregion
+
+    Set-PoSHSSLCerts
+    Set-PoshTls
 #endregion
+
 
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew()
@@ -153,9 +296,10 @@ Date       By   Updates (newest updates at the top)
     [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$cluster_list = New-Object System.Collections.ArrayList($null)
     $cluster_exists = $false
-    $length=100 #this specifies how many entities we want in the results of each API query
+    $length = 100 #this specifies how many entities we want in the results of each API query
     $api_server_port = "9440"
 #endregion
+
 
 #region parameters validation
     if (!$prismCreds) 
@@ -224,25 +368,23 @@ Date       By   Updates (newest updates at the top)
     }
 #endregion
 
+
 #! processing starts here
 #region processing
 
-    #* get clusters (results stored in $cluster_list)
+    #* get clusters using inline pagination (results stored in $cluster_list)
     #region get clusters
         #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/clusters/list"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "POST"
-
-            # this is used to capture the content of the payload
             $content = @{
-                kind="cluster";
-                offset=0;
-                length=$length;
-                sort_order="ASCENDING";
-                sort_attribute="name"
+                kind = "cluster";
+                offset = 0;
+                length = $length;
+                sort_order = "ASCENDING";
+                sort_attribute = "name"
             }
             $payload = (ConvertTo-Json $content -Depth 4)
+            $url = "https://{0}:{1}/api/nutanix/v3/clusters/list" -f $prismcentral,$api_server_port
+            $method = "POST"
         #endregion
 
         #region make api call
@@ -274,13 +416,7 @@ Date       By   Updates (newest updates at the top)
                 }
 
                 #prepare the json payload for the next batch of entities/response
-                $content = @{
-                    kind="cluster";
-                    offset=($resp.metadata.length + $offset);
-                    length=$length;
-                    sort_order="ASCENDING";
-                    sort_attribute="name"
-                }
+                $content.offset = $content.offset + $content.length
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
             While ($resp.metadata.length -eq $length)
@@ -289,7 +425,7 @@ Date       By   Updates (newest updates at the top)
         if ($cluster) {#a specific cluster was specified, so we need to make sure it exists in Prism Central before we do anything else 
             ForEach ($entity in $cluster_list) {
                 #grab the uuid of the specified cluster
-                if ($entity.spec.name -eq $cluster) {
+                if ($entity.name -eq $cluster) {
                     $cluster_exists = $true
                     break
                 }
@@ -304,19 +440,17 @@ Date       By   Updates (newest updates at the top)
         }
     #endregion
 
-    #* get vms (results stored in $myvarVmResults)
+    #* get vms using inline pagination (results stored in $myvarVmResults)
     #region get vms
         #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/vms/list"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "POST"
-            # this is used to capture the content of the payload
             $content = @{
-                kind="vm";
-                offset=0;
-                length=$length
+                kind = "vm";
+                offset = 0;
+                length = $length
             }
             $payload = (ConvertTo-Json $content -Depth 4)
+            $url = "https://{0}:{1}/api/nutanix/v3/vms/list" -f $prismcentral,$api_server_port
+            $method = "POST"
         #endregion
 
         #region make api call
@@ -352,11 +486,7 @@ Date       By   Updates (newest updates at the top)
                 }
 
                 #prepare the json payload for the next batch of entities/response
-                $content = @{
-                    kind="vm";
-                    offset=($resp.metadata.length + $offset);
-                    length=$length
-                }
+                $content.offset = $content.offset + $content.length
                 $payload = (ConvertTo-Json $content -Depth 4)
             }
             While ($resp.metadata.length -eq $length)
@@ -384,15 +514,9 @@ Date       By   Updates (newest updates at the top)
     #* get existing tags (results stored in $pc_tags)
     #region get tags
         if (!$sequence) {
-            #region prepare api call
-                $api_server_endpoint = "/PrismGateway/services/rest/v1/tags"
-                $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-                $method = "GET"
-            #endregion
-
-            #region making the api call
-                $pc_tags = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-            #endregion
+            $url = "https://{0}:{1}/PrismGateway/services/rest/v1/tags" -f $prismcentral,$api_server_port
+            $method = "GET"
+            $pc_tags = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
         }
     #endregion
 
@@ -408,21 +532,17 @@ Date       By   Updates (newest updates at the top)
 
             #* creating default tags if necessary
             #region creating tags
-                #region prepare api call
-                    $api_server_endpoint = "/PrismGateway/services/rest/v1/tags"
-                    $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-                    $method = "POST"
-                #endregion
+                $url = "https://{0}:{1}/PrismGateway/services/rest/v1/tags" -f $prismcentral,$api_server_port
+                $method = "POST"
 
                 #region make the api call
                     $count = 1
                     While ($count -le 5) {
                         $tag_name = "boot_priority_{0}" -f $count
-                        # this is used to capture the content of the payload
                         $content = @{
-                            name=$tag_name;
-                            entityType="vm";
-                            description=$null
+                            name = $tag_name;
+                            entityType = "vm";
+                            description = $null
                         }
                         $payload = (ConvertTo-Json $content -Depth 4)
 
@@ -459,11 +579,11 @@ Date       By   Updates (newest updates at the top)
 
                         #build json payload
                         $content = @{
-                            tagUuid=$tag_uuid.uuid;
-                            entitiesList=@(ForEach ($vm_uuid in $vm_uuid_list) {
+                            tagUuid = $tag_uuid.uuid;
+                            entitiesList = @(ForEach ($vm_uuid in $vm_uuid_list) {
                                 @{
-                                    entityUuid=$vm_uuid;
-                                    entityType="vm"
+                                    entityUuid = $vm_uuid;
+                                    entityType = "vm"
                                 }
                             }
                             )
@@ -488,8 +608,7 @@ Date       By   Updates (newest updates at the top)
     #region get groups/labels
     if ((!$tag) -and (!$sequence)) {
         #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/groups"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
+            $url = "https://{0}:{1}/api/nutanix/v3/groups" -f $prismcentral,$api_server_port
             $method = "POST"
 
             [System.Collections.ArrayList]$tag_uuids = New-Object System.Collections.ArrayList($null)
@@ -518,21 +637,21 @@ Date       By   Updates (newest updates at the top)
 
                 # this is used to capture the content of the payload
                 $content = [ordered]@{
-                    entity_type="vm";
-                    group_member_sort_attribute="vm_name";
-                    group_member_sort_order="ASCENDING";
-                    group_member_attributes=@(
+                    entity_type = "vm";
+                    group_member_sort_attribute = "vm_name";
+                    group_member_sort_order = "ASCENDING";
+                    group_member_attributes = @(
                         @{
-                            attribute="vm_name"
+                            attribute = "vm_name"
                         };
                         @{
-                            attribute="power_state"
+                            attribute = "power_state"
                         };
                         @{
-                            attribute="cluster_name"
+                            attribute = "cluster_name"
                         }
                     );
-                    filter_criteria="tag_list==.*"+$tag_uuid+".*"
+                    filter_criteria = "tag_list==.*"+$tag_uuid+".*"
                 }
                 $payload = (ConvertTo-Json $content -Depth 4)
 
@@ -608,9 +727,9 @@ Date       By   Updates (newest updates at the top)
                             #build json payload
                             $content = @(
                                 @{
-                                    generic_dto=@{
-                                        transition="on";
-                                        uuid=$vm_details.uuid
+                                    generic_dto = @{
+                                        transition = "on";
+                                        uuid = $vm_details.uuid
                                     };
                                     cluster_uuid = $cluster_uuid
                                 }
@@ -661,9 +780,9 @@ Date       By   Updates (newest updates at the top)
                             #build json payload
                             $content = @(
                                 @{
-                                    generic_dto=@{
-                                        transition="on";
-                                        uuid=$vm.uuid
+                                    generic_dto = @{
+                                        transition = "on";
+                                        uuid = $vm.uuid
                                     };
                                     cluster_uuid = $cluster_uuid
                                 }
@@ -690,6 +809,7 @@ Date       By   Updates (newest updates at the top)
 #endregion
 #! processing ends here
 
+
 #region cleanup
     #let's figure out how much time this all took
     Write-Host "$(Get-Date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
@@ -699,7 +819,14 @@ Date       By   Updates (newest updates at the top)
     Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
     Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
-    Remove-Variable log -ErrorAction SilentlyContinue
-    Remove-Variable prismcentral -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable prismcentral -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable labels -ErrorAction SilentlyContinue
+    Remove-Variable delay -ErrorAction SilentlyContinue
+    Remove-Variable sequence -ErrorAction SilentlyContinue
+    Remove-Variable tag -ErrorAction SilentlyContinue
+    Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable api_server_port -ErrorAction SilentlyContinue
+    Remove-Variable length -ErrorAction SilentlyContinue
 #endregion

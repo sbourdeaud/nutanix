@@ -17,8 +17,6 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .EXAMPLE
@@ -29,7 +27,7 @@ Move myvm to forensics quarantine.
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: November 10th 2022
+  Revision: October 29th 2026
 #>
 
 #region Parameters
@@ -38,7 +36,6 @@ Move myvm to forensics quarantine.
       #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
       [parameter(mandatory = $false)] [switch]$help,
       [parameter(mandatory = $false)] [switch]$history,
-      [parameter(mandatory = $false)] [switch]$log,
       [parameter(mandatory = $false)] [switch]$debugme,
       [parameter(mandatory = $false)] [string]$prism,
       [parameter(mandatory = $false)] $prismCreds,
@@ -48,7 +45,7 @@ Move myvm to forensics quarantine.
   )
 #endregion
 
-#region functions
+#region helper functions (previously from sbourdeaud module)
 function Invoke-PrismAPICall
 {
 <#
@@ -144,183 +141,6 @@ end
 {
     return $resp
 }    
-}
-
-function Write-LogOutput
-{
-<#
-.SYNOPSIS
-Outputs color coded messages to the screen and/or log file based on the category.
-
-.DESCRIPTION
-This function is used to produce screen and log output which is categorized, time stamped and color coded.
-
-.PARAMETER Category
-This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-
-.PARAMETER Message
-This is the actual message you want to display.
-
-.PARAMETER LogFile
-If you want to log output to a file as well, use logfile to pass the log file full path name.
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-Displays an error message.
-
-.LINK
-https://github.com/sbourdeaud
-#>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-	param
-	(
-		[Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
-        [string]
-        $Category,
-
-        [string]
-		$Message,
-
-        [string]
-        $LogFile
-	)
-
-    process
-    {
-        $Date = get-date #getting the date so we can timestamp the output entry
-	    $FgColor = "Gray" #resetting the foreground/text color
-	    switch ($Category) #we'll change the text color depending on the selected category
-        {
-            "INFO" {$FgColor = "Green"}
-            "WARNING" {$FgColor = "Yellow"}
-            "ERROR" {$FgColor = "Red"}
-            "SUM" {$FgColor = "Magenta"}
-            "SUCCESS" {$FgColor = "Cyan"}
-            "STEP" {$FgColor = "Magenta"}
-            "DEBUG" {$FgColor = "White"}
-            "DATA" {$FgColor = "Gray"}
-        }
-
-	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
-        {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-        }
-    }
-
-}#end function Write-LogOutput
-
-#helper-function Get-RESTError
-function Help-RESTError 
-{
-    $global:helpme = $body
-    $global:helpmoref = $moref
-    $global:result = $_.Exception.Response.GetResponseStream()
-    $global:reader = New-Object System.IO.StreamReader($global:result)
-    $global:responseBody = $global:reader.ReadToEnd();
-
-    return $global:responsebody
-
-    break
-}#end function Get-RESTError
-
-function CheckModule
-{
-    param 
-    (
-        [string] $module,
-        [string] $version
-    )
-
-    #getting version of installed module
-    $current_version = (Get-Module -ListAvailable $module) | Sort-Object Version -Descending  | Select-Object Version -First 1
-    #converting version to string
-    $stringver = $current_version | Select-Object @{n='ModuleVersion'; e={$_.Version -as [string]}}
-    $a = $stringver | Select-Object Moduleversion -ExpandProperty Moduleversion
-    #converting version to string
-    $targetver = $version | select @{n='TargetVersion'; e={$_ -as [string]}}
-    $b = $targetver | Select-Object TargetVersion -ExpandProperty TargetVersion
-    
-    if ([version]"$a" -ge [version]"$b") {
-        return $true
-    }
-    else {
-        return $false
-    }
-}
-
-function LoadModule
-{#tries to load a module, import it, install it if necessary
-<#
-.SYNOPSIS
-Tries to load the specified module and installs it if it can't.
-.DESCRIPTION
-Tries to load the specified module and installs it if it can't.
-.NOTES
-Author: Stephane Bourdeaud
-.PARAMETER module
-Name of PowerShell module to import.
-.EXAMPLE
-PS> LoadModule -module PSWriteHTML
-#>
-param 
-(
-    [string] $module
-)
-
-begin
-{
-    
-}
-
-process
-{   
-    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
-    if (!(Get-Module -Name $module)) 
-    {#we could not get the module, let's try to load it
-        try
-        {#import the module
-            Import-Module -Name $module -ErrorAction Stop
-            Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-        }#end try
-        catch 
-        {#we couldn't import the module, so let's install it
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
-            try 
-            {#install module
-                Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
-            }
-            catch 
-            {#could not install module
-                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
-                exit 1
-            }
-
-            try
-            {#now that it is intalled, let's import it
-                Import-Module -Name $module -ErrorAction Stop
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-            }#end try
-            catch 
-            {#we couldn't import the module
-                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
-                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
-                Exit 1
-            }#end catch
-        }#end catch
-    }
-}
-
-end
-{
-
-}
 }
 
 function Set-CustomCredentials 
@@ -525,6 +345,10 @@ https://github.com/sbourdeaud
 
     process
     {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
         Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
         [Net.ServicePointManager]::SecurityProtocol = `
         ([Net.ServicePointManager]::SecurityProtocol -bor `
@@ -552,6 +376,13 @@ Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
     }#endbegin
     process
     {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod.
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
         Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
         if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
             $certCallback = @"
@@ -586,11 +417,10 @@ public class ServerCertificateValidationCallback
     }#endprocess
     end
     {
-
     }#endend
 }#end function Set-PoSHSSLCerts
 
-Function Get-PrismCentralTaskStatus
+function Get-PrismCentralTaskStatus
 {
     <#
 .SYNOPSIS
@@ -681,6 +511,214 @@ https://github.com/sbourdeaud
     }
 }
 
+function New-PercentageBar
+{#draws progress bar based on percentage
+    
+<#
+.SYNOPSIS
+    Create percentage bar.
+.DESCRIPTION
+    This cmdlet creates percentage bar.
+.PARAMETER Percent
+    Value in percents (%).
+.PARAMETER Value
+    Value in arbitrary units.
+.PARAMETER MaxValue
+    100% value.
+.PARAMETER BarLength
+    Bar length in chars.
+.PARAMETER BarView
+    Different char sets to build the bar.
+.PARAMETER GreenBorder
+    Percent value to change bar color from green to yellow (relevant with -DrawBar parameter only).
+.PARAMETER YellowBorder
+    Percent value to change bar color from yellow to red (relevant with -DrawBar parameter only).
+.PARAMETER NoPercent
+    Exclude percentage number from the bar.
+.PARAMETER DrawBar
+    Directly draw the colored bar onto the PowerShell console (unsuitable for calculated properties).
+.EXAMPLE
+    PS C:\> New-PercentageBar -Percent 90 -DrawBar
+    Draw single bar with all default settings.
+.EXAMPLE
+    PS C:\> New-PercentageBar -Percent 95 -DrawBar -GreenBorder 70 -YellowBorder 90
+    Draw the bar and move the both color change borders.
+.EXAMPLE
+    PS C:\> 85 |New-PercentageBar -DrawBar -NoPercent
+    Pipeline the percent value to the function and exclude percent number from the bar.
+.EXAMPLE
+    PS C:\> For ($i=0; $i -le 100; $i+=10) {New-PercentageBar -Percent $i -DrawBar -Length 100 -BarView AdvancedThin2; "`r"}
+    Demonstrates advanced bar view with custom bar length and different percent values.
+.EXAMPLE
+    PS C:\> $Folder = 'C:\reports\'
+    PS C:\> $FolderSize = (Get-ChildItem -Path $Folder |measure -Property Length -Sum).Sum
+    PS C:\> Get-ChildItem -Path $Folder -File |sort Length -Descending |select -First 10 |select Name,Length,@{N='SizeBar';E={New-PercentageBar -Value $_.Length -MaxValue $FolderSize}} |ft -au
+    Get file size report and add calculated property 'SizeBar' that contains the percent of each file size from the folder size.
+.EXAMPLE
+    PS C:\> $VolumeC = gwmi Win32_LogicalDisk |? {$_.DeviceID -eq 'c:'}
+    PS C:\> Write-Host -NoNewline "Volume C Usage:" -ForegroundColor Yellow; `
+    PS C:\> New-PercentageBar -Value ($VolumeC.Size-$VolumeC.Freespace) -MaxValue $VolumeC.Size -DrawBar; "`r"
+    Get system volume usage report.
+.NOTES
+    Author      :: Roman Gelman @rgelman75
+    Version 1.0 :: 04-Jul-2016 :: [Release] :: Publicly available
+.LINK
+    https://ps1code.com/2016/07/16/percentage-bar-powershell
+#>
+    
+    [CmdletBinding(DefaultParameterSetName = 'PERCENT')]
+    Param (
+        [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'PERCENT')]
+        [ValidateRange(0, 100)]
+        [int]$Percent
+        ,
+        [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'VALUE')]
+        [ValidateRange(0, [double]::MaxValue)]
+        [double]$Value
+        ,
+        [Parameter(Mandatory, Position = 2, ParameterSetName = 'VALUE')]
+        [ValidateRange(1, [double]::MaxValue)]
+        [double]$MaxValue
+        ,
+        [Parameter(Mandatory = $false, Position = 3)]
+        [Alias("BarSize", "Length")]
+        [ValidateRange(10, 100)]
+        [int]$BarLength = 20
+        ,
+        [Parameter(Mandatory = $false, Position = 4)]
+        [ValidateSet("SimpleThin", "SimpleThick1", "SimpleThick2", "AdvancedThin1", "AdvancedThin2", "AdvancedThick")]
+        [string]$BarView = "SimpleThin"
+        ,
+        [Parameter(Mandatory = $false, Position = 5)]
+        [ValidateRange(50, 80)]
+        [int]$GreenBorder = 60
+        ,
+        [Parameter(Mandatory = $false, Position = 6)]
+        [ValidateRange(80, 90)]
+        [int]$YellowBorder = 80
+        ,
+        [Parameter(Mandatory = $false)]
+        [switch]$NoPercent
+        ,
+        [Parameter(Mandatory = $false)]
+        [switch]$DrawBar
+    )
+    
+    Begin
+    {
+        
+        If ($PSBoundParameters.ContainsKey('VALUE'))
+        {
+            
+            If ($Value -gt $MaxValue)
+            {
+                Throw "The [-Value] parameter cannot be greater than [-MaxValue]!"
+            }
+            Else
+            {
+                $Percent = $Value/$MaxValue * 100 -as [int]
+            }
+        }
+        
+        If ($YellowBorder -le $GreenBorder) { Throw "The [-YellowBorder] value must be greater than [-GreenBorder]!" }
+        
+        Function Set-BarView ($View)
+        {
+            Switch -exact ($View)
+            {
+                "SimpleThin"    { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = "-"; Break }
+                "SimpleThick1"  { $GreenChar = [char]9608; $YellowChar = [char]9608; $RedChar = [char]9608; $EmptyChar = "-"; Break }
+                "SimpleThick2"  { $GreenChar = [char]9612; $YellowChar = [char]9612; $RedChar = [char]9612; $EmptyChar = "-"; Break }
+                "AdvancedThin1" { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = [char]9476; Break }
+                "AdvancedThin2" { $GreenChar = [char]9642; $YellowChar = [char]9642; $RedChar = [char]9642; $EmptyChar = [char]9643; Break }
+                "AdvancedThick" { $GreenChar = [char]9617; $YellowChar = [char]9618; $RedChar = [char]9619; $EmptyChar = [char]9482; Break }
+            }
+            $Properties = [ordered]@{
+                Char1 = $GreenChar
+                Char2 = $YellowChar
+                Char3 = $RedChar
+                Char4 = $EmptyChar
+            }
+            $Object = New-Object PSObject -Property $Properties
+            $Object
+        }
+        
+        $BarChars = Set-BarView -View $BarView
+        $Bar = $null
+        
+        Function Draw-Bar
+        {
+            
+            Param (
+                [Parameter(Mandatory)]
+                [string]$Char
+                ,
+                [Parameter(Mandatory = $false)]
+                [string]$Color = 'White'
+                ,
+                [Parameter(Mandatory = $false)]
+                [boolean]$Draw
+            )
+            
+            If ($Draw)
+            {
+                Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char
+            }
+            Else
+            {
+                return $Char
+            }
+            
+        } #End Function Draw-Bar
+        
+    } #End Begin
+    
+    Process
+    {
+        
+        If ($NoPercent)
+        {
+            $Bar += Draw-Bar -Char "[ " -Draw $DrawBar
+        }
+        Else
+        {
+            If ($Percent -eq 100) { $Bar += Draw-Bar -Char "$Percent% [ " -Draw $DrawBar }
+            ElseIf ($Percent -ge 10) { $Bar += Draw-Bar -Char " $Percent% [ " -Draw $DrawBar }
+            Else { $Bar += Draw-Bar -Char "  $Percent% [ " -Draw $DrawBar }
+        }
+        
+        For ($i = 1; $i -le ($BarValue = ([Math]::Round($Percent * $BarLength / 100))); $i++)
+        {
+            
+            If ($i -le ($GreenBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char1) -Color 'DarkGreen' -Draw $DrawBar }
+            ElseIf ($i -le ($YellowBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char2) -Color 'Yellow' -Draw $DrawBar }
+            Else { $Bar += Draw-Bar -Char ($BarChars.Char3) -Color 'Red' -Draw $DrawBar }
+        }
+        For ($i = 1; $i -le ($EmptyValue = $BarLength - $BarValue); $i++) { $Bar += Draw-Bar -Char ($BarChars.Char4) -Draw $DrawBar }
+        $Bar += Draw-Bar -Char " ]" -Draw $DrawBar
+        
+    } #End Process
+    
+    End
+    {
+        If (!$DrawBar) { return $Bar }
+    } #End End
+    
+} #EndFunction New-PercentageBar
+
+#helper-function Get-RESTError
+function Help-RESTError 
+{
+    $global:helpme = $body
+    $global:helpmoref = $moref
+    $global:result = $_.Exception.Response.GetResponseStream()
+    $global:reader = New-Object System.IO.StreamReader($global:result)
+    $global:responseBody = $global:reader.ReadToEnd();
+
+    return $global:responsebody
+
+    break
+}#end function Get-RESTError
 #endregion
 
 #region prep-work
@@ -689,9 +727,10 @@ https://github.com/sbourdeaud
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter and Write-LogOutput/LoadModule/CheckModule functions
 11/10/2022 sb   Initial release.
 ################################################################################
-'@
+'
   $myvarScriptName = ".\set-vmQuarantine.ps1"
   if ($help) {get-help $myvarScriptName; exit}
   if ($History) {$HistoryText; exit}
@@ -705,8 +744,6 @@ Date       By   Updates (newest updates at the top)
   #initialize variables
   #misc variables
   $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-  $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-  $myvarOutputLogFile += "OutputLog.log"
   
   $api_server_port = "9440"
   $api_server = $prism
@@ -756,7 +793,6 @@ Date       By   Updates (newest updates at the top)
     {
       $value = "Forensics"
     }
-    #$value = (Get-Culture).TextInfo.ToTitleCase($type)
 
     #* step 1: retrieve vm details
     #region retrieve the vm details
@@ -811,7 +847,6 @@ Date       By   Updates (newest updates at the top)
     #region process action move
       if ($action -ieq "move") {
         try {
-          #$myvarNull = $vm_config.metadata.categories | Add-Member -MemberType NoteProperty -Name $category -Value $value -PassThru -ErrorAction Stop
           $myvarNull = $vm_config.metadata.categories_mapping | Add-Member -MemberType NoteProperty -Name $category -Value @($value) -PassThru -ErrorAction Stop
           $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
           $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
@@ -828,7 +863,6 @@ Date       By   Updates (newest updates at the top)
     #region process action remove
       if ($action -ieq "remove") {
         #todo match the exact value pair here as a category could have multiple values assigned
-        #$myvarNull = $vm_config.metadata.categories.PSObject.Properties.Remove($category)
         $myvarNull = $vm_config | Add-Member -MemberType NoteProperty -Name "api_version" -Value "3.1" -PassThru -ErrorAction Stop
         $myvarNull = $vm_config.metadata | Add-Member -MemberType NoteProperty -Name "use_categories_mapping" -Value $true -PassThru -ErrorAction Stop
         $myvarNull = $vm_config.metadata.categories_mapping.PSObject.Properties.Remove($category)
@@ -844,10 +878,6 @@ Date       By   Updates (newest updates at the top)
           $url = "https://{0}:{1}{2}" -f $api_server,$api_server_port, `
               $api_server_endpoint
           $method = "PUT"
-
-          #Write-Host "spec_version was $($vm_config.metadata.spec_version)"
-          #$vm_config.metadata.spec_version += 1
-          #Write-Host "spec_version now is $($vm_config.metadata.spec_version)"
 
           $payload = (ConvertTo-Json $vm_config -Depth 6)
         #endregion
@@ -901,7 +931,10 @@ Date       By   Updates (newest updates at the top)
   Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
   Remove-Variable help -ErrorAction SilentlyContinue
   Remove-Variable history -ErrorAction SilentlyContinue
-  Remove-Variable log -ErrorAction SilentlyContinue
-  Remove-Variable prism -ErrorAction SilentlyContinue
   Remove-Variable debugme -ErrorAction SilentlyContinue
+  Remove-Variable prism -ErrorAction SilentlyContinue
+  Remove-Variable prismCreds -ErrorAction SilentlyContinue
+  Remove-Variable vm -ErrorAction SilentlyContinue
+  Remove-Variable action -ErrorAction SilentlyContinue
+  Remove-Variable type -ErrorAction SilentlyContinue
 #endregion

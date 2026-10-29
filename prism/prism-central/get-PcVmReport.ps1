@@ -7,8 +7,6 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER prismcentral
@@ -22,7 +20,7 @@ Collect VM inventory from prismcentral.local (and get prompted for credentials)
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: June 10th 2022
+  Revision: October 29th 2026
 #>
 
 #region parameters
@@ -31,242 +29,187 @@ Collect VM inventory from prismcentral.local (and get prompted for credentials)
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
-        [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$prismcentral,
         [parameter(mandatory = $false)] $prismCreds
     )
 #endregion
 
-#region functions
-#this function is used to make a REST api call to Prism
-function Write-LogOutput
-{
-<#
-.SYNOPSIS
-Outputs color coded messages to the screen and/or log file based on the category.
 
-.DESCRIPTION
-This function is used to produce screen and log output which is categorized, time stamped and color coded.
+#region prepwork
 
-.PARAMETER Category
-This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+    $HistoryText = @'
+Maintenance Log
+Date       By   Updates (newest updates at the top)
+---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
+06/10/2022 sb   Now retrieving hosts as well so that host name is shown per vm. Note that when a vm is powered off, the host is blank.
+12/02/2021 sb   Added cdrom mount status to vm report. Removed dependency on sbourdeaud external module.
+02/06/2021 sb   Replaced username with get-credential
+05/26/2020 sb   Initial release.
+################################################################################
+'
+    $myvarScriptName = ".\get-PcVmReport.ps1"
 
-.PARAMETER Message
-This is the actual message you want to display.
+    if ($help) {get-help $myvarScriptName; exit}
+    if ($History) {$HistoryText; exit}
 
-.PARAMETER LogFile
-If you want to log output to a file as well, use logfile to pass the log file full path name.
+    #check PoSH version
+    if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+    #region helper functions (previously from sbourdeaud module)
+    function Invoke-PrismAPICall {
+        param (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string]$method,
 
-.EXAMPLE
-.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-Displays an error message.
+            [parameter(mandatory = $true)]
+            [string]$url,
 
-.LINK
-https://github.com/sbourdeaud
-#>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+            [parameter(mandatory = $false)]
+            [string]$payload,
 
-	param
-	(
-		[Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
-        [string]
-        $Category,
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]$credential
+        )
 
-        [string]
-		$Message,
-
-        [string]
-        $LogFile
-	)
-
-    process
-    {
-        $Date = get-date #getting the date so we can timestamp the output entry
-	    $FgColor = "Gray" #resetting the foreground/text color
-	    switch ($Category) #we'll change the text color depending on the selected category
-        {
-            "INFO" {$FgColor = "Green"}
-            "WARNING" {$FgColor = "Yellow"}
-            "ERROR" {$FgColor = "Red"}
-            "SUM" {$FgColor = "Magenta"}
-            "SUCCESS" {$FgColor = "Cyan"}
-            "STEP" {$FgColor = "Magenta"}
-            "DEBUG" {$FgColor = "White"}
-            "DATA" {$FgColor = "Gray"}
-        }
-
-	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
-        {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-        }
-    }
-
-}#end function Write-LogOutput
-function Invoke-PrismAPICall
-{
-<#
-.SYNOPSIS
-  Makes api call to prism based on passed parameters. Returns the json response.
-.DESCRIPTION
-  Makes api call to prism based on passed parameters. Returns the json response.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER method
-  REST method (POST, GET, DELETE, or PUT)
-.PARAMETER credential
-  PSCredential object to use for authentication.
-PARAMETER url
-  URL to the api endpoint.
-PARAMETER payload
-  JSON payload to send.
-.EXAMPLE
-.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
-Makes a POST api call to the specified endpoint with the specified payload.
-#>
-param
-(
-    [parameter(mandatory = $true)]
-    [ValidateSet("POST","GET","DELETE","PUT")]
-    [string] 
-    $method,
-    
-    [parameter(mandatory = $true)]
-    [string] 
-    $url,
-
-    [parameter(mandatory = $false)]
-    [string] 
-    $payload,
-    
-    [parameter(mandatory = $true)]
-    [System.Management.Automation.PSCredential]
-    $credential
-)
-
-begin
-{
-    
-}
-process
-{
-    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-    try {
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $headers = @{
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            if ($payload) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        try {
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $headers = @{
+                    "Content-Type" = "application/json"
+                    "Accept"       = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
             } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                $username = $credential.UserName
+                $password = $credential.Password
+                $headers = @{
+                    "Authorization" = "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username + ":" + ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))))
+                    "Content-Type"  = "application/json"
+                    "Accept"        = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
             }
-        } else {
-            $username = $credential.UserName
-            $password = $credential.Password
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            if ($payload) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            Write-Host "$(Get-Date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White }
+        }
+        catch {
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
+        }
+        return $resp
+    }
+
+    function Set-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
             } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Set path to $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+        $user = $credentials.UserName
+        $securePassword = $credentials.Password
+
+        try {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Type Directory $path -ErrorAction Stop | Out-Null
+            }
+            catch {
+                throw "$(Get-Date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
             }
         }
-        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-    }
-    catch {
-        $saved_error = $_.Exception.Message
-        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        Throw "$(get-date) [ERROR] $saved_error"
-    }
-    finally {
-        #add any last words here; this gets processed no matter what
-    }
-}
-end
-{
-    return $resp
-}    
-}
 
-#this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
-function Set-PoshTls
-{
-<#
-.SYNOPSIS
-Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+        try {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
 
-.DESCRIPTION
-Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-.\Set-PoshTls
-Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
-
-.LINK
-https://github.com/sbourdeaud
-#>
-[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-    param 
-    (
-        
-    )
-
-    begin 
-    {
+        Write-Host "$(Get-Date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan
     }
 
-    process
-    {
+    function Get-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        if (!(Test-Path $credentialsFilePath)) {
+            throw "$(Get-Date) [ERROR] Could not access file $credentialsFilePath"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+        $user = $credFile[0]
+        $securePassword = $credFile[1] | ConvertTo-SecureString
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(Get-Date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan
+        return $customCredentials
+    }
+
+    function Set-PoshTls {
         if ($PSVersionTable.PSVersion.Major -gt 5) {
-            # PowerShell 7+ already defaults to TLS 1.2+; REST helpers also set -SslProtocol Tls12
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
             return
         }
         Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
-        [Net.ServicePointManager]::SecurityProtocol = `
-        ([Net.ServicePointManager]::SecurityProtocol -bor `
-        [Net.SecurityProtocolType]::Tls12)
+        [Net.ServicePointManager]::SecurityProtocol = (
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        )
     }
 
-    end
-    {
-
-    }
-}
-
-#this function is used to configure posh to ignore invalid ssl certificates
-function Set-PoSHSSLCerts
-{
-<#
-.SYNOPSIS
-Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
-.DESCRIPTION
-Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
-#>
-    begin
-    {
-
-    }#endbegin
-    process
-    {
-        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod.
+    function Set-PoSHSSLCerts {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
         # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
         if ($PSVersionTable.PSVersion.Major -gt 5) {
             Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
@@ -284,16 +227,10 @@ public class ServerCertificateValidationCallback
 {
     public static void Ignore()
     {
-        if(ServicePointManager.ServerCertificateValidationCallback ==null)
+        if (ServicePointManager.ServerCertificateValidationCallback == null)
         {
-            ServicePointManager.ServerCertificateValidationCallback += 
-                delegate
-                (
-                    Object obj, 
-                    X509Certificate certificate, 
-                    X509Chain chain, 
-                    SslPolicyErrors errors
-                )
+            ServicePointManager.ServerCertificateValidationCallback +=
+                delegate (Object obj, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
                 {
                     return true;
                 };
@@ -302,261 +239,15 @@ public class ServerCertificateValidationCallback
 }
 "@
             Add-Type $certCallback
-        }#endif
+        }
         [ServerCertificateValidationCallback]::Ignore()
-    }#endprocess
-    end
-    {
-
-    }#endend
-}#end function Set-PoSHSSLCerts
-
-#this function is used to create saved credentials for the current user
-function Set-CustomCredentials 
-{
-#input: path, credname
-	#output: saved credentials file
-<#
-.SYNOPSIS
-  Creates a saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to create a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where to save the credential file. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Set-CustomCredentials -path c:\creds -credname prism-apiuser
-Will prompt for user credentials and create a file called prism-apiuser.txt in c:\creds
-#>
-	param
-	(
-		[parameter(mandatory = $false)]
-        [string] 
-        $path,
-		
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-	)
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Set path to $path" -ForegroundColor Green
-        } 
     }
-    process
-    {
-        #prompt for credentials
-        $credentialsFilePath = "$path\$credname.txt"
-		$credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
-		
-		#put details in hashed format
-		$user = $credentials.UserName
-		$securePassword = $credentials.Password
-        
-        #convert secureString to text
-        try 
-        {
-            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
-        }
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not convert password : $($_.Exception.Message)"
-        }
+    #endregion
 
-        #create directory to store creds if it does not already exist
-        if(!(Test-Path $path))
-		{
-            try 
-            {
-                $result = New-Item -type Directory $path -ErrorAction Stop
-            } 
-            catch 
-            {
-                throw "$(get-date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
-            }
-		}
-
-        #save creds to file
-        try 
-        {
-            Set-Content $credentialsFilePath $user -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
-        }
-        try 
-        {
-            Add-Content $credentialsFilePath $password -ErrorAction Stop
-        } 
-        catch 
-        {
-            throw "$(get-date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
-        }
-
-        Write-Host "$(get-date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan                
-    }
-    end
-    {}
-}
-
-#this function is used to retrieve saved credentials for the current user
-function Get-CustomCredentials 
-{
-#input: path, credname
-	#output: credential object
-<#
-.SYNOPSIS
-  Retrieves saved credential file using DAPI for the current user on the local machine.
-.DESCRIPTION
-  This function is used to retrieve a saved credential file using DAPI for the current user on the local machine.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER path
-  Specifies the custom path where the credential file is. By default, this will be %USERPROFILE%\Documents\WindowsPowershell\CustomCredentials.
-.PARAMETER credname
-  Specifies the credential file name.
-.EXAMPLE
-.\Get-CustomCredentials -path c:\creds -credname prism-apiuser
-Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
-#>
-	param
-	(
-        [parameter(mandatory = $false)]
-		[string] 
-        $path,
-		
-        [parameter(mandatory = $true)]
-        [string] 
-        $credname
-	)
-
-    begin
-    {
-        if (!$path)
-        {
-            if ($IsLinux -or $IsMacOS) 
-            {
-                $path = $home
-            }
-            else 
-            {
-                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
-            }
-            Write-Host "$(get-date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
-        } 
-    }
-    process
-    {
-        $credentialsFilePath = "$path\$credname.txt"
-        if(!(Test-Path $credentialsFilePath))
-	    {
-            throw "$(get-date) [ERROR] Could not access file $credentialsFilePath : $($_.Exception.Message)"
-        }
-
-        $credFile = Get-Content $credentialsFilePath
-		$user = $credFile[0]
-		$securePassword = $credFile[1] | ConvertTo-SecureString
-
-        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
-
-        Write-Host "$(get-date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan 
-    }
-    end
-    {
-        return $customCredentials
-    }
-}
-
+    Set-PoSHSSLCerts
+    Set-PoshTls
 #endregion
 
-#region prepwork
-    $HistoryText = @'
-Maintenance Log
-Date       By   Updates (newest updates at the top)
----------- ---- ---------------------------------------------------------------
-05/26/2020 sb   Initial release.
-02/06/2021 sb   Replaced username with get-credential
-12/02/2021 sb   Added cdrom mount status to vm report.
-                Removed dependency on sbourdeaud external module.
-                Thx Drew Henning for catching the error in the online help
-                example section :)
-                Adding cdrom_present and details about iso image mounted.
-                Adding network name information vnics are connected to.
-06/10/2022 sb   Now retrieving hosts as well so that host name is shown per
-                vm. Note that when a vm is powered off, the host is blank.
-################################################################################
-'@
-    $myvarScriptName = ".\get-PcVmReport.ps1"
-
-    if ($help) {get-help $myvarScriptName; exit}
-    if ($History) {$HistoryText; exit}
-
-    #check PoSH version
-    if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
-
-    #check if we have all the required PoSH modules
-    Write-LogOutput -Category "INFO" -LogFile $myvarOutputLogFile -Message "Checking for required Powershell modules..."
-
-    <# #region module sbourdeaud is used for facilitating Prism REST calls
-        $required_version = "3.0.8"
-        if (!(Get-Module -Name sbourdeaud)) {
-            Write-Host "$(get-date) [INFO] Importing module 'sbourdeaud'..." -ForegroundColor Green
-            try
-            {
-                Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-                Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-            }#end try
-            catch #we couldn't import the module, so let's install it
-            {
-                Write-Host "$(get-date) [INFO] Installing module 'sbourdeaud' from the Powershell Gallery..." -ForegroundColor Green
-                try {Install-Module -Name sbourdeaud -Scope CurrentUser -Force -ErrorAction Stop}
-                catch {throw "$(get-date) [ERROR] Could not install module 'sbourdeaud': $($_.Exception.Message)"}
-
-                try
-                {
-                    Import-Module -Name sbourdeaud -MinimumVersion $required_version -ErrorAction Stop
-                    Write-Host "$(get-date) [SUCCESS] Imported module 'sbourdeaud'!" -ForegroundColor Cyan
-                }#end try
-                catch #we couldn't import the module
-                {
-                    Write-Host "$(get-date) [ERROR] Unable to import the module sbourdeaud.psm1 : $($_.Exception.Message)" -ForegroundColor Red
-                    Write-Host "$(get-date) [WARNING] Please download and install from https://www.powershellgallery.com/packages/sbourdeaud/1.1" -ForegroundColor Yellow
-                    Exit
-                }#end catch
-            }#end catch
-        }#endif module sbourdeaud
-        $MyVarModuleVersion = Get-Module -Name sbourdeaud | Select-Object -Property Version
-        if (($MyVarModuleVersion.Version.Major -lt $($required_version.split('.')[0])) -or (($MyVarModuleVersion.Version.Major -eq $($required_version.split('.')[0])) -and ($MyVarModuleVersion.Version.Minor -eq $($required_version.split('.')[1])) -and ($MyVarModuleVersion.Version.Build -lt $($required_version.split('.')[2])))) {
-            Write-Host "$(get-date) [INFO] Updating module 'sbourdeaud'..." -ForegroundColor Green
-            Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-            Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-            try {
-                Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-                Import-Module -Name sbourdeaud -ErrorAction Stop
-            }
-            catch {throw "$(get-date) [ERROR] Could not update module 'sbourdeaud': $($_.Exception.Message)"}
-        }
-    #endregion #>
-    #Set-PoSHSSLCerts
-    if ($PSVersionTable.PSVersion.Major -le 5) {
-        Set-PoshTls
-    }
-#endregion
 
 #region variables
     $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
@@ -568,6 +259,7 @@ Date       By   Updates (newest updates at the top)
     [System.Collections.ArrayList]$myvarVmResults = New-Object System.Collections.ArrayList($null)
     [System.Collections.ArrayList]$myvarVmReport = New-Object System.Collections.ArrayList($null)
 #endregion
+
 
 #region parameters validation
     if (!$prismCreds) 
@@ -591,281 +283,150 @@ Date       By   Updates (newest updates at the top)
     $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 #endregion
 
+
 #region processing
 
     #* step 1: retrieve list of clusters managed by Prism Central
     #region get clusters
         Write-Host "$(get-date) [INFO] Retrieving list of clusters..." -ForegroundColor Green
-        #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/clusters/list"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "POST"
-
-            # this is used to capture the content of the payload
-            $content = @{
-                kind="cluster";
-                offset=0;
-                length=$length
-            }
-            $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
-        #region make api call
-            Do {
-                try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                    
-                    $listLength = 0
-                    if ($resp.metadata.offset) {
-                        $firstItem = $resp.metadata.offset
-                    } else {
-                        $firstItem = 0
-                    }
-                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
-                        $listLength = $resp.metadata.length
-                    } else {
-                        $listLength = $resp.metadata.total_matches
-                    }
-                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-
-                    #grab the information we need in each entity
-                    ForEach ($entity in $resp.entities) {
-                        if ($entity.status.resources.nodes.hypervisor_server_list) {
-                            $myvarClusterInfo = [ordered]@{
-                                "name" = $entity.status.name;
-                                "uuid" = $entity.metadata.uuid;
-                                "nos_version" = $entity.status.resources.config.software_map.NOS.version;
-                                "redundancy_factor" = $entity.status.resources.config.redundancy_factor;
-                                "domain_awareness_level" = $entity.status.resources.config.domain_awareness_level;
-                                "is_long_term_support" = $entity.status.resources.config.build.is_long_term_support;
-                                "timezone" = $entity.status.resources.config.timezone;
-                                "external_ip" = $entity.status.resources.network.external_ip;
-                                "hypervisor" = $entity.status.resources.nodes.hypervisor_server_list.type | Select-Object -Unique
-                            }
-                            #store the results for this entity in our overall result variable
-                            $myvarClustersResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
+        $myvarClustersResults = @()
+        $url = "https://{0}:{1}/api/nutanix/v3/clusters/list" -f $prismcentral,$api_server_port
+        $method = "POST"
+        $content = @{
+            kind="cluster";
+            offset=0;
+            length=$length
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        Do {
+            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            if ($resp.entities) {
+                ForEach ($entity in $resp.entities) {
+                    if ($entity.status.resources.nodes.hypervisor_server_list) {
+                        $myvarClusterInfo = [ordered]@{
+                            "name" = $entity.status.name;
+                            "uuid" = $entity.metadata.uuid;
+                            "nos_version" = $entity.status.resources.config.software_map.NOS.version;
+                            "redundancy_factor" = $entity.status.resources.config.redundancy_factor;
+                            "domain_awareness_level" = $entity.status.resources.config.domain_awareness_level;
+                            "is_long_term_support" = $entity.status.resources.config.build.is_long_term_support;
+                            "timezone" = $entity.status.resources.config.timezone;
+                            "external_ip" = $entity.status.resources.network.external_ip;
+                            "hypervisor" = $entity.status.resources.nodes.hypervisor_server_list.type | Select-Object -Unique
                         }
+                        $myvarClustersResults.Add((New-Object PSObject -Property $myvarClusterInfo)) | Out-Null
                     }
-
-                    #prepare the json payload for the next batch of entities/response
-                    $content = @{
-                        kind="cluster";
-                        offset=($resp.metadata.length + $resp.metadata.offset);
-                        length=$length
-                    }
-                    $payload = (ConvertTo-Json $content -Depth 4)
-                }
-                catch {
-                    $saved_error = $_.Exception.Message
-                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                    Throw "$(get-date) [ERROR] $saved_error"
-                }
-                finally {
-                    #add any last words here; this gets processed no matter what
                 }
             }
-            While ($resp.metadata.length -eq $length)
+            $content.offset = $content.offset + $content.length
+            $payload = (ConvertTo-Json $content -Depth 4)
+        }
+        While ($resp.metadata.length -eq $length)
 
-            if ($debugme) {
-                Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
-                $myvarClustersResults
-            }
-        #endregion
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+            $myvarClustersResults
+        }
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved clusters list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
     #* step 2: retrieve list of networks managed by Prism Central
     #region get networks
         Write-Host "$(get-date) [INFO] Retrieving list of networks..." -ForegroundColor Green
-        #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/subnets/list"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "POST"
-
-            # this is used to capture the content of the payload
-            $content = @{
-                kind="subnet";
-                offset=0;
-                length=$length
+        $myvarNetworksResults = @()
+        $url = "https://{0}:{1}/api/nutanix/v3/subnets/list" -f $prismcentral,$api_server_port
+        $method = "POST"
+        $content = @{
+            kind="subnet";
+            offset=0;
+            length=$length
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        Do {
+            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            if ($resp.entities) {
+                ForEach ($entity in $resp.entities) {
+                    $myvarNetworkInfo = [ordered]@{
+                        "name" = $entity.status.name;
+                        "uuid" = $entity.metadata.uuid
+                    }
+                    $myvarNetworksResults.Add((New-Object PSObject -Property $myvarNetworkInfo)) | Out-Null
+                }
             }
+            $content.offset = $content.offset + $content.length
             $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
-        #region make api call
-            Do {
-                try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                    
-                    $listLength = 0
-                    if ($resp.metadata.offset) {
-                        $firstItem = $resp.metadata.offset
-                    } else {
-                        $firstItem = 0
-                    }
-                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
-                        $listLength = $resp.metadata.length
-                    } else {
-                        $listLength = $resp.metadata.total_matches
-                    }
-                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        }
+        While ($resp.metadata.length -eq $length)
 
-                    #grab the information we need in each entity
-                    ForEach ($entity in $resp.entities) {
-                        $myvarNetworkInfo = [ordered]@{
-                            "name" = $entity.status.name;
-                            "uuid" = $entity.metadata.uuid
-                        }
-                        #store the results for this entity in our overall result variable
-                        $myvarNetworksResults.Add((New-Object PSObject -Property $myvarNetworkInfo)) | Out-Null
-                    }
-
-                    #prepare the json payload for the next batch of entities/response
-                    $content = @{
-                        kind="subnet";
-                        offset=($resp.metadata.length + $resp.metadata.offset);
-                        length=$length
-                    }
-                    $payload = (ConvertTo-Json $content -Depth 4)
-                }
-                catch {
-                    $saved_error = $_.Exception.Message
-                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                    Throw "$(get-date) [ERROR] $saved_error"
-                }
-                finally {
-                    #add any last words here; this gets processed no matter what
-                }
-            }
-            While ($resp.metadata.length -eq $length)
-
-            if ($debugme) {
-                Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
-                $myvarNetworksResults
-            }
-        #endregion
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+            $myvarNetworksResults
+        }
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved networks list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
     #* step 3: retrieve list of hosts managed by Prism Central
     #region get hosts
         Write-Host "$(get-date) [INFO] Retrieving list of hosts..." -ForegroundColor Green
-        #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/hosts/list"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "POST"
-
-            # this is used to capture the content of the payload
-            $content = @{
-                kind="host";
-                offset=0;
-                length=$length
+        $myvarHostsResults = @()
+        $url = "https://{0}:{1}/api/nutanix/v3/hosts/list" -f $prismcentral,$api_server_port
+        $method = "POST"
+        $content = @{
+            kind="host";
+            offset=0;
+            length=$length
+        }
+        $payload = (ConvertTo-Json $content -Depth 4)
+        Do {
+            $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
+            if ($resp.entities) {
+                ForEach ($entity in $resp.entities) {
+                    $myvarHostInfo = [ordered]@{
+                        "name" = $entity.status.name;
+                        "uuid" = $entity.metadata.uuid
+                    }
+                    $myvarHostsResults.Add((New-Object PSObject -Property $myvarHostInfo)) | Out-Null
+                }
             }
+            $content.offset = $content.offset + $content.length
             $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
-        #region make api call
-            Do {
-                try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                    
-                    $listLength = 0
-                    if ($resp.metadata.offset) {
-                        $firstItem = $resp.metadata.offset
-                    } else {
-                        $firstItem = 0
-                    }
-                    if (($resp.metadata.length -le $length) -and ($resp.metadata.length -ne 1)) {
-                        $listLength = $resp.metadata.length
-                    } else {
-                        $listLength = $resp.metadata.total_matches
-                    }
-                    Write-Host "$(Get-Date) [INFO] Processing results from $($firstItem) to $($firstItem + $listLength) out of $($resp.metadata.total_matches)" -ForegroundColor Green
-                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        }
+        While ($resp.metadata.length -eq $length)
 
-                    #grab the information we need in each entity
-                    ForEach ($entity in $resp.entities) {
-                        $myvarHostInfo = [ordered]@{
-                            "name" = $entity.status.name;
-                            "uuid" = $entity.metadata.uuid
-                        }
-                        #store the results for this entity in our overall result variable
-                        $myvarHostsResults.Add((New-Object PSObject -Property $myvarHostInfo)) | Out-Null
-                    }
-
-                    #prepare the json payload for the next batch of entities/response
-                    $content = @{
-                        kind="host";
-                        offset=($resp.metadata.length + $resp.metadata.offset);
-                        length=$length
-                    }
-                    $payload = (ConvertTo-Json $content -Depth 4)
-                }
-                catch {
-                    $saved_error = $_.Exception.Message
-                    # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                    Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                    Throw "$(get-date) [ERROR] $saved_error"
-                }
-                finally {
-                    #add any last words here; this gets processed no matter what
-                }
-            }
-            While ($resp.metadata.length -eq $length)
-
-            if ($debugme) {
-                Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
-                $myvarNetworksResults
-            }
-        #endregion
+        if ($debugme) {
+            Write-Host "$(Get-Date) [DEBUG] Showing results:" -ForegroundColor White
+            $myvarHostsResults
+        }
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved hosts list from $prismcentral!" -ForegroundColor Cyan
     #endregion
 
     #* step 4: retrieve vms using groups
     #region get vms using groups
         Write-Host "$(get-date) [INFO] Retrieving virtual machines information from Prism Central..." -ForegroundColor Green
-        #region prepare api call
-            $api_server_endpoint = "/api/nutanix/v3/groups"
-            $url = "https://{0}:{1}{2}" -f $prismcentral,$api_server_port, $api_server_endpoint
-            $method = "POST"
-
-            $attributes = "vm_name,uuid,cluster_name,categories,project_name,ip_addresses,owner_username,_created_timestamp_usecs_,ngt.installed_version,ngt.communication_over_serial_port_active,ngt.communication_active,memory_reserved_bytes,memory_overcommit,is_live_migratable,network_security_rule_id_list,zone_type,capacity.policy_anomaly_detail,capacity.vm_constrained_status,capacity.vm_constrained_detail,capacity.policy_efficiency_detail,protection_type,guest_os_name,ngt.guest_os,ngt.enabled_applications,ngt.cluster_version,volume_group,protection_policy_state,recovery_plan_state_list,cbr_not_capable_reason"
-            # this is used to capture the content of the payload
-            $content = @{
-                entity_type="mh_vm";
-                query_name="";
-                grouping_attribute=" ";
-                group_count=3;
-                group_offset=0;
-                group_attributes=@();
-                group_member_count=$length;
-                group_member_offset=$page_offset;
-                group_member_sort_attribute="vm_name";
-                group_member_sort_order="ASCENDING";
-                group_member_attributes=@(
-                    ForEach ($attribute in ($attributes -Split ","))
-                    {
-                        @{attribute="$($attribute)"}
-                    } 
-                );
-                filter_criteria="(platform_type!=aws,platform_type==[no_val]);is_cvm==0"
-            }
-            $payload = (ConvertTo-Json $content -Depth 4)
-        #endregion
-        #region make api call
-            try {
-                $myvar_mh_vms_groups = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-            }
-            catch {
-                $saved_error = $_.Exception.Message
-                # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-                Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-                Throw "$(get-date) [ERROR] $saved_error"
-            }
-            finally {
-                #add any last words here; this gets processed no matter what
-            }
-        #endregion
+        $attributes = "vm_name,uuid,cluster_name,categories,project_name,ip_addresses,owner_username,_created_timestamp_usecs_,ngt.installed_version,ngt.communication_over_serial_port_active,ngt.communication_active,memory_reserved_bytes,memory_overcommit,is_live_migratable,network_security_rule_id_list,zone_type,capacity.policy_anomaly_detail,capacity.vm_constrained_status,capacity.vm_constrained_detail,capacity.policy_efficiency_detail,protection_type,guest_os_name,ngt.guest_os,ngt.enabled_applications,ngt.cluster_version,volume_group,protection_policy_state,recovery_plan_state_list,cbr_not_capable_reason"
+        $content = @{
+            entity_type="mh_vm";
+            query_name="";
+            grouping_attribute=" ";
+            group_count=3;
+            group_offset=0;
+            group_attributes=@();
+            group_member_count=$length;
+            group_member_offset=0;
+            group_member_sort_attribute="vm_name";
+            group_member_sort_order="ASCENDING";
+            group_member_attributes=@(
+                ForEach ($attribute in ($attributes -Split ","))
+                {
+                    @{attribute="$($attribute)"}
+                } 
+            );
+            filter_criteria="(platform_type!=aws,platform_type==[no_val]);is_cvm==0"
+        }
+        $url = "https://{0}:{1}/api/nutanix/v3/groups" -f $prismcentral,$api_server_port
+        $method = "POST"
+        $payload = (ConvertTo-Json $content -Depth 4)
+        $myvar_mh_vms_groups = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
         Write-Host "$(get-date) [SUCCESS] Successfully retrieved virtual machines information from $prismcentral!" -ForegroundColor Cyan
     #endregion get vms using groups
 
@@ -906,7 +467,6 @@ Date       By   Updates (newest updates at the top)
                     "cdrom_iso" = (($entity.vm_disk_info | Where-Object {$_.is_cdrom -eq $true}) | select-object -property source_disk_address).source_disk_address.ndfs_filepath -join ',';
                     "vdisk_total_bytes" = if (($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false}).size) {($entity.vm_disk_info | where-object {$_.is_cdrom -eq $false} | Measure-Object size -Sum).Sum} else {0};
                 }
-                #store the results for this entity in our overall result variable
                 $myvarVmResults.Add((New-Object PSObject -Property $myvarVmInfo)) | Out-Null
             }
         #endregion
@@ -971,6 +531,7 @@ Date       By   Updates (newest updates at the top)
 
 #endregion
 
+
 #region cleanup
     Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
@@ -982,4 +543,8 @@ Date       By   Updates (newest updates at the top)
     Remove-Variable log -ErrorAction SilentlyContinue
     Remove-Variable cluster -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable prismcentral -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable api_server_port -ErrorAction SilentlyContinue
+    Remove-Variable length -ErrorAction SilentlyContinue
 #endregion

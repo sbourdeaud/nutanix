@@ -540,6 +540,11 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
 
 
 if __name__ == '__main__':
+    # Lets a PyInstaller build on Windows start child processes without
+    # re-running argument parsing in the frozen executable.
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     # * parsing script arguments
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-p", "--prism", help="prism server.")

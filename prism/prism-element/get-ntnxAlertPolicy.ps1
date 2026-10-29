@@ -1,26 +1,20 @@
-﻿﻿<#
+﻿<#
 .SYNOPSIS
   This script can be used to retrieve all alerts and their configuration from a Prism instance.
 .DESCRIPTION
   Given a Nutanix cluster, retrieve all alerts and healthchecks with full information, including severity, causes, resolutions, KB, etc... and export to a CSV file.
 .PARAMETER prism
   IP address or FQDN of the Nutanix cluster (this can also be a single CVM IP or FQDN).
-.PARAMETER username
-  Prism username (with privileged cluster admin access).
-.PARAMETER password
-  Prism username password.
+.PARAMETER prismCreds
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .PARAMETER csv
   Name of csv file to export to. By default this is prism-alerts-report.csv in the working directory.
 .PARAMETER help
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
-.PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
 .EXAMPLE
 .\get-ntnxAlertPolicy.ps1 -prism 10.10.10.1 -csv c:\temp\production-cluster-report.csv
 .LINK
@@ -28,7 +22,7 @@
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 6th 2021
+  Revision: October 29th 2026
 #>
 
 #region Parameters
@@ -37,7 +31,6 @@
       #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
       [parameter(mandatory = $false)] [switch]$help,
       [parameter(mandatory = $false)] [switch]$history,
-      [parameter(mandatory = $false)] [switch]$log,
       [parameter(mandatory = $false)] [switch]$debugme,
       [parameter(mandatory = $false)] [string]$prism,
       [parameter(mandatory = $false)] $prismCreds,
@@ -48,200 +41,7 @@
 #TODO: add ability to point to PC and get all clusters from there
 #TODO: add ability to read clusters list from csv file
 
-#region functions
-#this function is used to make sure we use the proper Tls version (1.2 only required for connection to Prism)
-function Write-LogOutput
-{
-<#
-.SYNOPSIS
-Outputs color coded messages to the screen and/or log file based on the category.
-
-.DESCRIPTION
-This function is used to produce screen and log output which is categorized, time stamped and color coded.
-
-.PARAMETER Category
-This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-
-.PARAMETER Message
-This is the actual message you want to display.
-
-.PARAMETER LogFile
-If you want to log output to a file as well, use logfile to pass the log file full path name.
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-Displays an error message.
-
-.LINK
-https://github.com/sbourdeaud
-#>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-	param
-	(
-		[Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
-        [string]
-        $Category,
-
-        [string]
-		$Message,
-
-        [string]
-        $LogFile
-	)
-
-    process
-    {
-        $Date = get-date #getting the date so we can timestamp the output entry
-	    $FgColor = "Gray" #resetting the foreground/text color
-	    switch ($Category) #we'll change the text color depending on the selected category
-        {
-            "INFO" {$FgColor = "Green"}
-            "WARNING" {$FgColor = "Yellow"}
-            "ERROR" {$FgColor = "Red"}
-            "SUM" {$FgColor = "Magenta"}
-            "SUCCESS" {$FgColor = "Cyan"}
-            "STEP" {$FgColor = "Magenta"}
-            "DEBUG" {$FgColor = "White"}
-            "DATA" {$FgColor = "Gray"}
-        }
-
-	    Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-	    if ($LogFile) #add the entry to the log file if -LogFile has been specified
-        {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-        }
-    }
-
-}#end function Write-LogOutput
-
-#helper-function Get-RESTError
-function Help-RESTError 
-{
-    $global:helpme = $body
-    $global:helpmoref = $moref
-    $global:result = $_.Exception.Response.GetResponseStream()
-    $global:reader = New-Object System.IO.StreamReader($global:result)
-    $global:responseBody = $global:reader.ReadToEnd();
-
-    return $global:responsebody
-
-    break
-}#end function Get-RESTError
-function Set-PoshTls
-{
-<#
-.SYNOPSIS
-Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
-
-.DESCRIPTION
-Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
-
-.NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-.EXAMPLE
-.\Set-PoshTls
-Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
-
-.LINK
-https://github.com/sbourdeaud
-#>
-[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-    param 
-    (
-        
-    )
-
-    begin 
-    {
-    }
-
-    process
-    {
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            # PowerShell 7+ already defaults to TLS 1.2+; REST helpers also set -SslProtocol Tls12
-            return
-        }
-        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
-        [Net.ServicePointManager]::SecurityProtocol = `
-        ([Net.ServicePointManager]::SecurityProtocol -bor `
-        [Net.SecurityProtocolType]::Tls12)
-    }
-
-    end
-    {
-
-    }
-}
-
-#this function is used to configure posh to ignore invalid ssl certificates
-function Set-PoSHSSLCerts
-{
-<#
-.SYNOPSIS
-Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
-.DESCRIPTION
-Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
-#>
-    begin
-    {
-
-    }#endbegin
-    process
-    {
-        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod.
-        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
-            return
-        }
-
-        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
-        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
-            $certCallback = @"
-using System;
-using System.Net;
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
-public class ServerCertificateValidationCallback
-{
-    public static void Ignore()
-    {
-        if(ServicePointManager.ServerCertificateValidationCallback ==null)
-        {
-            ServicePointManager.ServerCertificateValidationCallback += 
-                delegate
-                (
-                    Object obj, 
-                    X509Certificate certificate, 
-                    X509Chain chain, 
-                    SslPolicyErrors errors
-                )
-                {
-                    return true;
-                };
-        }
-    }
-}
-"@
-            Add-Type $certCallback
-        }#endif
-        [ServerCertificateValidationCallback]::Ignore()
-    }#endprocess
-    end
-    {
-
-    }#endend
-}#end function Set-PoSHSSLCerts
-
-#this function is used to make a REST api call to Prism
+#region helper functions (previously from sbourdeaud module)
 function Invoke-PrismAPICall
 {
 <#
@@ -508,6 +308,114 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
         return $customCredentials
     }
 }
+
+function Set-PoshTls
+{
+<#
+.SYNOPSIS
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.DESCRIPTION
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.NOTES
+Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
+
+.EXAMPLE
+.\Set-PoshTls
+Makes sure we use the proper Tls version (1.2 only required for connection to Prism).
+
+.LINK
+https://github.com/sbourdeaud
+#>
+[CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+
+    param 
+    (
+        
+    )
+
+    begin 
+    {
+    }
+
+    process
+    {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; REST helpers also set -SslProtocol Tls12
+            return
+        }
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = `
+        ([Net.ServicePointManager]::SecurityProtocol -bor `
+        [Net.SecurityProtocolType]::Tls12)
+    }
+
+    end
+    {
+
+    }
+}
+
+#this function is used to configure posh to ignore invalid ssl certificates
+function Set-PoSHSSLCerts
+{
+<#
+.SYNOPSIS
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+.DESCRIPTION
+Configures PoSH to ignore invalid SSL certificates when doing Invoke-RestMethod
+#>
+    begin
+    {
+
+    }#endbegin
+    process
+    {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod.
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if(ServicePointManager.ServerCertificateValidationCallback ==null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback += 
+                delegate
+                (
+                    Object obj, 
+                    X509Certificate certificate, 
+                    X509Chain chain, 
+                    SslPolicyErrors errors
+                )
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }#endif
+        [ServerCertificateValidationCallback]::Ignore()
+    }#endprocess
+    end
+    {
+
+    }#endend
+}#end function Set-PoSHSSLCerts
 #endregion
 
 #region prep-work
@@ -516,6 +424,7 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
+ 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
  04/04/2017 sb   Initial release.
  12/19/2019 sb   Updated code to use REST API instead of cmdlets.
  04/17/2020 sb   Do over to use sbourdeaud module.
@@ -523,13 +432,16 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
  01/23/2023 sb   Removing dependency on sbourdeaud module and adding functions.
  09/13/2023 sb   Custom creds functions were missing...
 ################################################################################
-'@
+'
   $myvarScriptName = ".\get-ntnxAlertPolicy.ps1"
   if ($help) {get-help $myvarScriptName; exit}
   if ($History) {$HistoryText; exit}
 
-  #Set-PoSHSSLCerts
-  #Set-PoshTls
+  #check PoSH version
+  if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
+
+  Set-PoSHSSLCerts
+  Set-PoshTls
 
 #endregion
 
@@ -537,13 +449,11 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
   #initialize variables
   #misc variables
   $myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
-  $myvarOutputLogFile = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-  $myvarOutputLogFile += "OutputLog.log"
 
   [System.Collections.ArrayList]$myvarResults = New-Object System.Collections.ArrayList($null) #used for storing all entries.  This is what will be exported to csv
 
   $api_server_port = "9440"
-	
+ 	
   #let's initialize parameters if they haven't been specified
   if (!$prism) {$prism = read-host "Enter the hostname or IP address of Prism"}
   $api_server = $prism
@@ -644,8 +554,10 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
   Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
   Remove-Variable help -ErrorAction SilentlyContinue
   Remove-Variable history -ErrorAction SilentlyContinue
-  Remove-Variable log -ErrorAction SilentlyContinue
-  Remove-Variable prism -ErrorAction SilentlyContinue
   Remove-Variable debugme -ErrorAction SilentlyContinue
-  Remove-Variable export -ErrorAction SilentlyContinue
+  Remove-Variable prism -ErrorAction SilentlyContinue
+  Remove-Variable prismCreds -ErrorAction SilentlyContinue
+  Remove-Variable csv -ErrorAction SilentlyContinue
+  Remove-Variable api_server -ErrorAction SilentlyContinue
+  Remove-Variable api_server_port -ErrorAction SilentlyContinue
 #endregion

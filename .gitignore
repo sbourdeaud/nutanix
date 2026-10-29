@@ -42,6 +42,8 @@ __pycache__/
 *.pyo
 *.pyd
 *.pyc.*
+python/api.v4/sdk/build/
+python/api.v4/sdk/dist/
 .pytest_cache/
 **/.pytest_cache/
 .mypy_cache/

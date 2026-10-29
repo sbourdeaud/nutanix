@@ -8,8 +8,6 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER cluster
@@ -52,7 +50,7 @@ Generate one csv file per overview metric for the last 7 days.
   https://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: August 9th 2023
+  Revision: October 29th 2026
 #>
 
 #TODO: graphs - deal with unplotted values (because single linear value or below first y axis step)
@@ -63,7 +61,6 @@ Generate one csv file per overview metric for the last 7 days.
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
-        [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $true)] [string]$cluster,
         [parameter(mandatory = $false)] $prismCreds,
@@ -84,91 +81,90 @@ Generate one csv file per overview metric for the last 7 days.
             "hypervisor_write_io_bandwidth_kBps",
             "timespan_usecs",
             "controller_num_read_iops",
+            "controller.storage_tier.ssd.usage_bytes",
             "read_io_ppm",
             "controller_num_iops",
+            "hypervisor_memory_assigned_bytes",
             "total_read_io_time_usecs",
             "controller_total_read_io_time_usecs",
-            "replication_transmitted_bandwidth_kBps",
+            "controller.storage_tier.ssd.configured_pinned_bytes",
             "hypervisor_num_io",
             "controller_total_transformed_usage_bytes",
             "hypervisor_cpu_usage_ppm",
             "controller_num_write_io",
             "avg_read_io_latency_usecs",
-            "content_cache_logical_ssd_usage_bytes",
+            "guest.memory_swapped_in_bytes",
             "controller_total_io_time_usecs",
+            "controller.storage_tier.ssd.configured_pinned_bytes",
             "controller_total_read_io_size_kbytes",
             "controller_num_seq_io",
             "controller_read_io_ppm",
-            "content_cache_num_lookups",
             "controller_total_io_size_kbytes",
-            "content_cache_hit_ppm",
+            "hypervisor.cpu_ready_time_ppm",
             "controller_num_io",
             "hypervisor_avg_read_io_latency_usecs",
-            "content_cache_num_dedup_ref_count_pph",
             "num_write_iops",
             "controller_num_random_io",
             "num_iops",
-            "replication_received_bandwidth_kBps",
+            "guest.memory_usage_ppm",
             "hypervisor_num_read_io",
             "hypervisor_total_read_io_time_usecs",
             "controller_avg_io_latency_usecs",
-            "hypervisor_hyperv_cpu_usage_ppm",
             "num_io",
             "controller_num_read_io",
             "hypervisor_num_write_io",
             "controller_seq_io_ppm",
+            "guest.memory_usage_bytes",
             "controller_read_io_bandwidth_kBps",
             "controller_io_bandwidth_kBps",
-            "hypervisor_hyperv_memory_usage_ppm",
+            "hypervisor_num_received_bytes",
             "hypervisor_timespan_usecs",
             "hypervisor_num_write_iops",
-            "replication_num_transmitted_bytes",
             "total_read_io_size_kbytes",
             "hypervisor_total_io_size_kbytes",
             "avg_io_latency_usecs",
             "hypervisor_num_read_iops",
-            "content_cache_saved_ssd_usage_bytes",
+            "hypervisor_swap_in_rate_kBps",
             "controller_write_io_bandwidth_kBps",
             "controller_write_io_ppm",
+            "controller_user_bytes",
             "hypervisor_avg_write_io_latency_usecs",
+            "hypervisor_num_transmitted_bytes",
             "hypervisor_total_read_io_size_kbytes",
             "read_io_bandwidth_kBps",
-            "hypervisor_esx_memory_usage_ppm",
+            "guest.memory_swapped_out_bytes",
             "hypervisor_memory_usage_ppm",
             "hypervisor_num_iops",
             "hypervisor_io_bandwidth_kBps",
             "controller_num_write_iops",
             "total_io_time_usecs",
-            "hypervisor_kvm_cpu_usage_ppm",
-            "content_cache_physical_ssd_usage_bytes",
             "controller_random_io_ppm",
+            "controller.storage_tier.das-sata.usage_bytes",
             "controller_avg_read_io_size_kbytes",
+            "hypervisor_swap_out_rate_kBps",
             "total_transformed_usage_bytes",
             "avg_write_io_latency_usecs",
             "num_read_io",
             "write_io_bandwidth_kBps",
             "hypervisor_read_io_bandwidth_kBps",
+            "hypervisor_consumed_memory_bytes",
             "random_io_ppm",
-            "content_cache_num_hits",
             "total_untransformed_usage_bytes",
             "hypervisor_total_io_time_usecs",
             "num_random_io",
-            "hypervisor_kvm_memory_usage_ppm",
             "controller_avg_write_io_size_kbytes",
             "controller_avg_read_io_latency_usecs",
+            "controller.storage_tier.das-sata.configured_pinned_bytes",
             "num_write_io",
-            "hypervisor_esx_cpu_usage_ppm",
             "total_io_size_kbytes",
+            "controller.storage_tier.cloud.usage_bytes",
             "io_bandwidth_kBps",
-            "content_cache_physical_memory_usage_bytes",
-            "replication_num_received_bytes",
             "controller_timespan_usecs",
             "num_seq_io",
-            "content_cache_saved_memory_usage_bytes",
             "seq_io_ppm",
             "write_io_ppm",
             "controller_avg_write_io_latency_usecs",
-            "content_cache_logical_memory_usage_bytes",
+            "content_cache_logical_ssd_usage_bytes",
             "data_reduction.overall.saving_ratio_ppm",
             "storage.reserved_free_bytes",
             "storage_tier.das-sata.usage_bytes",
@@ -180,21 +176,17 @@ Generate one csv file per overview metric for the last 7 days.
             "data_reduction.erasure_coding.saving_ratio_ppm",
             "data_reduction.thin_provision.saved_bytes",
             "storage_tier.das-sata.capacity_bytes",
-            "storage_tier.das-sata.free_bytes",
-            "storage.usage_bytes",
             "data_reduction.erasure_coding.saved_bytes",
+            "storage_tier.das-sata.free_bytes",
+            "data_reduction.pre_reduction_bytes",
             "data_reduction.compression.pre_reduction_bytes",
             "storage_tier.das-sata.pinned_bytes",
-            "storage_tier.das-sata.pinned_usage_bytes",
-            "data_reduction.pre_reduction_bytes",
-            "storage_tier.ssd.capacity_bytes",
-            "data_reduction.clone.saved_bytes",
-            "storage_tier.ssd.free_bytes",
-            "data_reduction.dedup.pre_reduction_bytes",
             "data_reduction.erasure_coding.pre_reduction_bytes",
             "storage.capacity_bytes",
             "data_reduction.dedup.post_reduction_bytes",
-            "data_reduction.clone.saving_ratio_ppm",
+            "data_reduction.clone.saved_bytes",
+            "storage_tier.ssd.free_bytes",
+            "data_reduction.dedup.saving_ratio_ppm",
             "storage.logical_usage_bytes",
             "data_reduction.saved_bytes",
             "storage.free_bytes",
@@ -217,201 +209,102 @@ Generate one csv file per overview metric for the last 7 days.
     )
 #endregion
 
-#region functions
+#region helper functions (previously from sbourdeaud module)
 
-
-#this function is used to process output to console (timestamped and color coded) and log file
-function Write-LogOutput
+function Invoke-PrismAPICall
 {
 <#
 .SYNOPSIS
-Outputs color coded messages to the screen and/or log file based on the category.
-
+  Makes api call to prism based on passed parameters. Returns the json response.
 .DESCRIPTION
-This function is used to produce screen and log output which is categorized, time stamped and color coded.
-
-.PARAMETER Category
-This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
-
-.PARAMETER Message
-This is the actual message you want to display.
-
-.PARAMETER LogFile
-If you want to log output to a file as well, use logfile to pass the log file full path name.
-
+  Makes api call to prism based on passed parameters. Returns the json response.
 .NOTES
-Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
+  Author: Stephane Bourdeaud
+.PARAMETER method
+  REST method (POST, GET, DELETE, or PUT)
+.PARAMETER credential
+  PSCredential object to use for authentication.
+PARAMETER url
+  URL to the api endpoint.
+PARAMETER payload
+  JSON payload to send.
 .EXAMPLE
-.\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-Displays an error message.
-
-.LINK
-https://github.com/sbourdeaud
+.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
+Makes a POST api call to the specified endpoint with the specified payload.
 #>
-    [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
+param
+(
+    [parameter(mandatory = $true)]
+    [ValidateSet("POST","GET","DELETE","PUT")]
+    [string] 
+    $method,
+    
+    [parameter(mandatory = $true)]
+    [string] 
+    $url,
 
-    param
-    (
-        [Parameter(Mandatory)]
-        [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
-        [string]
-        $Category,
+    [parameter(mandatory = $false)]
+    [string] 
+    $payload,
+    
+    [parameter(mandatory = $true)]
+    [System.Management.Automation.PSCredential]
+    $credential
+)
 
-        [string]
-        $Message,
-
-        [string]
-        $LogFile
-    )
-
-    process
-    {
-        $Date = get-date #getting the date so we can timestamp the output entry
-        $FgColor = "Gray" #resetting the foreground/text color
-        switch ($Category) #we'll change the text color depending on the selected category
-        {
-            "INFO" {$FgColor = "Green"}
-            "WARNING" {$FgColor = "Yellow"}
-            "ERROR" {$FgColor = "Red"}
-            "SUM" {$FgColor = "Magenta"}
-            "SUCCESS" {$FgColor = "Cyan"}
-            "STEP" {$FgColor = "Magenta"}
-            "DEBUG" {$FgColor = "White"}
-            "DATA" {$FgColor = "Gray"}
+begin
+{
+    
+}
+process
+{
+    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+    try {
+        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            $headers = @{
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+            }
+        } else {
+            $username = $credential.UserName
+            $password = $credential.Password
+            $headers = @{
+                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
+                "Content-Type"="application/json";
+                "Accept"="application/json"
+            }
+            if ($payload) {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+            } else {
+                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+            }
         }
-
-        Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-        if ($LogFile) #add the entry to the log file if -LogFile has been specified
-        {
-            Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-            Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
-        }
+        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
+        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
     }
-
-}#end function Write-LogOutput
-#this function is used to test a given IP address
-
-
-function TestIp 
-{#ping an ip address, return true or false
-    #input: ip
-    #output: boolean
-<#
-.SYNOPSIS
-Tries to ping the IP address provided and returns true or false.
-.DESCRIPTION
-Tries to ping the IP address provided and returns true or false.
-.NOTES
-Author: Stephane Bourdeaud
-.PARAMETER ip
-An IP address to test.
-.EXAMPLE
-PS> TestIp -ip 10.10.1.1
-#>
-    param 
-    (
-        [string] $ip
-    )
-
-    begin
-    {
-        
+    catch {
+        $saved_error = $_.Exception.Message
+        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
+        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+        Throw "$(get-date) [ERROR] $saved_error"
     }
-
-    process
-    {
-        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to ping IP $($ip)..."
-        if (Test-Connection $ip -Count 5 -Quiet)
-        {
-            $myvar_ping_test = $true
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Successfully pinged IP $($ip)..."
-        }
-        else 
-        {
-            $myvar_ping_test = $false
-            Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not ping IP $($ip)..."
-        }
-    }
-
-    end
-    {
-    return $myvar_ping_test
-    }
-}#end function TestIp
-#this function loads a powershell module
-
-
-function LoadModule
-{#tries to load a module, import it, install it if necessary
-<#
-.SYNOPSIS
-Tries to load the specified module and installs it if it can't.
-.DESCRIPTION
-Tries to load the specified module and installs it if it can't.
-.NOTES
-Author: Stephane Bourdeaud
-.PARAMETER module
-Name of PowerShell module to import.
-.EXAMPLE
-PS> LoadModule -module PSWriteHTML
-#>
-    param 
-    (
-        [string] $module
-    )
-
-    begin
-    {
-        
-    }
-
-    process
-    {   
-        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
-        if (!(Get-Module -Name $module)) 
-        {#we could not get the module, let's try to load it
-            try
-            {#import the module
-                Import-Module -Name $module -ErrorAction Stop
-                Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-            }#end try
-            catch 
-            {#we couldn't import the module, so let's install it
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
-                try 
-                {#install module
-                    Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
-                }
-                catch 
-                {#could not install module
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
-                    exit 1
-                }
-
-                try
-                {#now that it is intalled, let's import it
-                    Import-Module -Name $module -ErrorAction Stop
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-                }#end try
-                catch 
-                {#we couldn't import the module
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
-                    Exit 1
-                }#end catch
-            }#end catch
-        }
-    }
-
-    end
-    {
-
+    finally {
+        #add any last words here; this gets processed no matter what
     }
 }
+end
+{
+    return $resp
+}    
+}
 
-
-    function Set-CustomCredentials 
+function Set-CustomCredentials 
 {
 #input: path, credname
 	#output: saved credentials file
@@ -514,7 +407,6 @@ Will prompt for user credentials and create a file called prism-apiuser.txt in c
 }
 
 
-#this function is used to retrieve saved credentials for the current user
 function Get-CustomCredentials 
 {
 #input: path, credname
@@ -580,101 +472,6 @@ Will retrieve credentials from the file called prism-apiuser.txt in c:\creds
     {
         return $customCredentials
     }
-}
-
-
-#this function is used to make a REST api call to Prism
-function Invoke-PrismAPICall
-{
-<#
-.SYNOPSIS
-  Makes api call to prism based on passed parameters. Returns the json response.
-.DESCRIPTION
-  Makes api call to prism based on passed parameters. Returns the json response.
-.NOTES
-  Author: Stephane Bourdeaud
-.PARAMETER method
-  REST method (POST, GET, DELETE, or PUT)
-.PARAMETER credential
-  PSCredential object to use for authentication.
-PARAMETER url
-  URL to the api endpoint.
-PARAMETER payload
-  JSON payload to send.
-.EXAMPLE
-.\Invoke-PrismAPICall -credential $MyCredObject -url https://myprism.local/api/v3/vms/list -method 'POST' -payload $MyPayload
-Makes a POST api call to the specified endpoint with the specified payload.
-#>
-param
-(
-    [parameter(mandatory = $true)]
-    [ValidateSet("POST","GET","DELETE","PUT")]
-    [string] 
-    $method,
-    
-    [parameter(mandatory = $true)]
-    [string] 
-    $url,
-
-    [parameter(mandatory = $false)]
-    [string] 
-    $payload,
-    
-    [parameter(mandatory = $true)]
-    [System.Management.Automation.PSCredential]
-    $credential
-)
-
-begin
-{
-    
-}
-process
-{
-    Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
-    try {
-        #check powershell version as PoSH 6 Invoke-RestMethod can natively skip SSL certificates checks and enforce Tls12 as well as use basic authentication with a pscredential object
-        if ($PSVersionTable.PSVersion.Major -gt 5) {
-            $headers = @{
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            if ($payload) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
-            } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
-            }
-        } else {
-            $username = $credential.UserName
-            $password = $credential.Password
-            $headers = @{
-                "Authorization" = "Basic "+[System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username+":"+([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))) ));
-                "Content-Type"="application/json";
-                "Accept"="application/json"
-            }
-            if ($payload) {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
-            } else {
-                $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
-            }
-        }
-        Write-Host "$(get-date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan 
-        if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
-    }
-    catch {
-        $saved_error = $_.Exception.Message
-        # Write-Host "$(Get-Date) [INFO] Headers: $($headers | ConvertTo-Json)"
-        Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
-        Throw "$(get-date) [ERROR] $saved_error"
-    }
-    finally {
-        #add any last words here; this gets processed no matter what
-    }
-}
-end
-{
-    return $resp
-}    
 }
 
 
@@ -788,7 +585,100 @@ public class ServerCertificateValidationCallback
     }#endend
 }#end function Set-PoSHSSLCerts
 
-
+function New-PercentageBar {
+    [CmdletBinding(DefaultParameterSetName = 'PERCENT')]
+    Param (
+        [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'PERCENT')]
+        [ValidateRange(0, 100)]
+        [int]$Percent
+        ,
+        [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'VALUE')]
+        [ValidateRange(0, [double]::MaxValue)]
+        [double]$Value
+        ,
+        [Parameter(Mandatory, Position = 2, ParameterSetName = 'VALUE')]
+        [ValidateRange(1, [double]::MaxValue)]
+        [double]$MaxValue
+        ,
+        [Parameter(Mandatory = $false, Position = 3)]
+        [Alias("BarSize", "Length")]
+        [ValidateRange(10, 100)]
+        [int]$BarLength = 20
+        ,
+        [Parameter(Mandatory = $false, Position = 4)]
+        [ValidateSet("SimpleThin", "SimpleThick1", "SimpleThick2", "AdvancedThin1", "AdvancedThin2", "AdvancedThick")]
+        [string]$BarView = "SimpleThin"
+        ,
+        [Parameter(Mandatory = $false, Position = 5)]
+        [ValidateRange(50, 80)]
+        [int]$GreenBorder = 60
+        ,
+        [Parameter(Mandatory = $false, Position = 6)]
+        [ValidateRange(80, 90)]
+        [int]$YellowBorder = 80
+        ,
+        [Parameter(Mandatory = $false)]
+        [switch]$NoPercent
+        ,
+        [Parameter(Mandatory = $false)]
+        [switch]$DrawBar
+    )
+    
+    Begin
+    {
+        If ($PSBoundParameters.ContainsKey('VALUE'))
+        {
+            If ($Value -gt $MaxValue) { Throw "The [-Value] parameter cannot be greater than [-MaxValue]!" }
+            Else { $Percent = $Value/$MaxValue * 100 -as [int] }
+        }
+        If ($YellowBorder -le $GreenBorder) { Throw "The [-YellowBorder] value must be greater than [-GreenBorder]!" }
+        
+        Function Set-BarView ($View)
+        {
+            Switch -exact ($View)
+            {
+                "SimpleThin"    { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = "-"; Break }
+                "SimpleThick1"  { $GreenChar = [char]9608; $YellowChar = [char]9608; $RedChar = [char]9608; $EmptyChar = "-"; Break }
+                "SimpleThick2"  { $GreenChar = [char]9612; $YellowChar = [char]9612; $RedChar = [char]9612; $EmptyChar = "-"; Break }
+                "AdvancedThin1" { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = [char]9476; Break }
+                "AdvancedThin2" { $GreenChar = [char]9642; $YellowChar = [char]9642; $RedChar = [char]9642; $EmptyChar = [char]9643; Break }
+                "AdvancedThick" { $GreenChar = [char]9617; $YellowChar = [char]9618; $RedChar = [char]9619; $EmptyChar = [char]9482; Break }
+            }
+            $Properties = [ordered]@{ Char1 = $GreenChar; Char2 = $YellowChar; Char3 = $RedChar; Char4 = $EmptyChar }
+            $Object = New-Object PSObject -Property $Properties
+            $Object
+        }
+        
+        $BarChars = Set-BarView -View $BarView
+        $Bar = $null
+        
+        Function Draw-Bar
+        {
+            Param ([Parameter(Mandatory)][string]$Char, [Parameter(Mandatory = $false)][string]$Color = 'White', [Parameter(Mandatory = $false)][boolean]$Draw)
+            If ($Draw) { Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char }
+            Else { return $Char }
+        }
+    }
+    
+    Process
+    {
+        If ($NoPercent) { $Bar += Draw-Bar -Char "[ " -Draw $DrawBar }
+        Else {
+            If ($Percent -eq 100) { $Bar += Draw-Bar -Char "$Percent% [ " -Draw $DrawBar }
+            ElseIf ($Percent -ge 10) { $Bar += Draw-Bar -Char " $Percent% [ " -Draw $DrawBar }
+            Else { $Bar += Draw-Bar -Char "  $Percent% [ " -Draw $DrawBar }
+        }
+        For ($i = 1; $i -le ($BarValue = ([Math]::Round($Percent * $BarLength / 100))); $i++)
+        {
+            If ($i -le ($GreenBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char1) -Color 'DarkGreen' -Draw $DrawBar }
+            ElseIf ($i -le ($YellowBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char2) -Color 'Yellow' -Draw $DrawBar }
+            Else { $Bar += Draw-Bar -Char ($BarChars.Char3) -Color 'Red' -Draw $DrawBar }
+        }
+        For ($i = 1; $i -le ($EmptyValue = $BarLength - $BarValue); $i++) { $Bar += Draw-Bar -Char ($BarChars.Char4) -Draw $DrawBar }
+        $Bar += Draw-Bar -Char " ]" -Draw $DrawBar
+    }
+    End { If (!$DrawBar) { return $Bar } }
+}
 #endregion
 
 #region prepwork
@@ -797,14 +687,15 @@ public class ServerCertificateValidationCallback
  Maintenance Log
  Date       By   Updates (newest updates at the top)
  ---------- ---- ---------------------------------------------------------------
+ 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter; removed Write-LogOutput; removed LoadModule function
  05/12/2020 sb   Initial release.
  02/06/2021 sb   Replaced username with get-credential.
  04/28/2021 sb   Fixed some incorrect script name references in the code 
-                 (thx Aritro!).
+                  (thx Aritro!).
  08/08/2023 sb   Removing dependency on sbourdeaud module in the gallery.
  08/09/2023 sb   Adding prismCredsObject parameter.
-################################################################################
-'@
+ ################################################################################
+'
     $myvarScriptName = ".\get-ntnxClusterStats.ps1"
     
     if ($help) {get-help $myvarScriptName; exit}
@@ -813,20 +704,13 @@ public class ServerCertificateValidationCallback
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) {throw "$(get-date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"}
 
-    #Set-PoSHSSLCerts
-    #Set-PoshTls
-
-    #region module Influx
-    if ($influxdb)
-    {#we need influxdb output, so let's load the Influx module
-        LoadModule -module Influx
-    }
-    #endregion
+    Set-PoSHSSLCerts
+    Set-PoshTls
 #endregion
 
 #region variables
     #initialize variables
-	$ElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
+	$myvarElapsedTime = [System.Diagnostics.Stopwatch]::StartNew() #used to store script begin timestamp
 
     $myvar_metrics_list = @()
     $myvar_metrics_results = @{}
@@ -880,26 +764,29 @@ public class ServerCertificateValidationCallback
         $prismCredentials = $prismCredsObject
     }
     
-    if (!$influxdbCreds -and $influxdb) 
-    {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
-       $influxdbCredentials = Get-Credential -Message "Please enter InfluxDB credentials"
-    } 
-    elseif ($influxdb) 
-    { #we are using custom credentials, so let's grab the username and password from that
-        try 
-        {#Get-CustomCredentials
-            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
-            $username = $influxdbCredentials.UserName
-            $InfluxDBSecurePassword = $influxdbCredentials.Password
+    if ($influxdb)
+    {
+        if (!$influxdbCreds) 
+        {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
+           $influxdbCredentials = Get-Credential -Message "Please enter InfluxDB credentials"
+        } 
+        else 
+        { #we are using custom credentials, so let's grab the username and password from that
+            try 
+            {#Get-CustomCredentials
+                $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+                $username = $influxdbCredentials.UserName
+                $InfluxDBSecurePassword = $influxdbCredentials.Password
+            }
+            catch 
+            {#could not Get-CustomeCredentials, so Set-CustomCredentials
+                Set-CustomCredentials -credname $influxdbCreds
+                $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
+                $username = $influxdbCredentials.UserName
+                $InfluxDBSecurePassword = $influxdbCredentials.Password
+            }
+            $influxdbCredentials = New-Object PSCredential $username, $InfluxDBSecurePassword
         }
-        catch 
-        {#could not Get-CustomeCredentials, so Set-CustomCredentials
-            Set-CustomCredentials -credname $influxdbCreds
-            $influxdbCredentials = Get-CustomCredentials -credname $influxdbCreds -ErrorAction Stop
-            $username = $influxdbCredentials.UserName
-            $InfluxDBSecurePassword = $influxdbCredentials.Password
-        }
-        $influxdbCredentials = New-Object PSCredential $username, $InfluxDBSecurePassword
     }
 #endregion
 
@@ -1079,13 +966,13 @@ public class ServerCertificateValidationCallback
         {#we need to insert data into influxdb database
             #* retrieve cluster information
             #region GET cluster
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving cluster information from Nutanix cluster $($cluster)..."
+                Write-Host "$(Get-Date) [INFO] Retrieving cluster information from Nutanix cluster $($cluster)..." -ForegroundColor Green
                 $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $cluster
                 $method = "GET"
                 $myvar_ntnx_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 
                 $myvar_ntnx_cluster_name = $myvar_ntnx_cluster_info.name
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster name is $($myvar_ntnx_cluster_name)"
+                Write-Host "$(Get-Date) [DATA] Nutanix cluster name is $($myvar_ntnx_cluster_name)" -ForegroundColor Gray
             #endregion
 
             ForEach ($metric in $myvar_metrics_results.keys) {
@@ -1093,7 +980,7 @@ public class ServerCertificateValidationCallback
                 $myvar_csv_data = Import-Csv -Path $myvar_csv_filename
                 try 
                 {#sending data to influxdb
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending $($metric) data for cluster $($myvar_ntnx_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series ntnx_cluster_stats..."
+                    Write-Host "$(Get-Date) [INFO] Sending $($metric) data for cluster $($myvar_ntnx_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series ntnx_cluster_stats..." -ForegroundColor Green
                     ForEach ($myvar_line in $myvar_csv_data)
                     {
                         Write-Influx -Measure ntnx_cluster_stats -Tags @{cluster=$myvar_ntnx_cluster_name} -Metrics @{$metric=$myvar_line.$metric;} -TimeStamp $(Get-Date $myvar_line.timestamp) -Database $myvar_influxdb_database -Credential $influxdbCredentials -Server $myvar_influxdb_url -ErrorAction Stop
@@ -1101,7 +988,7 @@ public class ServerCertificateValidationCallback
                 }
                 catch 
                 {#could not send data to influxdb
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Could not send data to influxdb: $($_.Exception.Message)"
+                    Write-Host "$(Get-Date) [WARNING] Could not send data to influxdb: $($_.Exception.Message)" -ForegroundColor Yellow
                 }
             }
         }
@@ -1111,6 +998,27 @@ public class ServerCertificateValidationCallback
 
 #region cleanup
 	#let's figure out how much time this all took
-    Write-Host "$(get-date) [SUM] total processing time: $($ElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
+    Write-Host "$(get-date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
     Remove-Variable myvar* -ErrorAction SilentlyContinue
+    Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
+    Remove-Variable help -ErrorAction SilentlyContinue
+    Remove-Variable history -ErrorAction SilentlyContinue
+    Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable prismCredsObject -ErrorAction SilentlyContinue
+    Remove-Variable hour -ErrorAction SilentlyContinue
+    Remove-Variable day -ErrorAction SilentlyContinue
+    Remove-Variable week -ErrorAction SilentlyContinue
+    Remove-Variable month -ErrorAction SilentlyContinue
+    Remove-Variable overview -ErrorAction SilentlyContinue
+    Remove-Variable interval -ErrorAction SilentlyContinue
+    Remove-Variable startdate -ErrorAction SilentlyContinue
+    Remove-Variable enddate -ErrorAction SilentlyContinue
+    Remove-Variable metric -ErrorAction SilentlyContinue
+    Remove-Variable influxdb -ErrorAction SilentlyContinue
+    Remove-Variable influxdbCreds -ErrorAction SilentlyContinue
+    Remove-Variable graph -ErrorAction SilentlyContinue
+    Remove-Variable api_server_port -ErrorAction SilentlyContinue
+    Remove-Variable myvarElapsedTime -ErrorAction SilentlyContinue
 #endregion

@@ -7,8 +7,6 @@
   Displays a help message (seriously, what did you think this was?)
 .PARAMETER history
   Displays a release history for this script (provided the editors were smart enough to document this...)
-.PARAMETER log
-  Specifies that you want the output messages to be written in a log file as well as on the screen.
 .PARAMETER debugme
   Turns off SilentlyContinue on unexpected error messages.
 .PARAMETER html
@@ -36,7 +34,7 @@ Connect to a Nutanix cluster of your choice:
   http://www.nutanix.com/services
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: February 22nd 2021
+  Revision: October 29th 2026
 #>
 
 #region parameters
@@ -45,7 +43,6 @@ Connect to a Nutanix cluster of your choice:
         #[parameter(valuefrompipeline = $true, mandatory = $true)] [PSObject]$myParam1,
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
-        [parameter(mandatory = $false)] [switch]$log,
         [parameter(mandatory = $false)] [switch]$debugme,
         [parameter(mandatory = $false)] [switch]$html,
         [parameter(mandatory = $false)] [switch]$viewnow,
@@ -59,192 +56,195 @@ Connect to a Nutanix cluster of your choice:
     )
 #endregion
 
-#region functions
-    #this function is used to process output to console (timestamped and color coded) and log file
-    function Write-LogOutput
-    {
-    <#
-    .SYNOPSIS
-    Outputs color coded messages to the screen and/or log file based on the category.
+#region helper functions (previously from sbourdeaud module)
+    function Invoke-PrismAPICall {
+        param (
+            [parameter(mandatory = $true)]
+            [ValidateSet("POST","GET","DELETE","PUT")]
+            [string]$method,
 
-    .DESCRIPTION
-    This function is used to produce screen and log output which is categorized, time stamped and color coded.
+            [parameter(mandatory = $true)]
+            [string]$url,
 
-    .PARAMETER Category
-    This the category of message being outputed. If you want color coding, use either "INFO", "WARNING", "ERROR" or "SUM".
+            [parameter(mandatory = $false)]
+            [string]$payload,
 
-    .PARAMETER Message
-    This is the actual message you want to display.
-
-    .PARAMETER LogFile
-    If you want to log output to a file as well, use logfile to pass the log file full path name.
-
-    .NOTES
-    Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-
-    .EXAMPLE
-    .\Write-LogOutput -category "ERROR" -message "You must be kidding!"
-    Displays an error message.
-
-    .LINK
-    https://github.com/sbourdeaud
-    #>
-        [CmdletBinding(DefaultParameterSetName = 'None')] #make this function advanced
-
-        param
-        (
-            [Parameter(Mandatory)]
-            [ValidateSet('INFO','WARNING','ERROR','SUM','SUCCESS','STEP','DEBUG','DATA')]
-            [string]
-            $Category,
-
-            [string]
-            $Message,
-
-            [string]
-            $LogFile
+            [parameter(mandatory = $true)]
+            [System.Management.Automation.PSCredential]$credential
         )
 
-        process
-        {
-            $Date = get-date #getting the date so we can timestamp the output entry
-            $FgColor = "Gray" #resetting the foreground/text color
-            switch ($Category) #we'll change the text color depending on the selected category
-            {
-                "INFO" {$FgColor = "Green"}
-                "WARNING" {$FgColor = "Yellow"}
-                "ERROR" {$FgColor = "Red"}
-                "SUM" {$FgColor = "Magenta"}
-                "SUCCESS" {$FgColor = "Cyan"}
-                "STEP" {$FgColor = "Magenta"}
-                "DEBUG" {$FgColor = "White"}
-                "DATA" {$FgColor = "Gray"}
+        Write-Host "$(Get-Date) [INFO] Making a $method call to $url" -ForegroundColor Green
+        try {
+            if ($PSVersionTable.PSVersion.Major -gt 5) {
+                $headers = @{
+                    "Content-Type" = "application/json"
+                    "Accept"       = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -SkipCertificateCheck -SslProtocol Tls12 -Authentication Basic -Credential $credential -ErrorAction Stop
+                }
+            } else {
+                $username = $credential.UserName
+                $password = $credential.Password
+                $headers = @{
+                    "Authorization" = "Basic " + [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($username + ":" + ([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)))))
+                    "Content-Type"  = "application/json"
+                    "Accept"        = "application/json"
+                }
+                if ($payload) {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -Body $payload -ErrorAction Stop
+                } else {
+                    $resp = Invoke-RestMethod -Method $method -Uri $url -Headers $headers -ErrorAction Stop
+                }
             }
+            Write-Host "$(Get-Date) [SUCCESS] Call $method to $url succeeded." -ForegroundColor Cyan
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White }
+        }
+        catch {
+            Write-Host "$(Get-Date) [INFO] Payload: $payload" -ForegroundColor Green
+            throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
+        }
+        return $resp
+    }
 
-            Write-Host -ForegroundColor $FgColor "$Date [$category] $Message" #write the entry on the screen
-            if ($LogFile) #add the entry to the log file if -LogFile has been specified
-            {
-                Add-Content -Path $LogFile -Value "$Date [$Category] $Message"
-                Write-Verbose -Message "Wrote entry to log file $LogFile" #specifying that we have written to the log file if -verbose has been specified
+    function Set-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Set path to $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        $credentials = Get-Credential -Message "Enter the credentials to save in $path\$credname.txt"
+        $user = $credentials.UserName
+        $securePassword = $credentials.Password
+
+        try {
+            $password = $securePassword | ConvertFrom-SecureString -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not convert password : $($_.Exception.Message)"
+        }
+
+        if (!(Test-Path $path)) {
+            try {
+                New-Item -Type Directory $path -ErrorAction Stop | Out-Null
+            }
+            catch {
+                throw "$(Get-Date) [ERROR] Could not create directory $path : $($_.Exception.Message)"
             }
         }
 
-    }#end function Write-LogOutput
-    #this function is used to test a given IP address
-	Function TestIp 
-	{#ping an ip address, return true or false
-		#input: ip
-		#output: boolean
-	<#
-	.SYNOPSIS
-	Tries to ping the IP address provided and returns true or false.
-	.DESCRIPTION
-	Tries to ping the IP address provided and returns true or false.
-	.NOTES
-	Author: Stephane Bourdeaud
-	.PARAMETER ip
-	An IP address to test.
-	.EXAMPLE
-	PS> TestIp -ip 10.10.1.1
-	#>
-		param 
-		(
-			[string] $ip
-		)
+        try {
+            Set-Content $credentialsFilePath $user -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write username to $credentialsFilePath : $($_.Exception.Message)"
+        }
+        try {
+            Add-Content $credentialsFilePath $password -ErrorAction Stop
+        }
+        catch {
+            throw "$(Get-Date) [ERROR] Could not write password to $credentialsFilePath : $($_.Exception.Message)"
+        }
 
-		begin
-		{
-			
-		}
-
-		process
-		{
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to ping IP $($ip)..."
-			if (Test-Connection $ip -Count 5 -Quiet)
-            {
-                $myvar_ping_test = $true
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Successfully pinged IP $($ip)..."
-            }
-            else 
-            {
-                $myvar_ping_test = $false
-                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not ping IP $($ip)..."
-            }
-		}
-
-		end
-		{
-		return $myvar_ping_test
-		}
-	}#end function TestIp
-    #this function loads a powershell module
-    Function LoadModule
-    {#tries to load a module, import it, install it if necessary
-    <#
-	.SYNOPSIS
-	Tries to load the specified module and installs it if it can't.
-	.DESCRIPTION
-	Tries to load the specified module and installs it if it can't.
-	.NOTES
-	Author: Stephane Bourdeaud
-	.PARAMETER module
-	Name of PowerShell module to import.
-	.EXAMPLE
-	PS> LoadModule -module PSWriteHTML
-	#>
-		param 
-		(
-			[string] $module
-		)
-
-		begin
-		{
-			
-		}
-
-		process
-		{   
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Trying to get module $($module)..."
-			if (!(Get-Module -Name $module)) 
-            {#we could not get the module, let's try to load it
-                try
-                {#import the module
-                    Import-Module -Name $module -ErrorAction Stop
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-                }#end try
-                catch 
-                {#we couldn't import the module, so let's install it
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Installing module '$($module)' from the Powershell Gallery..."
-                    try 
-                    {#install module
-                        Install-Module -Name $module -Scope CurrentUser -Force -ErrorAction Stop
-                    }
-                    catch 
-                    {#could not install module
-                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not install module '$($module)': $($_.Exception.Message)"
-                        exit 1
-                    }
-
-                    try
-                    {#now that it is intalled, let's import it
-                        Import-Module -Name $module -ErrorAction Stop
-                        Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Imported module '$($module)'!"
-                    }#end try
-                    catch 
-                    {#we couldn't import the module
-                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Unable to import the module $($module).psm1 : $($_.Exception.Message)"
-                        Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Please download and install from https://www.powershellgallery.com"
-                        Exit 1
-                    }#end catch
-                }#end catch
-            }
-		}
-
-		end
-		{
-
-		}
+        Write-Host "$(Get-Date) [SUCCESS] Saved credentials to $credentialsFilePath" -ForegroundColor Cyan
     }
+
+    function Get-CustomCredentials {
+        param (
+            [parameter(mandatory = $false)]
+            [string]$path,
+
+            [parameter(mandatory = $true)]
+            [string]$credname
+        )
+
+        if (!$path) {
+            if ($IsLinux -or $IsMacOS) {
+                $path = $home
+            } else {
+                $path = "$Env:USERPROFILE\Documents\WindowsPowerShell\CustomCredentials"
+            }
+            Write-Host "$(Get-Date) [INFO] Retrieving credentials from $path" -ForegroundColor Green
+        }
+
+        $credentialsFilePath = "$path\$credname.txt"
+        if (!(Test-Path $credentialsFilePath)) {
+            throw "$(Get-Date) [ERROR] Could not access file $credentialsFilePath"
+        }
+
+        $credFile = Get-Content $credentialsFilePath
+        $user = $credFile[0]
+        $securePassword = $credFile[1] | ConvertTo-SecureString
+        $customCredentials = New-Object System.Management.Automation.PSCredential -ArgumentList $user, $securePassword
+
+        Write-Host "$(Get-Date) [SUCCESS] Returning credentials from $credentialsFilePath" -ForegroundColor Cyan
+        return $customCredentials
+    }
+
+    function Set-PoshTls {
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            # PowerShell 7+ already defaults to TLS 1.2+; Invoke-PrismAPICall also sets -SslProtocol Tls12
+            return
+        }
+        Write-Host "$(Get-Date) [INFO] Adding Tls12 support" -ForegroundColor Green
+        [Net.ServicePointManager]::SecurityProtocol = (
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        )
+    }
+
+    function Set-PoSHSSLCerts {
+        # PowerShell 6+ uses -SkipCertificateCheck on Invoke-RestMethod (see Invoke-PrismAPICall).
+        # The old ServicePointManager Add-Type path is obsolete on modern .NET and fails to compile (SYSLIB0014).
+        if ($PSVersionTable.PSVersion.Major -gt 5) {
+            Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates (SkipCertificateCheck)" -ForegroundColor Green
+            return
+        }
+
+        Write-Host "$(Get-Date) [INFO] Ignoring invalid certificates" -ForegroundColor Green
+        if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type) {
+            $certCallback = @"
+using System;
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class ServerCertificateValidationCallback
+{
+    public static void Ignore()
+    {
+        if (ServicePointManager.ServerCertificateValidationCallback == null)
+        {
+            ServicePointManager.ServerCertificateValidationCallback +=
+                delegate (Object obj, X509Certificate certificate, X509Chain chain, SslPolicyErrors errors)
+                {
+                    return true;
+                };
+        }
+    }
+}
+"@
+            Add-Type $certCallback
+        }
+        [ServerCertificateValidationCallback]::Ignore()
+    }
+    #endregion
+
+    Set-PoSHSSLCerts
+    Set-PoshTls
 #endregion
 
 #region prepwork
@@ -252,10 +252,11 @@ Connect to a Nutanix cluster of your choice:
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter; removed Write-LogOutput and LoadModule functions
 02/07/2021 sb   Initial release.
 02/22/2021 sb   Adding influxdb output.
 ################################################################################
-'@
+'
     $myvar_script_name = ".\get-UvmCapacity.ps1"
 
     if ($help) {get-help $myvar_script_name; exit}
@@ -285,64 +286,95 @@ Date       By   Updates (newest updates at the top)
     }
     else 
     {#specified path does not exist
-        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Specified log path $($dir) does not exist! Exiting."
+        Write-Host "$(Get-Date) [ERROR] Specified log path $($dir) does not exist! Exiting." -ForegroundColor Red
         Exit 1
-    }
-
-    if ($log) 
-    {#we want a log file
-        $myvar_log_file = (Get-Date -UFormat "%Y_%m_%d_%H_%M_")
-        $myvar_log_file += "$($cluster)_"
-        $myvar_log_file += "get-UvmCapacity.log"
-        $myvar_log_file = $dir + $myvar_log_file
     }
 
     #check PoSH version
     if ($PSVersionTable.PSVersion.Major -lt 5) 
     {#PowerShell version is too old
-        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)"
+        Write-Host "$(Get-Date) [ERROR] Please upgrade to Powershell v5 or above (https://www.microsoft.com/en-us/download/details.aspx?id=50395)" -ForegroundColor Red
         Exit 1
     }
 
     #check if we have all the required PoSH modules
-    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Checking for required Powershell modules..."
-
-    #region module sbourdeaud is used for facilitating Prism REST calls
-        $myvar_required_version = "3.0.8"
-        LoadModule -module sbourdeaud
-        $myvar_module_version = Get-Module -Name sbourdeaud | Select-Object -Property Version
-        if (($myvar_module_version.Version.Major -lt $($myvar_required_version.split('.')[0])) -or (($myvar_module_version.Version.Major -eq $($myvar_required_version.split('.')[0])) -and ($myvar_module_version.Version.Minor -eq $($myvar_required_version.split('.')[1])) -and ($myvar_module_version.Version.Build -lt $($myvar_required_version.split('.')[2])))) 
-        {#module needs to be updated
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Updating module 'sbourdeaud'..."
-            Remove-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-            Uninstall-Module -Name sbourdeaud -ErrorAction SilentlyContinue
-            try 
-            {#update and import module
-                Update-Module -Name sbourdeaud -Scope CurrentUser -ErrorAction Stop
-                Import-Module -Name sbourdeaud -ErrorAction Stop
-            }
-            catch 
-            {#could not import and update module
-                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not update module 'sbourdeaud': $($_.Exception.Message)"
-            }
-        }
-    #endregion
-    if ($PSVersionTable.PSVersion.Major -le 5) {
-        Set-PoSHSSLCerts
-        Set-PoshTls
-    }
+    Write-Host "$(Get-Date) [INFO] Checking for required Powershell modules..." -ForegroundColor Green
 
     #region module PSWriteHTML
         if ($html)
         {#we need html output, so let's load the PSWriteHTML module
-            LoadModule -module PSWriteHTML
+            if (!(Get-Module -Name PSWriteHTML)) {
+                Write-Host "$(Get-Date) [INFO] Importing module 'PSWriteHTML'..." -ForegroundColor Green
+                try
+                {
+                    Import-Module -Name PSWriteHTML -ErrorAction Stop
+                    Write-Host "$(Get-Date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
+                }
+                catch 
+                {
+                    Write-Host "$(Get-Date) [INFO] Installing module 'PSWriteHTML' from the Powershell Gallery..." -ForegroundColor Green
+                    try 
+                    {
+                        Install-Module -Name PSWriteHTML -Scope CurrentUser -Force -ErrorAction Stop
+                    }
+                    catch 
+                    {
+                        Write-Host "$(Get-Date) [ERROR] Could not install module 'PSWriteHTML': $($_.Exception.Message)" -ForegroundColor Red
+                        exit 1
+                    }
+
+                    try
+                    {
+                        Import-Module -Name PSWriteHTML -ErrorAction Stop
+                        Write-Host "$(Get-Date) [SUCCESS] Imported module 'PSWriteHTML'!" -ForegroundColor Cyan
+                    }
+                    catch 
+                    {
+                        Write-Host "$(Get-Date) [ERROR] Unable to import the module PSWriteHTML.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                        Write-Host "$(Get-Date) [WARNING] Please download and install from https://www.powershellgallery.com" -ForegroundColor Yellow
+                        Exit 1
+                    }
+                }
+            }
         }
     #endregion
 
     #region module Influx
         if ($influxdb)
         {#we need influxdb output, so let's load the Influx module
-            LoadModule -module Influx
+            if (!(Get-Module -Name Influx)) {
+                Write-Host "$(Get-Date) [INFO] Importing module 'Influx'..." -ForegroundColor Green
+                try
+                {
+                    Import-Module -Name Influx -ErrorAction Stop
+                    Write-Host "$(Get-Date) [SUCCESS] Imported module 'Influx'!" -ForegroundColor Cyan
+                }
+                catch 
+                {
+                    Write-Host "$(Get-Date) [INFO] Installing module 'Influx' from the Powershell Gallery..." -ForegroundColor Green
+                    try 
+                    {
+                        Install-Module -Name Influx -Scope CurrentUser -Force -ErrorAction Stop
+                    }
+                    catch 
+                    {
+                        Write-Host "$(Get-Date) [ERROR] Could not install module 'Influx': $($_.Exception.Message)" -ForegroundColor Red
+                        exit 1
+                    }
+
+                    try
+                    {
+                        Import-Module -Name Influx -ErrorAction Stop
+                        Write-Host "$(Get-Date) [SUCCESS] Imported module 'Influx'!" -ForegroundColor Cyan
+                    }
+                    catch 
+                    {
+                        Write-Host "$(Get-Date) [ERROR] Unable to import the module Influx.psm1 : $($_.Exception.Message)" -ForegroundColor Red
+                        Write-Host "$(Get-Date) [WARNING] Please download and install from https://www.powershellgallery.com" -ForegroundColor Yellow
+                        Exit 1
+                    }
+                }
+            }
         }
     #endregion
 #endregion
@@ -439,76 +471,87 @@ Date       By   Updates (newest updates at the top)
 
         #make sure we'll use html
         $html = $true
-        LoadModule Send-MailKitMessage
+        # Load Send-MailKitMessage module if needed
+        if (!(Get-Module -Name MailKit)) {
+            Write-Host "$(Get-Date) [INFO] Importing module 'MailKit'..." -ForegroundColor Green
+            try { Import-Module -Name MailKit -ErrorAction Stop }
+            catch {
+                Write-Host "$(Get-Date) [INFO] Installing module 'MailKit' from the Powershell Gallery..." -ForegroundColor Green
+                try { Install-Module -Name MailKit -Scope CurrentUser -Force -ErrorAction Stop }
+                catch { Write-Host "$(Get-Date) [ERROR] Could not install module 'MailKit': $($_.Exception.Message)" -ForegroundColor Red; exit 1 }
+                Import-Module -Name MailKit -ErrorAction Stop
+            }
+        }
     }
 #endregion
 
 #* processing here
 #region processing	
     #* retrieve information from Prism
-    Write-LogOutput -Category "STEP" -LogFile $myvar_log_file -Message "Retrieving information from Nutanix cluster $($cluster)..."
+    Write-Host ""
+    Write-Host "$(Get-Date) [STEP] Retrieving information from Nutanix cluster $($cluster)..." -ForegroundColor Magenta
     #region retrieve information from Prism
         #* retrieve cluster information
         #region GET cluster
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving cluster information from Nutanix cluster $($cluster)..."
+            Write-Host "$(Get-Date) [INFO] Retrieving cluster information from Nutanix cluster $($cluster)..." -ForegroundColor Green
             $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $cluster
             $method = "GET"
             $myvar_ntnx_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 
             $myvar_ntnx_cluster_name = $myvar_ntnx_cluster_info.name
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster name is $($myvar_ntnx_cluster_name)"
+            Write-Host "$(Get-Date) [DATA] Nutanix cluster name is $($myvar_ntnx_cluster_name)" -ForegroundColor Gray
             $myvar_ntnx_cluster_rf = $myvar_ntnx_cluster_info.cluster_redundancy_state.desired_redundancy_factor
 
             if (($myvar_ntnx_cluster_info.hypervisor_types).count -gt 1)
             {#cluster has mixed hypervisors
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_cluster_name) has multiple hypervisors"
+                Write-Host "$(Get-Date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) has multiple hypervisors" -ForegroundColor Gray
                 if ($myvar_ntnx_cluster_info.hypervisor_types -notcontains "kVMware")
                 {#none of the nodes are running VMware
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "None of the cluster hosts are running VMware vSphere!"
+                    Write-Host "$(Get-Date) [WARNING] None of the cluster hosts are running VMware vSphere!" -ForegroundColor Yellow
                 }
             }
             else 
             {#cluster has single hypervisor
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])"
+                Write-Host "$(Get-Date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) is of hypervisor type $($myvar_ntnx_cluster_info.hypervisor_types[0])" -ForegroundColor Gray
             }
 
             #region figure out vcenter ip
                 $myvar_management_server = $myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
                 if ($myvar_management_server -is [array]) 
                 {#houston, we have a problem, there is more than one registered vcenter
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "There is more than 1 registered management server for cluster $($cluster). Exiting."
+                    Write-Host "$(Get-Date) [ERROR] There is more than 1 registered management server for cluster $($cluster). Exiting." -ForegroundColor Red
                 } 
                 else 
                 {#grab vcenter ip
                     $myvar_vcenter_ip = ($myvar_ntnx_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
-                    Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)"
+                    Write-Host "$(Get-Date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_vcenter_ip)" -ForegroundColor Gray
                 }
                 if (!$myvar_vcenter_ip) 
                 {#found no vcenter ip
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "vCenter registration is not done in Prism for cluster $cluster!"
+                    Write-Host "$(Get-Date) [WARNING] vCenter registration is not done in Prism for cluster $cluster!" -ForegroundColor Yellow
                 }
             #endregion
 
             #let's make sure our current redundancy is at least 2
             if ($myvar_ntnx_cluster_info.cluster_redundancy_state.current_redundancy_factor -lt $myvar_ntnx_cluster_rf) 
             {#cluster redundancy state is < replication factor (a host must be down)
-                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Current redundancy is less than $($myvar_ntnx_cluster_rf). Exiting."
+                Write-Host "$(Get-Date) [ERROR] Current redundancy is less than $($myvar_ntnx_cluster_rf). Exiting." -ForegroundColor Red
                 Exit 1
             }
             #check if there is an upgrade in progress
             if ($myvar_ntnx_cluster_info.is_upgrade_in_progress) 
             {#cluster has an upgrade in progress
-                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Cluster upgrade is in progress. Exiting."
+                Write-Host "$(Get-Date) [ERROR] Cluster upgrade is in progress. Exiting." -ForegroundColor Red
                 Exit 1
             }
         #endregion
         
         #* retrieve host information
         #region GET hosts
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving hosts information from Nutanix cluster $($myvar_ntnx_cluster_name)..."
+            Write-Host "$(Get-Date) [INFO] Retrieving hosts information from Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
             $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $cluster
             $method = "GET"
-            $myvar_ntnx_cluster_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $myvar_ntnx_cluster_hosts = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             
             #$myvar_ntnx_cluster_hosts_ips = ($myvar_ntnx_hosts.entities).hypervisor_address
             [System.Collections.ArrayList]$myvar_ntnx_cluster_hosts_config = New-Object System.Collections.ArrayList($null)
@@ -536,10 +579,10 @@ Date       By   Updates (newest updates at the top)
         
         #* retrieve storage containers information
         #region GET containers
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving storage containers information from Nutanix cluster $($myvar_ntnx_cluster_name)..."
+            Write-Host "$(Get-Date) [INFO] Retrieving storage containers information from Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
             $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/storage_containers/" -f $cluster
             $method = "GET"
-            $myvar_ntnx_cluster_storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+            $myvar_ntnx_cluster_storage_containers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
             
             [System.Collections.ArrayList]$myvar_ntnx_cluster_storage_containers_info = New-Object System.Collections.ArrayList($null)
             ForEach ($myvar_ntnx_cluster_storage_container in $myvar_ntnx_cluster_storage_containers.entities)
@@ -564,7 +607,7 @@ Date       By   Updates (newest updates at the top)
         
         #* retrieve protection domains information
         #region GET protection_domains
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)..."
+            Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
             $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $cluster
             $method = "GET"
             $myvar_ntnx_cluster_pds = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
@@ -586,17 +629,17 @@ Date       By   Updates (newest updates at the top)
             $myvar_ntnx_cluster_ma_active_pds = $myvar_ntnx_cluster_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}
             if (!$myvar_ntnx_cluster_ma_active_pds)
             {#there are no active metro availability protection domains on this cluster
-                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "There are no active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_cluster_name)"
+                Write-Host "$(Get-Date) [WARNING] There are no active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Yellow
             }
             else 
             {#there are active metro availability protection domains on this cluster
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_cluster_ma_active_pds.count) active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_cluster_name)"
+                Write-Host "$(Get-Date) [DATA] There are $($myvar_ntnx_cluster_ma_active_pds.count) active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_cluster_name)" -ForegroundColor Gray
             }
         #endregion
         
         #* retrieve vms information
         #region GET vms
-            Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving virtual machines from Nutanix cluster $($myvar_ntnx_cluster_name)..."
+            Write-Host "$(Get-Date) [INFO] Retrieving virtual machines from Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
             $url = "https://{0}:9440/PrismGateway/services/rest/v1/vms/" -f $cluster
             $method = "GET"
             $myvar_ntnx_cluster_vms = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
@@ -650,30 +693,30 @@ Date       By   Updates (newest updates at the top)
             if ($myvar_ntnx_cluster_ma_active_ctrs_names)
             {#we have metro protected containers, so we need to query our remote site as well
                 #region GET remote_site
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving remote sites from Nutanix cluster $($myvar_ntnx_cluster_name)..."
+                    Write-Host "$(Get-Date) [INFO] Retrieving remote sites from Nutanix cluster $($myvar_ntnx_cluster_name)..." -ForegroundColor Green
                     $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/remote_sites/" -f $cluster
                     $method = "GET"
-                    $myvar_ntnx_cluster_remote_sites = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                    $myvar_ntnx_cluster_remote_sites = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 
                     $myvar_remote_site_name = $myvar_ntnx_cluster_ma_active_pds.metro_avail.remote_site | select-object -unique
                     if ($myvar_remote_site_name -is [array]) 
                     {#houston we have a problem: active metro pds are pointing to more than one remote site!
-                        Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Cluster $($cluster) has metro availability protection domains which are pointing to different remote sites. Exiting."
+                        Write-Host "$(Get-Date) [ERROR] Cluster $($cluster) has metro availability protection domains which are pointing to different remote sites. Exiting." -ForegroundColor Red
                         Exit 1
                     } 
                     else 
                     {#we have figured out the remote site name
-                        Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Remote site name is $($myvar_remote_site_name)"
+                        Write-Host "$(Get-Date) [DATA] Remote site name is $($myvar_remote_site_name)" -ForegroundColor Gray
                     }
                     
                     #* grab ip for our remote site
                     $myvar_remote_site_ip = (($myvar_ntnx_cluster_remote_sites.entities | Where-Object {$_.name -eq $myvar_remote_site_name}).remote_ip_ports).psobject.properties.name
-                    Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Remote site $($myvar_remote_site_name) ip address is $($myvar_remote_site_ip)"
+                    Write-Host "$(Get-Date) [DATA] Remote site $($myvar_remote_site_name) ip address is $($myvar_remote_site_ip)" -ForegroundColor Gray
 
                     #* checking that our remote site is available
                     if (($myvar_ntnx_cluster_ma_active_pds.metro_avail.status | Select-Object -Unique) -ne "Enabled")
                     {#all active metro pds are not in "enabled" status, we need to check that we can ping the remote site
-                        if (TestIp -ip $myvar_remote_site_ip)
+                        if (Test-Connection $myvar_remote_site_ip -Count 5 -Quiet)
                         {#remote site Prism does ping
                             $myvar_remote_site_online = $true
                         }
@@ -692,66 +735,66 @@ Date       By   Updates (newest updates at the top)
                 {#remote site is available
                     #* retrieve remote cluster information
                     #region GET remote_site cluster
-                        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving cluster information from Nutanix cluster $($myvar_remote_site_ip)..."
+                        Write-Host "$(Get-Date) [INFO] Retrieving cluster information from Nutanix cluster $($myvar_remote_site_ip)..." -ForegroundColor Green
                         $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/cluster/" -f $myvar_remote_site_ip
                         $method = "GET"
                         $myvar_ntnx_remote_cluster_info = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-            
+                
                         $myvar_ntnx_remote_cluster_name = $myvar_ntnx_remote_cluster_info.name
-                        Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Remote Nutanix cluster name is $($myvar_ntnx_remote_cluster_name)"
+                        Write-Host "$(Get-Date) [DATA] Remote Nutanix cluster name is $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Gray
                         $myvar_ntnx_remote_cluster_rf = $myvar_ntnx_remote_cluster_info.cluster_redundancy_state.desired_redundancy_factor
-            
+                
                         if (($myvar_ntnx_remote_cluster_info.hypervisor_types).count -gt 1)
                         {#cluster has mixed hypervisors
-                            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_remote_cluster_name) has multiple hypervisors"
+                            Write-Host "$(Get-Date) [DATA] Nutanix cluster $($myvar_ntnx_remote_cluster_name) has multiple hypervisors" -ForegroundColor Gray
                             if ($myvar_ntnx_remote_cluster_info.hypervisor_types -notcontains "kVMware")
                             {#none of the nodes are running VMware
-                                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "None of the cluster hosts are running VMware vSphere!"
+                                Write-Host "$(Get-Date) [WARNING] None of the cluster hosts are running VMware vSphere!" -ForegroundColor Yellow
                             }
                         }
                         else 
                         {#cluster has single hypervisor
-                            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_remote_cluster_name) is of hypervisor type $($myvar_ntnx_remote_cluster_info.hypervisor_types[0])"
+                            Write-Host "$(Get-Date) [DATA] Nutanix cluster $($myvar_ntnx_remote_cluster_name) is of hypervisor type $($myvar_ntnx_remote_cluster_info.hypervisor_types[0])" -ForegroundColor Gray
                         }
-            
+                
                         #region figure out vcenter ip
                             $myvar_remote_management_server = $myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}
                             if ($myvar_remote_management_server -is [array]) 
                             {#houston, we have a problem, there is more than one registered vcenter
-                                Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "There is more than 1 registered management server for cluster $($myvar_remote_site_ip). Exiting."
+                                Write-Host "$(Get-Date) [ERROR] There is more than 1 registered management server for cluster $($myvar_remote_site_ip). Exiting." -ForegroundColor Red
                                 Exit 1
                             } 
                             else 
                             {#grab vcenter ip
                                 $myvar_remote_vcenter_ip = ($myvar_ntnx_remote_cluster_info.management_servers | Where-Object {$_.management_server_type -eq "vcenter"}).ip_address
-                                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "vCenter IP address for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_remote_vcenter_ip)"
+                                Write-Host "$(Get-Date) [DATA] vCenter IP address for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_remote_vcenter_ip)" -ForegroundColor Gray
                             }
                             if (!$myvar_remote_vcenter_ip) 
                             {#found no vcenter ip
-                                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "vCenter registration is not done in Prism for cluster $myvar_remote_site_ip!"
+                                Write-Host "$(Get-Date) [WARNING] vCenter registration is not done in Prism for cluster $myvar_remote_site_ip!" -ForegroundColor Yellow
                             }
                         #endregion
-            
+                
                         #let's make sure our current redundancy is at least 2
                         if ($myvar_ntnx_remote_cluster_info.cluster_redundancy_state.current_redundancy_factor -lt $myvar_ntnx_remote_cluster_rf) 
                         {#cluster redundancy state is < replication factor (a host must be down)
-                            Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Current redundancy is less than $($myvar_ntnx_remote_cluster_rf). Exiting."
+                            Write-Host "$(Get-Date) [ERROR] Current redundancy is less than $($myvar_ntnx_remote_cluster_rf). Exiting." -ForegroundColor Red
                             Exit 1
                         }
                         #check if there is an upgrade in progress
                         if ($myvar_ntnx_remote_cluster_info.is_upgrade_in_progress) 
                         {#cluster has an upgrade in progress
-                            Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Cluster upgrade is in progress. Exiting."
+                            Write-Host "$(Get-Date) [ERROR] Cluster upgrade is in progress. Exiting." -ForegroundColor Red
                             Exit 1
                         }
                     #endregion
                     
                     #* retrieve remote host information
                     #region GET remote_site hosts
-                        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving hosts information from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..."
+                        Write-Host "$(Get-Date) [INFO] Retrieving hosts information from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor Green
                         $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/hosts/" -f $myvar_remote_site_ip
                         $method = "GET"
-                        $myvar_ntnx_remote_cluster_hosts = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        $myvar_ntnx_remote_cluster_hosts = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
                         
                         #$myvar_ntnx_remote_cluster_hosts_ips = ($myvar_ntnx_hosts.entities).hypervisor_address
                         [System.Collections.ArrayList]$myvar_ntnx_remote_cluster_hosts_config = New-Object System.Collections.ArrayList($null)
@@ -779,13 +822,13 @@ Date       By   Updates (newest updates at the top)
 
                     #* retrieve remote storage containers information
                     #region GET remote_site containers
-                        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving storage containers information from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..."
+                        Write-Host "$(Get-Date) [INFO] Retrieving storage containers information from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor Green
                         $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/storage_containers/" -f $myvar_remote_site_ip
                         $method = "GET"
-                        $myvar_ntnx_remote_cluster_storage_containers = Invoke-PrismRESTCall -method $method -url $url -credential $prismCredentials
+                        $myvar_ntnx_remote_cluster_storage_containers = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
 
                         [System.Collections.ArrayList]$myvar_ntnx_remote_cluster_storage_containers_info = New-Object System.Collections.ArrayList($null)
-                        ForEach ($myvar_ntnx_remote_cluster_storage_container in $myvar_ntnx_cluster_storage_containers.entities)
+                        ForEach ($myvar_ntnx_remote_cluster_storage_container in $myvar_ntnx_remote_cluster_storage_containers.entities)
                         {#collect specific information for each storage container
                             $myvar_ntnx_remote_cluster_storage_container_info = [ordered]@{
                                 "name" = $myvar_ntnx_remote_cluster_storage_container.name;
@@ -807,7 +850,7 @@ Date       By   Updates (newest updates at the top)
 
                     #* retrieve remote protection domains information
                     #region GET remote_site containers
-                        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..."
+                        Write-Host "$(Get-Date) [INFO] Retrieving protection domains from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor Green
                         $url = "https://{0}:9440/PrismGateway/services/rest/v2.0/protection_domains/" -f $myvar_remote_site_ip
                         $method = "GET"
                         $myvar_ntnx_remote_cluster_pds = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
@@ -829,24 +872,24 @@ Date       By   Updates (newest updates at the top)
                         $myvar_ntnx_remote_cluster_ma_active_pds = $myvar_ntnx_remote_cluster_pds.entities | Where-Object {($_.active -eq $true) -and ($_.metro_avail.role -eq "Active")}
                         if (!$myvar_ntnx_remote_cluster_ma_active_pds)
                         {#there are no active metro availability protection domains on this cluster
-                            Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "There are no active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_remote_cluster_name)"
+                            Write-Host "$(Get-Date) [WARNING] There are no active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Yellow
                         }
                         else 
                         {#there are active metro availability protection domains on this cluster
-                            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_remote_cluster_ma_active_pds.count) active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_remote_cluster_name)"
+                            Write-Host "$(Get-Date) [DATA] There are $($myvar_ntnx_remote_cluster_ma_active_pds.count) active Metro Availability protection domain on Nutanix cluster $($myvar_ntnx_remote_cluster_name)" -ForegroundColor Gray
                         }
                     #endregion
 
                     #* retrieve remote vms information
                     #region GET remote_site vms
-                        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Retrieving virtual machines from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..."
+                        Write-Host "$(Get-Date) [INFO] Retrieving virtual machines from Nutanix cluster $($myvar_ntnx_remote_cluster_name)..." -ForegroundColor Green
                         $url = "https://{0}:9440/PrismGateway/services/rest/v1/vms/" -f $myvar_remote_site_ip
                         $method = "GET"
                         $myvar_ntnx_remote_cluster_vms = Invoke-PrismAPICall -method $method -url $url -credential $prismCredentials
-            
+                
                         $myvar_ntnx_remote_cluster_cvms = $myvar_ntnx_remote_cluster_vms.entities | Where-Object {$_.controllerVm -eq $true}
                         $myvar_ntnx_remote_cluster_uvms = $myvar_ntnx_remote_cluster_vms.entities | Where-Object {$_.controllerVm -eq $false} | Where-Object {$_.powerState -eq "on"}
-            
+
                         #building list of uvms
                         [System.Collections.ArrayList]$myvar_ntnx_remote_cluster_uvms_info = New-Object System.Collections.ArrayList($null)
                         ForEach ($myvar_ntnx_remote_cluster_uvm in $myvar_ntnx_remote_cluster_uvms)
@@ -864,7 +907,7 @@ Date       By   Updates (newest updates at the top)
                             #store the results for this entity in our overall result variable
                             $myvar_ntnx_remote_cluster_uvms_info.Add((New-Object PSObject -Property $myvar_ntnx_remote_cluster_uvm_info)) | Out-Null
                         }
-            
+
                         #figure out which uvms are metro protected
                         [System.Collections.ArrayList]$myvar_ntnx_remote_cluster_ma_uvms = New-Object System.Collections.ArrayList($null)
                         ForEach ($myvar_ntnx_remote_cluster_ma_active_ctr in $myvar_ntnx_remote_cluster_ma_active_ctrs)
@@ -893,7 +936,7 @@ Date       By   Updates (newest updates at the top)
     #endregion
     Write-Host ""
     
-    Write-LogOutput -Category "STEP" -LogFile $myvar_log_file -Message "Computing numbers..."
+    Write-Host "$(Get-Date) [STEP] Computing numbers..." -ForegroundColor Magenta
     #* compute capacity numbers
     #region compute capacity numbers
         #* total clusters capacity (cpu/ram)
@@ -1015,7 +1058,7 @@ Date       By   Updates (newest updates at the top)
         }
         else 
         {#there are no powered on vms protected by metro availability
-            Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_cluster_name) has no metro protected powered on UVM!"
+            Write-Host "$(Get-Date) [WARNING] Nutanix cluster $($myvar_ntnx_cluster_name) has no metro protected powered on UVM!" -ForegroundColor Yellow
         }
         #for ntnx_remote_cluster
         if ($myvar_remote_site_online)
@@ -1027,7 +1070,7 @@ Date       By   Updates (newest updates at the top)
             }
             else 
             {#there are no powered on vms protected by metro availability
-                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_remote_cluster_name) has no metro protected powered on UVM!"
+                Write-Host "$(Get-Date) [WARNING] Nutanix cluster $($myvar_ntnx_remote_cluster_name) has no metro protected powered on UVM!" -ForegroundColor Yellow
             }
         }
 
@@ -1212,7 +1255,7 @@ Date       By   Updates (newest updates at the top)
         #region html output
             if ($html) 
             {#we need html output
-                Write-LogOutput -Category "STEP" -LogFile $myvar_log_file -Message "Creating HTML report in file $($myvar_html_report_name)..."
+                Write-Host "$(Get-Date) [STEP] Creating HTML report in file $($myvar_html_report_name)..." -ForegroundColor Magenta
 
                 #region determine colors for status widgets
                     if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
@@ -1311,31 +1354,25 @@ Date       By   Updates (newest updates at the top)
                             New-HTMLPanel -Invisible {   
                                 if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
                                 {#there is enough remaining cpu capacity
-                                    #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Good' -Percentage '100%'
                                     New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
                                 }
                                 else 
                                 {#there is not enough cpu capacity remaining
-                                    #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Dead' -Percentage '0%'
                                     New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
                                 }
 
                                 if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
                                 {#there is enough remaining memory capacity
-                                    #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Good' -Percentage '100%'
                                     New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
                                 }
                                 else 
                                 {#there is not enough memory capacity remaining
-                                    #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Dead' -Percentage '0%'
                                     New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
                                 }
                             }
                             
                             #* showing capacity numbers 
                             New-HtmlTable -DataTable ($myvar_ntnx_cluster_uvm_capacity) -HideFooter {
-                                #New-HTMLTableCondition -Name 'HandleCount' -Type number -Operator gt -Value 300 -BackgroundColor Yellow
-                                #New-HTMLTableCondition -Name 'ID' -Type number -Operator gt -Value 16000 -BackgroundColor Green
                                 New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining vCPUs for UVMs' -BackgroundColor $myvar_ntnx_cluster_cpu_color -Row -Color White
                                 New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining Memory GiB for UVMs' -BackgroundColor $myvar_ntnx_cluster_memory_color -Row  -Color White
                             }
@@ -1385,31 +1422,25 @@ Date       By   Updates (newest updates at the top)
                                 New-HTMLPanel -Invisible {   
                                     if ($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_remote_cluster_uvm_remaining_cpu)
                                     {#there is enough remaining cpu capacity
-                                        #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Good' -Percentage '100%'
                                         New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
                                     }
                                     else 
                                     {#there is not enough cpu capacity remaining
-                                        #New-HTMLStatusItem -Name 'Remaining CPU Capacity' -Status 'Dead' -Percentage '0%'
                                         New-HTMLToast -TextHeader 'Remaining CPU Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
                                     }
 
                                     if ($myvar_ntnx_remote_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_remote_cluster_uvm_remaining_ram_gib)
                                     {#there is enough remaining memory capacity
-                                        #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Good' -Percentage '100%'
                                         New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Good' -TextColor Green -TextHeaderColor Green -BarColorLeft Green -BarColorRight Green -IconSolid check -IconColor Green
                                     }
                                     else 
                                     {#there is not enough memory capacity remaining
-                                        #New-HTMLStatusItem -Name 'Remaining Memory Capacity' -Status 'Dead' -Percentage '0%'
                                         New-HTMLToast -TextHeader 'Remaining Memory Capacity' -Text 'Insufficient' -TextColor Red -TextHeaderColor Red -BarColorLeft Red -BarColorRight Red -IconSolid bell -IconColor Red
                                     }
                                 }
                                 
                                 #* showing capacity numbers 
                                 New-HtmlTable -DataTable ($myvar_ntnx_remote_cluster_uvm_capacity) -HideFooter {
-                                    #New-HTMLTableCondition -Name 'HandleCount' -Type number -Operator gt -Value 300 -BackgroundColor Yellow
-                                    #New-HTMLTableCondition -Name 'ID' -Type number -Operator gt -Value 16000 -BackgroundColor Green
                                     New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining vCPUs for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_cpu_color -Row -Color White
                                     New-HTMLTableCondition -Name 'Name' -Type string -Operator eq -Value 'Remaining Memory GiB for UVMs' -BackgroundColor $myvar_ntnx_remote_cluster_memory_color -Row  -Color White
                                 }
@@ -1521,104 +1552,104 @@ Date       By   Updates (newest updates at the top)
         
         #* console output
         #region console output
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_cluster_name) replication factor is $($myvar_ntnx_cluster_rf)"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cpu_capacity_total) cores"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ram_gib_capacity_total) GiB"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "CPU reserved for high availability for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ha_cpu_reserved) cores"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "RAM reserved for high availability for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ha_ram_gib_reserved) GiB"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "CVM CPU reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_cpu)"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_ram) GiB"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_cpu_total)"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total) GiB"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_cpu) vCPUs"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_ram_gib) GiB"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_cpu) vCPUs"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_ram_gib) GiB"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs"
-            Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_ram_gib) GiB"
+            Write-Host "$(Get-Date) [DATA] Nutanix cluster $($myvar_ntnx_cluster_name) replication factor is $($myvar_ntnx_cluster_rf)" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] Total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cpu_capacity_total) cores" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] Total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ram_gib_capacity_total) GiB" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] CPU reserved for high availability for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ha_cpu_reserved) cores" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] RAM reserved for high availability for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ha_ram_gib_reserved) GiB" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] CVM CPU reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_cpu)" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_cvm_reserved_ram) GiB" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_cpu_total)" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_hypervisor_overhead_ram_gib_total) GiB" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_cpu) vCPUs" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_capacity_total_ram_gib) GiB" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_cpu) vCPUs" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_allocated_ram_gib) GiB" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs" -ForegroundColor Gray
+            Write-Host "$(Get-Date) [DATA] UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_uvm_remaining_ram_gib) GiB" -ForegroundColor Gray
             if ($myvar_ntnx_cluster_ma_uvms)
             {#there are powered on vms protected by metro availability
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Metro enabled UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB"
+                Write-Host "$(Get-Date) [DATA] Metro enabled UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_cpu) cores" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_cluster_name) is $($myvar_ntnx_cluster_ma_uvm_allocated_ram_gib) GiB" -ForegroundColor Gray
             }
 
             #* checking remaining capacity is sufficient
             if ($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_cluster_uvm_remaining_cpu)
             {#there is enough remaining cpu capacity
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) vCPUs."
+                Write-Host "$(Get-Date) [INFO] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) vCPUs." -ForegroundColor Green
             }
             else 
             {#there is not enough cpu capacity remaining
-                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) vCPUs!"
+                Write-Host "$(Get-Date) [WARNING] There are $($myvar_ntnx_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_cpu_cores) vCPUs!" -ForegroundColor Yellow
             }
             if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
             {#there is enough remaining memory capacity
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib) GiB."
+                Write-Host "$(Get-Date) [INFO] There are $($myvar_ntnx_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib) GiB." -ForegroundColor Green
             }
             else 
             {#there is not enough memory capacity remaining
-                Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib) GiB!"
+                Write-Host "$(Get-Date) [WARNING] There are $($myvar_ntnx_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib) GiB!" -ForegroundColor Yellow
             }
 
             if ($myvar_remote_site_online)
             {#remote site is available
                 Write-Host ""
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Nutanix cluster $($myvar_ntnx_remote_cluster_name) replication factor is $($myvar_ntnx_remote_cluster_rf)"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Total CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cpu_capacity_total) cores"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Total RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ram_gib_capacity_total) GiB"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "CPU reserved for high availability for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ha_cpu_reserved) cores"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "RAM reserved for high availability for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ha_ram_gib_reserved) GiB"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "CVM CPU reserved capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cvm_reserved_cpu)"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cvm_reserved_ram) GiB"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_hypervisor_overhead_cpu_total)"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_hypervisor_overhead_ram_gib_total) GiB"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_cpu) vCPUs"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_ram_gib) GiB"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_cpu) vCPUs"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_ram_gib) GiB"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs"
-                Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) GiB"
+                Write-Host "$(Get-Date) [DATA] Nutanix cluster $($myvar_ntnx_remote_cluster_name) replication factor is $($myvar_ntnx_remote_cluster_rf)" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] Total CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cpu_capacity_total) cores" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] Total RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ram_gib_capacity_total) GiB" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] CPU reserved for high availability for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ha_cpu_reserved) cores" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] RAM reserved for high availability for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ha_ram_gib_reserved) GiB" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] CVM CPU reserved capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cvm_reserved_cpu)" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] CVM RAM reserved capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_cvm_reserved_ram) GiB" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] Hypervisor CPU overhead for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_hypervisor_overhead_cpu_total)" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] Hypervisor RAM overhead for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_hypervisor_overhead_ram_gib_total) GiB" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] UVM total CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_cpu) vCPUs" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] UVM total RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_capacity_total_ram_gib) GiB" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] UVM allocated CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_cpu) vCPUs" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_allocated_ram_gib) GiB" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] UVM remaining CPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs" -ForegroundColor Gray
+                Write-Host "$(Get-Date) [DATA] UVM remaining RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) GiB" -ForegroundColor Gray
                 if ($myvar_ntnx_remote_cluster_ma_uvms)
                 {#there are powered on vms protected by metro availability
-                    Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Metro enabled UVM allocated vCPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) vCPUs"
-                    Write-LogOutput -Category "DATA" -LogFile $myvar_log_file -Message "Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB"
+                    Write-Host "$(Get-Date) [DATA] Metro enabled UVM allocated vCPU capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_cpu) vCPUs" -ForegroundColor Gray
+                    Write-Host "$(Get-Date) [DATA] Metro enabled UVM allocated RAM capacity for Nutanix cluster $($myvar_ntnx_remote_cluster_name) is $($myvar_ntnx_remote_cluster_ma_uvm_allocated_ram_gib) GiB" -ForegroundColor Gray
                 }
 
                 #* checking remaining capacity is sufficient
                 if ($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores -lt $myvar_ntnx_remote_cluster_uvm_remaining_cpu)
                 {#there is enough remaining cpu capacity
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) vCPUs."
+                    Write-Host "$(Get-Date) [INFO] There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) vCPUs." -ForegroundColor Green
                 }
                 else 
                 {#there is not enough cpu capacity remaining
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) vCPUs!"
+                    Write-Host "$(Get-Date) [WARNING] There are $($myvar_ntnx_remote_cluster_uvm_remaining_cpu) vCPUs still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_cpu_cores) vCPUs!" -ForegroundColor Yellow
                 }
-                if ($myvar_ntnx_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_cluster_uvm_remaining_ram_gib)
+                if ($myvar_ntnx_remote_cluster_desired_capacity_headroom_ram_gib -lt $myvar_ntnx_remote_cluster_uvm_remaining_ram_gib)
                 {#there is enough remaining memory capacity
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_ram_gib) GiB."
+                    Write-Host "$(Get-Date) [INFO] There are $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_ram_gib) GiB." -ForegroundColor Green
                 }
                 else 
                 {#there is not enough memory capacity remaining
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "There are $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_ram_gib) GiB!"
+                    Write-Host "$(Get-Date) [WARNING] There are $($myvar_ntnx_remote_cluster_uvm_remaining_ram_gib) memory GiB still available for UVMs when the desired remaining capacity is $($myvar_ntnx_remote_cluster_desired_capacity_headroom_ram_gib) GiB!" -ForegroundColor Yellow
                 }
 
                 Write-Host ""
                 if ($myvar_ntnx_cluster_failover_capacity_color -eq "Green")
                 {#capacity is green
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Cluster $($myvar_ntnx_cluster_name) Metro Failover capability is: $($myvar_ntnx_cluster_failover_capacity_status)"
+                    Write-Host "$(Get-Date) [INFO] Cluster $($myvar_ntnx_cluster_name) Metro Failover capability is: $($myvar_ntnx_cluster_failover_capacity_status)" -ForegroundColor Green
                 }
                 elseif ($myvar_ntnx_cluster_failover_capacity_color -eq "Red")
                 {#capacity is red
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Cluster $($myvar_ntnx_cluster_name) Metro Failover capability is: $($myvar_ntnx_cluster_failover_capacity_status)"
+                    Write-Host "$(Get-Date) [ERROR] Cluster $($myvar_ntnx_cluster_name) Metro Failover capability is: $($myvar_ntnx_cluster_failover_capacity_status)" -ForegroundColor Red
                 }
 
                 if ($myvar_ntnx_remote_cluster_failover_capacity_color -eq "Green")
                 {#capacity is green
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Cluster $($myvar_ntnx_remote_cluster_name) Metro Failover capability is: $($myvar_ntnx_remote_cluster_failover_capacity_status)"
+                    Write-Host "$(Get-Date) [INFO] Cluster $($myvar_ntnx_remote_cluster_name) Metro Failover capability is: $($myvar_ntnx_remote_cluster_failover_capacity_status)" -ForegroundColor Green
                 }
                 elseif ($myvar_ntnx_remote_cluster_failover_capacity_color -eq "Red")
                 {#capacity is red
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Cluster $($myvar_ntnx_remote_cluster_name) Metro Failover capability is: $($myvar_ntnx_remote_cluster_failover_capacity_status)"
+                    Write-Host "$(Get-Date) [ERROR] Cluster $($myvar_ntnx_remote_cluster_name) Metro Failover capability is: $($myvar_ntnx_remote_cluster_failover_capacity_status)" -ForegroundColor Red
                 }
                 Write-Host ""
             }
@@ -1630,7 +1661,7 @@ Date       By   Updates (newest updates at the top)
             {#we need to insert data into influxdb database
                 try 
                 {#sending data to influxdb
-                    Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending UVM capacity data for cluster $($myvar_ntnx_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series uvm_capacity..."
+                    Write-Host "$(Get-Date) [INFO] Sending UVM capacity data for cluster $($myvar_ntnx_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series uvm_capacity..." -ForegroundColor Green
                     if ($myvar_ntnx_cluster_ma_uvms)
                     {#there are powered on vms protected by metro availability
                         Write-Influx -Measure uvm_capacity -Tags @{cluster=$myvar_ntnx_cluster_name} -Metrics @{
@@ -1652,7 +1683,7 @@ Date       By   Updates (newest updates at the top)
 
                     if ($myvar_remote_site_online)
                     {#remote site is available
-                        Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending UVM capacity data for cluster $($myvar_ntnx_remote_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series uvm_capacity..."
+                        Write-Host "$(Get-Date) [INFO] Sending UVM capacity data for cluster $($myvar_ntnx_remote_cluster_name) to InfluxDB server $($myvar_influxdb_url) in database $($myvar_influxdb_database) as time series uvm_capacity..." -ForegroundColor Green
                         if ($myvar_ntnx_remote_cluster_ma_uvms)
                         {#there are powered on vms protected by metro availability
                             Write-Influx -Measure uvm_capacity -Tags @{cluster=$myvar_ntnx_remote_cluster_name} -Metrics @{
@@ -1675,7 +1706,7 @@ Date       By   Updates (newest updates at the top)
                 }
                 catch 
                 {#could not send data to influxdb
-                    Write-LogOutput -Category "WARNING" -LogFile $myvar_log_file -Message "Could not send data to influxdb: $($_.Exception.Message)"
+                    Write-Host "$(Get-Date) [WARNING] Could not send data to influxdb: $($_.Exception.Message)" -ForegroundColor Yellow
                 }
             }
         #endregion
@@ -1724,15 +1755,15 @@ Date       By   Updates (newest updates at the top)
                 }
 
                 #send message
-                Write-LogOutput -Category "INFO" -LogFile $myvar_log_file -Message "Sending email message to $($myvar_smtp_to)..."
+                Write-Host "$(Get-Date) [INFO] Sending email message to $($myvar_smtp_to)..." -ForegroundColor Green
                 try
                 {#sending mail
                     Send-MailKitMessage -UseSecureConnectionIfAvailable -Credential $emailCredentials -SMTPServer $myvar_smtp_server -Port $myvar_smtp_server_port -From $From -RecipientList $RecipientList -Subject $myvar_smtp_subject -HtmlBody $myvar_smtp_html_body -AttachmentList $AttachmentList -ErrorAction Stop
-                    Write-LogOutput -Category "SUCCESS" -LogFile $myvar_log_file -Message "Successfully sent email message to $($myvar_smtp_to)"
+                    Write-Host "$(Get-Date) [SUCCESS] Successfully sent email message to $($myvar_smtp_to)" -ForegroundColor Cyan
                 }
                 catch
                 {#could not send mail
-                    Write-LogOutput -Category "ERROR" -LogFile $myvar_log_file -Message "Could not send email message to $($myvar_smtp_to): $($_.Exception.Message)"
+                    Write-Host "$(Get-Date) [ERROR] Could not send email message to $($myvar_smtp_to): $($_.Exception.Message)" -ForegroundColor Red
                 }
             }   
         #endregion
@@ -1741,14 +1772,21 @@ Date       By   Updates (newest updates at the top)
 
 #region cleanup
     #let's figure out how much time this all took
-    Write-LogOutput -Category "SUM" -LogFile $myvar_log_file -Message "total processing time: $($myvarElapsedTime.Elapsed.ToString())"
+    Write-Host "$(Get-Date) [SUM] total processing time: $($myvarElapsedTime.Elapsed.ToString())" -ForegroundColor Magenta
 
     #cleanup after ourselves and delete all custom variables
     Remove-Variable myvar* -ErrorAction SilentlyContinue
     Remove-Variable ErrorActionPreference -ErrorAction SilentlyContinue
     Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
-    Remove-Variable log -ErrorAction SilentlyContinue
-    Remove-Variable cluster -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
+    Remove-Variable cluster -ErrorAction SilentlyContinue
+    Remove-Variable prismCreds -ErrorAction SilentlyContinue
+    Remove-Variable html -ErrorAction SilentlyContinue
+    Remove-Variable viewnow -ErrorAction SilentlyContinue
+    Remove-Variable dir -ErrorAction SilentlyContinue
+    Remove-Variable influxdb -ErrorAction SilentlyContinue
+    Remove-Variable influxdbCreds -ErrorAction SilentlyContinue
+    Remove-Variable email -ErrorAction SilentlyContinue
+    Remove-Variable emailCreds -ErrorAction SilentlyContinue
 #endregion
