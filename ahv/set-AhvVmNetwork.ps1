@@ -4,7 +4,7 @@
 .DESCRIPTION
   Use this script to connect the first vnic of the specified AHV vm(s) to the specified network.
   Uses Nutanix Prism Central v4 APIs for read operations (VMM for VMs, Networking for subnets)
-  and v3/v2 APIs for write operations (which are more stable).
+  and v3/v2 APIs for write operations (v4 VM PUT with ETag has known 412 PRECONDITION_FAILED issue).
 .PARAMETER help
   Displays a help message.
 .PARAMETER history
@@ -32,7 +32,7 @@ Connect myvm to the mynetwork AHV network:
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 30th 2026 - Migrated reads to v4 API; writes use v3/v2 API
+  Revision: October 30th 2026 - Hybrid: v4 reads (VMM, Networking), v3/v2 writes (v4 VM PUT ETag issue)
 #>
 
 #region parameters
@@ -59,6 +59,8 @@ Connect myvm to the mynetwork AHV network:
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/30/2026 sb   Hybrid: v4 reads (VMM, Networking, Prism), v3/v2 writes (v4 VM PUT ETag 412 issue)
+10/30/2026 sb   Attempted full v4 but hit v4 VM PUT ETag PRECONDITION_FAILED (PLAT-10005)
 10/30/2026 sb   Migrated reads to Prism Central v4 API (VMM for VMs, Networking for subnets); writes use v3/v2 API
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 04/27/2021 sb   Initial release.
@@ -185,10 +187,34 @@ Date       By   Updates (newest updates at the top)
                     Write-Host "$(Get-Date) [ERROR] Precondition failed (ETag mismatch). The resource was modified by another process." -ForegroundColor Red
                     throw "ETag mismatch - resource was modified by another process. Please retry."
                 }
+                if ($statusCode -eq 428) {
+                    Write-Host "$(Get-Date) [ERROR] Precondition required. If-Match header is mandatory for mutations." -ForegroundColor Red
+                    throw "If-Match header required for this mutation."
+                }
                 Write-Host "$(Get-Date) [ERROR] API call failed: $($_.Exception.Message)" -ForegroundColor Red
                 throw
             }
         }
+    }
+
+    function Invoke-PrismV4Get {
+        param (
+            [parameter(mandatory = $true)]
+            [string]$Url,
+
+            [parameter(mandatory = $true)]
+            [hashtable]$Headers,
+
+            [parameter(mandatory = $false)]
+            [int]$TimeoutSec = 60
+        )
+        $invokeParams = @{
+            Uri        = $Url
+            Method     = 'GET'
+            Headers    = $Headers
+            TimeoutSec = $TimeoutSec
+        }
+        return Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
     }
 
     function Set-CustomCredentials {
@@ -593,13 +619,7 @@ public class ServerCertificateValidationCallback
             $subnetsUri = "${baseUri}/networking/v4.0/config/subnets?`$filter=$subnetFilter"
             if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $subnetsUri" -ForegroundColor White }
             
-            $invokeParams = @{
-                Uri        = $subnetsUri
-                Method     = 'GET'
-                Headers    = $v4Headers
-                TimeoutSec = 60
-            }
-            $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+            $resp = Invoke-PrismV4Get -Url $subnetsUri -Headers $v4Headers
             
             if (-not $resp.data -or $resp.data.Count -eq 0) {
                 Write-Host "$(Get-Date) [ERROR] Network '$ahv_network' not found on Prism Central $($prismcentral)!" -ForegroundColor Red
@@ -624,13 +644,7 @@ public class ServerCertificateValidationCallback
                     $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$myvar_length"
                     if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $vmsUri" -ForegroundColor White }
                     
-                    $invokeParams = @{
-                        Uri        = $vmsUri
-                        Method     = 'GET'
-                        Headers    = $v4Headers
-                        TimeoutSec = 60
-                    }
-                    $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+                    $resp = Invoke-PrismV4Get -Url $vmsUri -Headers $v4Headers
                     
                     if ($resp.data) {
                         $allVms += $resp.data
@@ -662,7 +676,7 @@ public class ServerCertificateValidationCallback
             }
         #endregion
 
-        #region process each vm - update NIC using v3 API (Prism Element)
+        #region process each vm - update NIC using v3 API (Prism Element v2)
             ForEach ($vm in $myvar_vms_details)
             {
                 Write-Host "$(Get-Date) [INFO] Connecting VM '$($vm.name)' to network '$subnetName'..." -ForegroundColor Green
@@ -765,13 +779,7 @@ public class ServerCertificateValidationCallback
             $subnetsUri = "${baseUri}/networking/v4.0/config/subnets?`$filter=$subnetFilter"
             if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $subnetsUri" -ForegroundColor White }
             
-            $invokeParams = @{
-                Uri        = $subnetsUri
-                Method     = 'GET'
-                Headers    = $v4Headers
-                TimeoutSec = 60
-            }
-            $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+            $resp = Invoke-PrismV4Get -Url $subnetsUri -Headers $v4Headers
             
             if (-not $resp.data -or $resp.data.Count -eq 0) {
                 Write-Host "$(Get-Date) [ERROR] VPC subnet '$vpc_subnet' not found on Prism Central $($prismcentral)!" -ForegroundColor Red
@@ -801,13 +809,7 @@ public class ServerCertificateValidationCallback
                     $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$myvar_length"
                     if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $vmsUri" -ForegroundColor White }
                     
-                    $invokeParams = @{
-                        Uri        = $vmsUri
-                        Method     = 'GET'
-                        Headers    = $v4Headers
-                        TimeoutSec = 60
-                    }
-                    $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+                    $resp = Invoke-PrismV4Get -Url $vmsUri -Headers $v4Headers
                     
                     if ($resp.data) {
                         $allVms += $resp.data
