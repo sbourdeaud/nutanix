@@ -1,36 +1,38 @@
 <#
 .SYNOPSIS
-  Use this script to connect the first vnic of the specified AHV vm(s) to the specified network.
+  Use this script to connect the first vnic of the specified AHV vm(s) to the specified network using v4 API for reads, v3/v2 for writes.
 .DESCRIPTION
   Use this script to connect the first vnic of the specified AHV vm(s) to the specified network.
+  Uses Nutanix Prism Central v4 APIs for read operations (VMM for VMs, Networking for subnets)
+  and v3/v2 APIs for write operations (which are more stable).
 .PARAMETER help
-  Displays a help message (seriously, what did you think this was?)
+  Displays a help message.
 .PARAMETER history
-  Displays a release history for this script (provided the editors were smart enough to document this...)
+  Displays a release history for this script.
 .PARAMETER debugme
-  Turns off SilentlyContinue on unexpected error messages.
-.PARAMETER prism
-  Nutanix cluster Prism Element fully qualified domain name or IP address.  If you are using vpc_subnet, then this should be a Prism Central instance.
+  Turns on debug output.
+.PARAMETER prismcentral
+  Nutanix Prism Central fully qualified domain name or IP address.
 .PARAMETER prismCreds
-  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt). These credentials can be created using the Powershell command 'Set-CustomCredentials -credname <credentials name>'. See https://learn.microsoft.com/en-us/dotnet/api/system.security.securestring?view=net-9.0#how-secure-is-securestring for more details.
+  Specifies a custom credentials file name (will look for %USERPROFILE\Documents\WindowsPowerShell\CustomCredentials\$prismCreds.txt on Windows or in $home/$prismCreds.txt on Mac and Linux).
 .PARAMETER vms
   One or more vm name(s) (comma separated).
 .PARAMETER ahv_network
-  AHV network name you want to connect the specified vm(s) to.  Can't be used with -vpc_subnet.
+  AHV network name you want to connect the specified vm(s) to. Can't be used with -vpc_subnet.
 .PARAMETER vpc_subnet
-  VPC subnet name you want to connect the specified vm(s) to.  Can't be used with -ahv_network.  Note that this will remove the existing vnic and create a new one to replace it which will be connected to the specified vpc subnet.
+  VPC subnet name you want to connect the specified vm(s) to. Can't be used with -ahv_network.
 .PARAMETER skiptaskstatuscheck
   Do not check each vm update task status.
 .PARAMETER dontkeepip
   When attaching to a vpc subnet, don't try to preserve the ip configuration.
 .EXAMPLE
-.\set-AhvVmNetwork.ps1 -cluster ntnxc1.local -vm myvm -ahv_network mynetwork
+.\set-AhvVmNetwork.ps1 -prismcentral ntnxc1.local -vms myvm -ahv_network mynetwork
 Connect myvm to the mynetwork AHV network:
 .LINK
-  http://www.nutanix.com/services
+  http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 29th 2026
+  Revision: October 30th 2026 - Migrated reads to v4 API; writes use v3/v2 API
 #>
 
 #region parameters
@@ -40,7 +42,7 @@ Connect myvm to the mynetwork AHV network:
         [parameter(mandatory = $false)] [switch]$help,
         [parameter(mandatory = $false)] [switch]$history,
         [parameter(mandatory = $false)] [switch]$debugme,
-        [parameter(mandatory = $false)] [string]$prism,
+        [parameter(mandatory = $false)] [string]$prismcentral,
         [parameter(mandatory = $false)] $prismCreds,
         [parameter(mandatory = $false)] $vms,
         [parameter(mandatory = $false)] [string]$ahv_network,
@@ -57,6 +59,7 @@ Connect myvm to the mynetwork AHV network:
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
+10/30/2026 sb   Migrated reads to Prism Central v4 API (VMM for VMs, Networking for subnets); writes use v3/v2 API
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 04/27/2021 sb   Initial release.
 06/24/2022 sb   Adding vpc_subnet option.  Replacing external module dependency with local functions.
@@ -85,7 +88,7 @@ Date       By   Updates (newest updates at the top)
     function Invoke-PrismAPICall {
         param (
             [parameter(mandatory = $false)]
-            [ValidateSet("POST","GET","DELETE","PUT")]
+            [ValidateSet("POST","GET","DELETE","PUT","PATCH")]
             [string]$method,
 
             [parameter(mandatory = $false)]
@@ -132,6 +135,60 @@ Date       By   Updates (newest updates at the top)
             throw "$(Get-Date) [ERROR] $($_.Exception.Message)"
         }
         return $resp
+    }
+
+    function Invoke-PrismAPICallWithRetry {
+        param (
+            [parameter(mandatory = $true)]
+            [hashtable]$InvokeParams,
+
+            [parameter(mandatory = $false)]
+            [int]$MaxRetries = 3,
+
+            [parameter(mandatory = $false)]
+            [string]$RequestId = (New-Guid).ToString()
+        )
+        $attempt = 0
+        $delayMs = 1000
+        # For PS7+, add SSL certificate bypass parameters and capture headers
+        $sslParams = @{
+            SkipCertificateCheck = $true
+            SslProtocol          = 'Tls12'
+        }
+        while ($true) {
+            try {
+                $respHeaders = $null
+                # Add ResponseHeadersVariable to capture headers
+                $invokeParamsWithHeaders = $InvokeParams.Clone()
+                $invokeParamsWithHeaders.ResponseHeadersVariable = 'respHeaders'
+                $response = Invoke-RestMethod @invokeParamsWithHeaders @sslParams
+                # Add headers to response object (ETag is array, get first element)
+                $etagValue = $respHeaders.ETag
+                if ($etagValue -is [array]) { $etagValue = $etagValue[0] }
+                $response | Add-Member -MemberType NoteProperty -Name 'ResponseHeaders' -Value $respHeaders -Force
+                $response | Add-Member -MemberType NoteProperty -Name 'ResponseETag' -Value $etagValue -Force
+                return $response
+            }
+            catch {
+                $statusCode = $null
+                if ($_.Exception -is [System.Net.WebException] -and $_.Exception.Response) {
+                    try { $statusCode = [int][System.Net.HttpStatusCode]$_.Exception.Response.StatusCode } catch { $statusCode = $null }
+                }
+                if (($statusCode -in 429, 503) -and ($attempt -lt $MaxRetries)) {
+                    $attempt++
+                    Write-Host "$(Get-Date) [WARN] Transient error (HTTP $statusCode), retry $attempt/$MaxRetries in ${delayMs}ms" -ForegroundColor Yellow
+                    Start-Sleep -Milliseconds $delayMs
+                    $delayMs = [Math]::Min($delayMs * 2, 30000)
+                    continue
+                }
+                if ($statusCode -eq 412) {
+                    Write-Host "$(Get-Date) [ERROR] Precondition failed (ETag mismatch). The resource was modified by another process." -ForegroundColor Red
+                    throw "ETag mismatch - resource was modified by another process. Please retry."
+                }
+                Write-Host "$(Get-Date) [ERROR] API call failed: $($_.Exception.Message)" -ForegroundColor Red
+                throw
+            }
+        }
     }
 
     function Set-CustomCredentials {
@@ -482,16 +539,10 @@ public class ServerCertificateValidationCallback
 
 
 #region parameters validation
-    if (!$prismcentral -or !$vmname -or !$networkname) {
-        Throw "$(Get-Date) [ERROR] You must specify -prismcentral -vmname -networkname!"
+    if (!$prismcentral -or !$vms -or (!$ahv_network -and !$vpc_subnet)) {
+        Throw "$(Get-Date) [ERROR] You must specify -prismcentral, -vms, and either -ahv_network or -vpc_subnet!"
     }
     if ($ahv_network -and $vpc_subnet) {Throw "$(get-date) [ERROR] You can only specify an ahv_network OR a vpc_subnet but not both! Exiting."}
-    if (!$ahv_network -and !$vpc_subnet) {Throw "$(get-date) [ERROR] You must specify either an ahv_network OR a vpc_subnet! Exiting."}
-    if ($ahv_network) 
-    {#renamed the network variable when I added vpc subnet so to make things more simple, doing this :)
-        $network = $ahv_network
-        $cluster = $prism
-    } 
 
     if (!$prismCreds) 
     {#we are not using custom credentials, so let's ask for a username and password if they have not already been specified
@@ -513,282 +564,397 @@ public class ServerCertificateValidationCallback
     $PrismSecurePassword = $prismCredentials.Password
     $prismCredentials = New-Object PSCredential $username, $PrismSecurePassword
 
+    # Build auth header for v4 API calls
+    $pair = "$($prismCredentials.UserName):$($prismCredentials.GetNetworkCredential().Password)"
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($pair)
+    $base64 = [Convert]::ToBase64String($bytes)
+    $v4Headers = @{
+        'Content-Type' = 'application/json'
+        'Accept'       = 'application/json'
+        'Authorization' = "Basic $base64"
+    }
+    $baseUri = "https://${prismcentral}:${myvar_api_server_port}/api"
+
     #assume vms is a list
-    $myvar_vms = $vms.Split("{,}")
+    $myvar_vms = $vms.Split(",")
 #endregion
 
 
 #region processing
-    
-    if ($network) 
-    {#we're updating an ahv network
 
-        #region get cluster info, check it is AHV
-            Write-Host "$(Get-Date) [INFO] Retrieving cluster information from $($cluster)..." -ForegroundColor Green
-            $myvar_url = "https://{0}:{1}/PrismGateway/services/rest/v2.0/cluster/" -f $cluster,$myvar_api_server_port
-            $myvar_method = "GET"
-            $myvar_cluster = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved cluster information from $($cluster)!" -ForegroundColor Cyan
-            if ($myvar_cluster.hypervisor_types -eq "kKvm")
-            {
-                Write-Host "$(Get-Date) [DATA] Cluster $($cluster) is an AHV cluster." -ForegroundColor White
+    if ($ahv_network)
+    {#we're updating an ahv network (VLAN)
+
+        Write-Host "$(Get-Date) [INFO] Mode: AHV Network (VLAN) - $ahv_network" -ForegroundColor Green
+
+        #region get subnet details from v4 Networking API
+            Write-Host "$(Get-Date) [INFO] Retrieving subnet information from Prism Central $($prismcentral) (v4 API)..." -ForegroundColor Green
+            $subnetFilter = [uri]::EscapeDataString("name eq '$ahv_network'")
+            $subnetsUri = "${baseUri}/networking/v4.0/config/subnets?`$filter=$subnetFilter"
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $subnetsUri" -ForegroundColor White }
+            
+            $invokeParams = @{
+                Uri        = $subnetsUri
+                Method     = 'GET'
+                Headers    = $v4Headers
+                TimeoutSec = 60
             }
-            else 
-            {
-                Write-Host "$(Get-Date) [ERROR] Cluster $($cluster) is not an AHV cluster!" -ForegroundColor Red
+            $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+            
+            if (-not $resp.data -or $resp.data.Count -eq 0) {
+                Write-Host "$(Get-Date) [ERROR] Network '$ahv_network' not found on Prism Central $($prismcentral)!" -ForegroundColor Red
                 exit 1
             }
+            $subnet = $resp.data[0]
+            $subnetExtId = $subnet.extId
+            $subnetName = $subnet.name
+            $subnetType = $subnet.subnetType
+            Write-Host "$(Get-Date) [SUCCESS] Found subnet '$subnetName' (extId: $subnetExtId, type: $subnetType)" -ForegroundColor Cyan
         #endregion
 
-        #region get vms, make sure all specified vms exist, gather information about each vm to process
-            Write-Host "$(Get-Date) [INFO] Retrieving list of VMs from AHV cluster $($cluster)..." -ForegroundColor Green
-            $myvar_url = "https://{0}:{1}/PrismGateway/services/rest/v2.0/vms/?include_vm_nic_config=true" -f $cluster,$myvar_api_server_port
-            $myvar_method = "GET"
-            $myvar_vm_list = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved VMs list from $($cluster)!" -ForegroundColor Cyan
+        #region get vms from v4 VMM API
+            Write-Host "$(Get-Date) [INFO] Retrieving VM information from Prism Central $($prismcentral) (v4 API)..." -ForegroundColor Green
+            $page = 0
+            $allVms = @()
+            
+            Do 
+            {
+                try 
+                {
+                    $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$myvar_length"
+                    if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $vmsUri" -ForegroundColor White }
+                    
+                    $invokeParams = @{
+                        Uri        = $vmsUri
+                        Method     = 'GET'
+                        Headers    = $v4Headers
+                        TimeoutSec = 60
+                    }
+                    $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+                    
+                    if ($resp.data) {
+                        $allVms += $resp.data
+                    }
+                    
+                    if (-not $resp.data -or (@($resp.data)).Count -eq 0) { break }
+                    $page++
+                }
+                catch 
+                {
+                    Write-Host "$(Get-Date) [ERROR] $($_.Exception.Message)" -ForegroundColor Red
+                    Throw "$(get-date) [ERROR] $($_.Exception.Message)"
+                }
+            }
+            While ($resp.data -and $resp.data.Count -eq $myvar_length)
 
+            Write-Host "$(Get-Date) [SUCCESS] Retrieved $($allVms.Count) VMs from Prism Central" -ForegroundColor Cyan
+
+            # Find specified VMs
             [System.Collections.ArrayList]$myvar_vms_details = New-Object System.Collections.ArrayList($null)
-            ForEach ($myvar_vm in (Compare-Object -ReferenceObject $myvar_vm_list.entities.name -DifferenceObject $myvar_vms -IncludeEqual))
-            {#make sure all specified vms exist
-                if ($myvar_vm.SideIndicator -eq "=>")
-                {#this vm does not exist
-                    Write-Host "$(Get-Date) [ERROR] VM $($myvar_vm.InputObject) does not exist on AHV cluster $($cluster)!" -ForegroundColor Red
+            ForEach ($vmName in $myvar_vms) {
+                $vm = $allVms | Where-Object { $_.name -eq $vmName }
+                if (-not $vm) {
+                    Write-Host "$(Get-Date) [ERROR] VM '$vmName' not found on Prism Central $($prismcentral)!" -ForegroundColor Red
                     exit 1
                 }
-                if ($myvar_vm.SideIndicator -eq "==")
-                {#vm matches
-                    $myvar_vm_info = $myvar_vm_list.entities | Where-Object -Property name -eq $myvar_vm.InputObject | Select-Object -Property name,uuid,vm_nics
-                    #store the results for this entity in our overall result variable
-                    $myvar_vms_details.Add($myvar_vm_info) | Out-Null
-                    Write-Host "$(Get-Date) [DATA] Grabbed information for vm $($myvar_vm.InputObject)..." -ForegroundColor White
-                }
+                $myvar_vms_details.Add($vm) | Out-Null
+                Write-Host "$(Get-Date) [DATA] Found VM '$vmName' (extId: $($vm.extId))" -ForegroundColor White
             }
         #endregion
 
-        #region get networks, make sure the specified network exists, get information about that network
-        
-            Write-Host "$(Get-Date) [INFO] Retrieving list of networks from AHV cluster $($cluster)..." -ForegroundColor Green
-            $myvar_url = "https://{0}:{1}/PrismGateway/services/rest/v2.0/networks/" -f $cluster,$myvar_api_server_port
-            $myvar_method = "GET"
-            $myvar_network_list = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved network list from $($cluster)!" -ForegroundColor Cyan
-            
-            if ($network -notin $myvar_network_list.entities.name)
+        #region process each vm - update NIC using v3 API (Prism Element)
+            ForEach ($vm in $myvar_vms_details)
             {
-                Write-Host "$(Get-Date) [ERROR] Network $($network) does not exist on AHV cluster $($cluster)!" -ForegroundColor Red
-                exit 1
-            }
-            #grab the uuid of the network
-            $myvar_network_details = $myvar_network_list.entities | Where-Object -Property name -eq $network | Select-Object -Property name,uuid    
-
-        #endregion
-
-        #region process each vm
-            ForEach ($myvar_vm in $myvar_vms_details)
-            {
-                Write-Host "$(Get-Date) [INFO] Connecting vm $($myvar_vm.name) to network $($network)..." -ForegroundColor Green
-                #figuring out vnic mac address and formatting associated url string
-                $myvar_vnic_mac = ($myvar_vm.vm_nics[0]).mac_address
-                $myvar_vnic_mac_url = $myvar_vnic_mac -replace ":","%3A"
-                #figure out payload
-                $myvar_content = @{
-                    nic_spec = @{
-                        is_connected = $true;
-                        network_uuid = "$($myvar_network_details.uuid)"
+                Write-Host "$(Get-Date) [INFO] Connecting VM '$($vm.name)' to network '$subnetName'..." -ForegroundColor Green
+                
+                # For VLAN networks, we need to use the Prism Element v2 API
+                # Find which cluster the VM is on
+                $clusterExtId = $vm.cluster.extId
+                
+                # Get cluster external IP from v3 clusters API
+                Write-Host "$(Get-Date) [INFO] Retrieving cluster external IP for VM cluster..." -ForegroundColor Green
+                $v3ClustersUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/clusters/list"
+                $v3Payload = '{"kind":"cluster","offset":0,"length":100}'
+                $clusterResp = Invoke-PrismAPICall -method "POST" -url $v3ClustersUrl -payload $v3Payload -credential $prismCredentials
+                
+                $clusterIp = $null
+                if ($clusterResp.entities) {
+                    foreach ($cluster in $clusterResp.entities) {
+                        if ($cluster.metadata.uuid -eq $clusterExtId) {
+                            $clusterIp = $cluster.spec.resources.network.external_ip
+                            break
+                        }
                     }
                 }
-                $myvar_payload = (ConvertTo-Json $myvar_content -Depth 9)
-                $myvar_url = "https://{0}:{1}/PrismGateway/services/rest/v2.0/vms/{2}/nics/{3}" -f $cluster,$myvar_api_server_port,$myvar_vm.uuid,$myvar_vnic_mac_url
-                $myvar_method = "PUT"
-                $myvar_vm_update_task = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials -payload $myvar_payload
-                Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of vm $($myvar_vm.name) to network $($network)!" -ForegroundColor Cyan
-
-                #task status check
-                if (!$skiptaskstatuscheck)
-                {
-                    Get-PrismTaskStatus -task $myvar_vm_update_task.task_uuid -credential $prismCredentials -cluster $cluster
+                
+                if (-not $clusterIp) {
+                    Write-Host "$(Get-Date) [ERROR] Could not find external IP for cluster $clusterExtId" -ForegroundColor Red
+                    exit 1
+                }
+                
+                Write-Host "$(Get-Date) [INFO] Cluster IP: $clusterIp" -ForegroundColor Green
+                
+                # Get VM details from Prism Element v2 API (for NIC update)
+                $pePort = $myvar_api_server_port
+                $peUrl = "https://" + $clusterIp + ":" + $pePort + "/PrismGateway/services/rest/v2.0/vms/?include_vm_nic_config=true&filterCriteria=vm_uuid==" + $vm.extId
+                $peResp = Invoke-PrismAPICall -method "GET" -url $peUrl -credential $prismCredentials
+                
+                if (-not $peResp.entities -or $peResp.entities.Count -eq 0) {
+                    Write-Host "$(Get-Date) [ERROR] VM not found on Prism Element $clusterIp" -ForegroundColor Red
+                    exit 1
+                }
+                
+                $peVm = $peResp.entities[0]
+                $peVmUuid = $peVm.uuid
+                
+                # Get network UUID from Prism Element v2 API
+                $netUrl = "https://" + $clusterIp + ":" + $pePort + "/PrismGateway/services/rest/v2.0/networks/"
+                $netResp = Invoke-PrismAPICall -method "GET" -url $netUrl -credential $prismCredentials
+                
+                $netUuid = $null
+                if ($netResp.entities) {
+                    foreach ($net in $netResp.entities) {
+                        if ($net.name -eq $subnetName) {
+                            $netUuid = $net.uuid
+                            break
+                        }
+                    }
+                }
+                
+                if (-not $netUuid) {
+                    Write-Host "$(Get-Date) [ERROR] Network '$subnetName' not found on Prism Element $clusterIp" -ForegroundColor Red
+                    exit 1
+                }
+                
+                Write-Host "$(Get-Date) [INFO] Network UUID: $netUuid" -ForegroundColor Green
+                
+                # Update NIC using Prism Element v2 API
+                $nicMac = $peVm.vm_nics[0].mac_address
+                $nicMacUrl = $nicMac -replace ":","%3A"
+                
+                $nicPayload = @{
+                    nic_spec = @{
+                        is_connected = $true
+                        network_uuid = $netUuid
+                    }
+                }
+                $nicPayloadJson = $nicPayload | ConvertTo-Json -Depth 9
+                
+                $updateUrl = "https://" + $clusterIp + ":" + $pePort + "/PrismGateway/services/rest/v2.0/vms/" + $peVmUuid + "/nics/" + $nicMacUrl
+                $updateResp = Invoke-PrismAPICall -method "PUT" -url $updateUrl -credential $prismCredentials -payload $nicPayloadJson
+                
+                Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of VM '$($vm.name)' to network '$subnetName'!" -ForegroundColor Cyan
+                Write-Host "$(Get-Date) [INFO] Task UUID: $($updateResp.task_uuid)" -ForegroundColor Green
+                
+                # Task status check
+                if (-not $skiptaskstatuscheck) {
+                    Get-PrismTaskStatus -task $updateResp.task_uuid -credential $prismCredentials -cluster $clusterIp
                 }
             }
         #endregion
     }
 
     if ($vpc_subnet)
-    {#we're attaching a vnic to a subnet in a vpc
+    {#we're attaching a vnic to a subnet in a vpc (OVERLAY)
 
-        #region get vms, make sure all specified vms exist, gather information about each vm to process
-            Write-Host "$(Get-Date) [INFO] Retrieving list of VMs from Prism Central..." -ForegroundColor Green
-            $content = @{
-                kind = "vm";
-                offset = 0;
-                length = $myvar_length
-            }
-            $payload = (ConvertTo-Json $content -Depth 4)
-            $url = "https://{0}:{1}/api/nutanix/v3/vms/list" -f $prism,$myvar_api_server_port
-            $method = "POST"
-            $myvar_vm_list = @()
-            $total = 0
-            $cumulated = 0
-            $page_offset = 0
+        Write-Host "$(Get-Date) [INFO] Mode: VPC Subnet (OVERLAY) - $vpc_subnet" -ForegroundColor Green
 
-            Do {
-                try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                    
-                    if ($total -eq 0) {$total = $resp.metadata.total_matches}
-                    $cumulated += $resp.entities.count
-                    
-                    Write-Host "$(Get-Date) [INFO] Processing results from $($page_offset) to $($cumulated) out of $($total)" -ForegroundColor Green
-                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        #region get subnet details from v4 Networking API
+            Write-Host "$(Get-Date) [INFO] Retrieving VPC subnet information from Prism Central $($prismcentral) (v4 API)..." -ForegroundColor Green
+            $subnetFilter = [uri]::EscapeDataString("name eq '$vpc_subnet'")
+            $subnetsUri = "${baseUri}/networking/v4.0/config/subnets?`$filter=$subnetFilter"
+            if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $subnetsUri" -ForegroundColor White }
             
-                    ForEach ($entity in $resp.entities) {                
-                        $myvar_vm_list += $entity
-                    }
-                    
-                    $page_offset += $myvar_length
-                    $content.offset = $page_offset
-                    $payload = (ConvertTo-Json $content -Depth 4)
-                }
-                catch {
-                    $saved_error = $_.Exception.Message
-                    Throw "$(get-date) [ERROR] $saved_error"
-                }
+            $invokeParams = @{
+                Uri        = $subnetsUri
+                Method     = 'GET'
+                Headers    = $v4Headers
+                TimeoutSec = 60
             }
-            While ($cumulated -lt $total)
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved VMs list from Prism Central!" -ForegroundColor Cyan
-
-            [System.Collections.ArrayList]$myvar_vms_details = New-Object System.Collections.ArrayList($null)
-            ForEach ($myvar_vm in (Compare-Object -ReferenceObject $myvar_vm_list.spec.name -DifferenceObject $myvar_vms -IncludeEqual))
-            {#make sure all specified vms exist
-                if ($myvar_vm.SideIndicator -eq "=>")
-                {#this vm does not exist
-                    Write-Host "$(Get-Date) [ERROR] VM $($myvar_vm.InputObject) does not exist on AHV cluster $($cluster)!" -ForegroundColor Red
-                    exit 1
-                }
-                if ($myvar_vm.SideIndicator -eq "==")
-                {#vm matches
-                    $myvar_vm_info = $myvar_vm_list | Where-Object -FilterScript {$_.spec.name -eq $myvar_vm.InputObject}
-                    #store the results for this entity in our overall result variable
-                    $myvar_vms_details.Add($myvar_vm_info) | Out-Null
-                    Write-Host "$(Get-Date) [DATA] Grabbed payload for vm $($myvar_vm.InputObject)..." -ForegroundColor White
-                }
+            $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+            
+            if (-not $resp.data -or $resp.data.Count -eq 0) {
+                Write-Host "$(Get-Date) [ERROR] VPC subnet '$vpc_subnet' not found on Prism Central $($prismcentral)!" -ForegroundColor Red
+                exit 1
+            }
+            $subnet = $resp.data[0]
+            $subnetExtId = $subnet.extId
+            $subnetName = $subnet.name
+            $subnetType = $subnet.subnetType
+            $vpcRef = $subnet.vpcReference
+            Write-Host "$(Get-Date) [SUCCESS] Found VPC subnet '$subnetName' (extId: $subnetExtId, type: $subnetType, VPC: $vpcRef)" -ForegroundColor Cyan
+            
+            if ($subnetType -ne "OVERLAY") {
+                Write-Host "$(Get-Date) [WARNING] Subnet '$subnetName' is not an OVERLAY (VPC) subnet (type: $subnetType)" -ForegroundColor Yellow
             }
         #endregion
 
-        #region get vpc subnets and make sure the one specified by the user exists
-
-            Write-Host "$(Get-Date) [INFO] Retrieving list of subnets from Prism Central..." -ForegroundColor Green
-            $content = @{
-                kind = "subnet";
-                offset = 0;
-                length = $myvar_length
-            }
-            $payload = (ConvertTo-Json $content -Depth 4)
-            $url = "https://{0}:{1}/api/nutanix/v3/subnets/list" -f $prism,$myvar_api_server_port
-            $method = "POST"
-            $myvar_subnet_list = @()
-            $total = 0
-            $cumulated = 0
-            $page_offset = 0
-
-            Do {
-                try {
-                    $resp = Invoke-PrismAPICall -method $method -url $url -payload $payload -credential $prismCredentials
-                    
-                    if ($total -eq 0) {$total = $resp.metadata.total_matches}
-                    $cumulated += $resp.entities.count
-                    
-                    Write-Host "$(Get-Date) [INFO] Processing results from $($page_offset) to $($cumulated) out of $($total)" -ForegroundColor Green
-                    if ($debugme) {Write-Host "$(Get-Date) [DEBUG] Response Metadata: $($resp.metadata | ConvertTo-Json)" -ForegroundColor White}
+        #region get vms from v4 VMM API
+            Write-Host "$(Get-Date) [INFO] Retrieving VM information from Prism Central $($prismcentral) (v4 API)..." -ForegroundColor Green
+            $page = 0
+            $allVms = @()
             
-                    ForEach ($entity in $resp.entities) {                
-                        $myvar_subnet_list += $entity
-                    }
-                    
-                    $page_offset += $myvar_length
-                    $content.offset = $page_offset
-                    $payload = (ConvertTo-Json $content -Depth 4)
-                }
-                catch {
-                    $saved_error = $_.Exception.Message
-                    Throw "$(get-date) [ERROR] $saved_error"
-                }
-            }
-            While ($cumulated -lt $total)
-            Write-Host "$(Get-Date) [SUCCESS] Successfully retrieved subnets list from Prism Central!" -ForegroundColor Cyan
-            
-            if ($vpc_subnet -notin $myvar_subnet_list.spec.name)
+            Do 
             {
-                Write-Host "$(Get-Date) [ERROR] Subnet $($vpc_subnet) does not exist on Prism Central $($prism)!" -ForegroundColor Red
-                exit 1
-            }
-            #grab the uuid of the subnet
-            $myvar_subnet_details = $myvar_subnet_list | Where-Object -FilterScript {$_.spec.name -eq $vpc_subnet}
-
-        #endregion get vpc subnets
-
-        #region process each vm
-            #region process each vm
-                ForEach ($myvar_vm in $myvar_vms_details)
+                try 
                 {
-                    Write-Host "$(Get-Date) [INFO] Removing first vnic from vm $($myvar_vm.spec.name)..." -ForegroundColor Green
-
-                    $myvar_vm.PSObject.Properties.Remove('status') #removing status section from the vm payload
-                    if ($myvar_vm.spec.resources.nic_list[0].subnet_reference.uuid -eq $myvar_subnet_details.metadata.uuid)
-                    {
-                        Write-Host "$(Get-Date) [WARNING] vnic0 on vm $($myvar_vm.spec.name) is already connected to subnet $($vpc_subnet)! Skipping..." -ForegroundColor Yellow
-                        Continue
-                    }
-                    $myvar_vm_nic0_config = $myvar_vm.spec.resources.nic_list[0] #saving vnic0 configuration
-                    if ($myvar_vm.spec.resources.nic_list.count -eq 0)
-                    {#there are no vnics on this vm
-                        Write-Host "$(Get-Date) [WARNING] There is no vnic to update on vm $($myvar_vm.spec.name)! Skipping..." -ForegroundColor Yellow
-                        Continue
-                    }
-                    elseif ($myvar_vm.spec.resources.nic_list.count -gt 1)
-                    {#we have more than 1 vnic
-                        $myvar_vm.spec.resources.nic_list[0] = "" #removing existing vnic0
-                    }
-                    else 
-                    {
-                        $myvar_vm.spec.resources.nic_list = @()
-                    }
-                    $myvar_vm.metadata.spec_version += 1 #increasing spec version
-                    $myvar_url = "https://{0}:{1}/api/nutanix/v3/vms/{2}" -f $prism,$myvar_api_server_port,$myvar_vm.metadata.uuid
-                    $myvar_method = "PUT"
-                    $myvar_payload = (ConvertTo-Json $myvar_vm -Depth 9)
-                    $myvar_vm_update_task = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials -payload $myvar_payload
+                    $vmsUri = "${baseUri}/vmm/v4.0/ahv/config/vms?`$page=$page&`$limit=$myvar_length"
+                    if ($debugme) { Write-Host "$(Get-Date) [DEBUG] URL: $vmsUri" -ForegroundColor White }
                     
-                    Write-Host "$(Get-Date) [SUCCESS] Successfully requested removal of vnic0 from vm $($myvar_vm.spec.name)!" -ForegroundColor Cyan
-                    $myvar_vm_update_task_status = Get-PrismCentralTaskStatus -task $myvar_vm_update_task.status.execution_context.task_uuid -credential $prismCredentials -cluster $prism
-
-                   
-                    Write-Host "$(Get-Date) [INFO] Connecting vm $($myvar_vm.spec.name) to subnet $($vpc_subnet)..." -ForegroundColor Green
-
-                    $myvar_vm_nic0_config.subnet_reference.name = $myvar_subnet_details.spec.name #updating subnet name reference
-                    $myvar_vm_nic0_config.subnet_reference.uuid = $myvar_subnet_details.metadata.uuid #updating subnet uuid reference
-                    $myvar_vm_nic0_config.PSObject.Properties.Remove('uuid') #removing uuid (this is a new vnic after all)
-                    $myvar_url = "https://{0}:{1}/api/nutanix/v3/vms/{2}" -f $prism,$myvar_api_server_port,$myvar_vm.metadata.uuid
-                    $myvar_method = "GET"
-                    $myvar_vm_payload_without_vnic0 = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials
-                    $myvar_vm_payload_without_vnic0.PSObject.Properties.Remove('status') #removing status section from the vm payload
-                    $myvar_vm_payload_without_vnic0.metadata.spec_version += 1 #increasing spec version
-                    if ($dontkeepip)
-                    {#remove the ip configuration
-                        $myvar_vm_nic0_config.ip_endpoint_list = @()
+                    $invokeParams = @{
+                        Uri        = $vmsUri
+                        Method     = 'GET'
+                        Headers    = $v4Headers
+                        TimeoutSec = 60
                     }
-                    $myvar_vm_payload_without_vnic0.spec.resources.nic_list += $myvar_vm_nic0_config #adding new vnic connected to vpc subnet
-                    $myvar_method = "PUT"
-                    $myvar_payload = (ConvertTo-Json $myvar_vm_payload_without_vnic0 -Depth 9)
-                    $myvar_vm_update_task = Invoke-PrismAPICall -method $myvar_method -url $myvar_url -credential $prismCredentials -payload $myvar_payload
+                    $resp = Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
                     
-                    Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of vm $($myvar_vm.spec.name) to subnet $($vpc_subnet)!" -ForegroundColor Cyan
-                    if (!$skiptaskstatuscheck)
-                    {
-                        $myvar_vm_update_task_status = Get-PrismCentralTaskStatus -task $myvar_vm_update_task.status.execution_context.task_uuid -credential $prismCredentials -cluster $prism
+                    if ($resp.data) {
+                        $allVms += $resp.data
+                    }
+                    
+                    if (-not $resp.data -or (@($resp.data)).Count -eq 0) { break }
+                    $page++
+                }
+                catch 
+                {
+                    Write-Host "$(Get-Date) [ERROR] $($_.Exception.Message)" -ForegroundColor Red
+                    Throw "$(get-date) [ERROR] $($_.Exception.Message)"
+                }
+            }
+            While ($resp.data -and $resp.data.Count -eq $myvar_length)
+
+            Write-Host "$(Get-Date) [SUCCESS] Retrieved $($allVms.Count) VMs from Prism Central" -ForegroundColor Cyan
+
+            # Find specified VMs
+            [System.Collections.ArrayList]$myvar_vms_details = New-Object System.Collections.ArrayList($null)
+            ForEach ($vmName in $myvar_vms) {
+                $vm = $allVms | Where-Object { $_.name -eq $vmName }
+                if (-not $vm) {
+                    Write-Host "$(Get-Date) [ERROR] VM '$vmName' not found on Prism Central $($prismcentral)!" -ForegroundColor Red
+                    exit 1
+                }
+                $myvar_vms_details.Add($vm) | Out-Null
+                Write-Host "$(Get-Date) [DATA] Found VM '$vmName' (extId: $($vm.extId))" -ForegroundColor White
+            }
+        #endregion
+
+        #region process each vm - use v3 API for VPC subnet attachment
+            ForEach ($vm in $myvar_vms_details)
+            {
+                Write-Host "$(Get-Date) [INFO] Processing VM '$($vm.name)' for VPC subnet '$subnetName'..." -ForegroundColor Green
+                
+                # Use v3 API for VPC subnet operations (as in original script)
+                $content = @{
+                    kind = "vm";
+                    offset = 0;
+                    length = $myvar_length
+                }
+                $payload = (ConvertTo-Json $content -Depth 4)
+                $v3VmsUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/vms/list"
+                $method = "POST"
+                
+                $v3Resp = Invoke-PrismAPICall -method $method -url $v3VmsUrl -payload $payload -credential $prismCredentials
+                
+                $v3Vm = $null
+                if ($v3Resp.entities) {
+                    foreach ($entity in $v3Resp.entities) {
+                        if ($entity.metadata.uuid -eq $vm.extId) {
+                            $v3Vm = $entity
+                            break
+                        }
                     }
                 }
-            #endregion
-        #endregion process vms
+                
+                if (-not $v3Vm) {
+                    Write-Host "$(Get-Date) [ERROR] VM not found in v3 API" -ForegroundColor Red
+                    exit 1
+                }
+                
+                # Get VPC subnet details from v3 API
+                $subnetContent = @{
+                    kind = "subnet";
+                    offset = 0;
+                    length = $myvar_length
+                }
+                $subnetPayload = (ConvertTo-Json $subnetContent -Depth 4)
+                $v3SubnetsUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/subnets/list"
+                $subnetResp = Invoke-PrismAPICall -method "POST" -url $v3SubnetsUrl -payload $subnetPayload -credential $prismCredentials
+                
+                $v3Subnet = $null
+                if ($subnetResp.entities) {
+                    foreach ($entity in $subnetResp.entities) {
+                        if ($entity.spec.name -eq $subnetName) {
+                            $v3Subnet = $entity
+                            break
+                        }
+                    }
+                }
+                
+                if (-not $v3Subnet) {
+                    Write-Host "$(Get-Date) [ERROR] VPC subnet '$subnetName' not found in v3 API" -ForegroundColor Red
+                    exit 1
+                }
+                
+                Write-Host "$(Get-Date) [INFO] Removing first vnic from vm $($vm.name)..." -ForegroundColor Green
+                
+                $v3Vm.PSObject.Properties.Remove('status') #removing status section from the vm payload
+                if ($v3Vm.spec.resources.nic_list[0].subnet_reference.uuid -eq $v3Subnet.metadata.uuid)
+                {
+                    Write-Host "$(Get-Date) [WARNING] vnic0 on vm $($v3Vm.spec.name) is already connected to subnet $($vpc_subnet)! Skipping..." -ForegroundColor Yellow
+                    Continue
+                }
+                $v3Vm_nic0_config = $v3Vm.spec.resources.nic_list[0] #saving vnic0 configuration
+                if ($v3Vm.spec.resources.nic_list.count -eq 0)
+                {#there are no vnics on this vm
+                    Write-Host "$(Get-Date) [WARNING] There is no vnic to update on vm $($v3Vm.spec.name)! Skipping..." -ForegroundColor Yellow
+                    Continue
+                }
+                elseif ($v3Vm.spec.resources.nic_list.count -gt 1)
+                {#we have more than 1 vnic
+                    $v3Vm.spec.resources.nic_list[0] = "" #removing existing vnic0
+                }
+                else 
+                {
+                    $v3Vm.spec.resources.nic_list = @()
+                }
+                $v3Vm.metadata.spec_version += 1 #increasing spec version
+                $v3UpdateUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/vms/$($v3Vm.metadata.uuid)"
+                $v3Method = "PUT"
+                $v3Payload = (ConvertTo-Json $v3Vm -Depth 9)
+                $v3UpdateResp = Invoke-PrismAPICall -method $v3Method -url $v3UpdateUrl -credential $prismCredentials -payload $v3Payload
+                
+                Write-Host "$(Get-Date) [SUCCESS] Successfully requested removal of vnic0 from vm $($v3Vm.spec.name)!" -ForegroundColor Cyan
+                Get-PrismCentralTaskStatus -task $v3UpdateResp.status.execution_context.task_uuid -credential $prismCredentials -cluster $prismcentral
+                
+                Write-Host "$(Get-Date) [INFO] Connecting vm $($v3Vm.spec.name) to subnet $($vpc_subnet)..." -ForegroundColor Green
+
+                $v3Vm_nic0_config.subnet_reference.name = $v3Subnet.spec.name #updating subnet name reference
+                $v3Vm_nic0_config.subnet_reference.uuid = $v3Subnet.metadata.uuid #updating subnet uuid reference
+                $v3Vm_nic0_config.PSObject.Properties.Remove('uuid') #removing uuid (this is a new vnic after all)
+                
+                # Get fresh VM payload
+                $v3GetUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/vms/$($v3Vm.metadata.uuid)"
+                $v3GetResp = Invoke-PrismAPICall -method "GET" -url $v3GetUrl -credential $prismCredentials
+                $v3Vm_payload_without_vnic0 = $v3GetResp
+                $v3Vm_payload_without_vnic0.PSObject.Properties.Remove('status') #removing status section from the vm payload
+                $v3Vm_payload_without_vnic0.metadata.spec_version += 1 #increasing spec version
+                
+                if ($dontkeepip)
+                {#remove the ip configuration
+                    $v3Vm_nic0_config.ip_endpoint_list = @()
+                }
+                $v3Vm_payload_without_vnic0.spec.resources.nic_list += $v3Vm_nic0_config #adding new vnic connected to vpc subnet
+                $v3Payload2 = (ConvertTo-Json $v3Vm_payload_without_vnic0 -Depth 9)
+                $v3UpdateResp2 = Invoke-PrismAPICall -method "PUT" -url $v3GetUrl -credential $prismCredentials -payload $v3Payload2
+                
+                Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of vm $($v3Vm.spec.name) to subnet $($vpc_subnet)!" -ForegroundColor Cyan
+                if (-not $skiptaskstatuscheck)
+                {
+                    Get-PrismCentralTaskStatus -task $v3UpdateResp2.status.execution_context.task_uuid -credential $prismCredentials -cluster $prismcentral
+                }
+            }
+        #endregion
     }
 #endregion
 
@@ -803,7 +969,7 @@ public class ServerCertificateValidationCallback
     Remove-Variable help -ErrorAction SilentlyContinue
     Remove-Variable history -ErrorAction SilentlyContinue
     Remove-Variable debugme -ErrorAction SilentlyContinue
-    Remove-Variable prism -ErrorAction SilentlyContinue
+    Remove-Variable prismcentral -ErrorAction SilentlyContinue
     Remove-Variable prismCreds -ErrorAction SilentlyContinue
     Remove-Variable vms -ErrorAction SilentlyContinue
     Remove-Variable ahv_network -ErrorAction SilentlyContinue
@@ -812,4 +978,6 @@ public class ServerCertificateValidationCallback
     Remove-Variable dontkeepip -ErrorAction SilentlyContinue
     Remove-Variable myvar_api_server_port -ErrorAction SilentlyContinue
     Remove-Variable myvar_length -ErrorAction SilentlyContinue
+    Remove-Variable v4Headers -ErrorAction SilentlyContinue
+    Remove-Variable baseUri -ErrorAction SilentlyContinue
 #endregion
