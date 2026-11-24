@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-  Use this script to connect the first vnic of the specified AHV vm(s) to the specified network using v4 API for reads, v3/v2 for writes.
+  Use this script to connect the first vnic of the specified AHV vm(s) to the specified network.
 .DESCRIPTION
   Use this script to connect the first vnic of the specified AHV vm(s) to the specified network.
-  Uses Nutanix Prism Central v4 APIs for read operations (VMM for VMs, Networking for subnets)
-  and v3/v2 APIs for write operations (v4 VM PUT with ETag has known 412 PRECONDITION_FAILED issue).
+  Uses Nutanix Prism Central v4 APIs for read operations (VMM for VMs, Networking for subnets, Prism for tasks)
+  and v3 API for write operations (v4 VM PUT with ETag has known 412 PRECONDITION_FAILED issue - VMM-30301).
 .PARAMETER help
   Displays a help message.
 .PARAMETER history
@@ -32,7 +32,7 @@ Connect myvm to the mynetwork AHV network:
   http://github.com/sbourdeaud/nutanix
 .NOTES
   Author: Stephane Bourdeaud (sbourdeaud@nutanix.com)
-  Revision: October 30th 2026 - Hybrid: v4 reads (VMM, Networking), v3/v2 writes (v4 VM PUT ETag issue)
+  Revision: October 30th 2026 - Hybrid v4 reads + v3 writes (v4 VM PUT ETag defect VMM-30301)
 #>
 
 #region parameters
@@ -59,9 +59,10 @@ Connect myvm to the mynetwork AHV network:
 Maintenance Log
 Date       By   Updates (newest updates at the top)
 ---------- ---- ---------------------------------------------------------------
-10/30/2026 sb   Hybrid: v4 reads (VMM, Networking, Prism), v3/v2 writes (v4 VM PUT ETag 412 issue)
-10/30/2026 sb   Attempted full v4 but hit v4 VM PUT ETag PRECONDITION_FAILED (PLAT-10005)
-10/30/2026 sb   Migrated reads to Prism Central v4 API (VMM for VMs, Networking for subnets); writes use v3/v2 API
+10/30/2026 sb   Hybrid v4 reads (VMM, Networking, Prism) + v3 writes (v4 VM PUT ETag 412 VMM-30301)
+10/30/2026 sb   Full v4 ETag testing: composite ETag, version-only, wildcard, no header - all fail PLAT-10005
+10/30/2026 sb   Attempted full v4 but hit v4 VM PUT ETag PRECONDITION_FAILED (PLAT-10005/VMM-30301)
+10/30/2026 sb   Migrated reads to Prism Central v4 API (VMM for VMs, Networking for subnets); writes use v3 API
 10/29/2026 sb   Modernized: removed sbourdeaud module dependency; inlined helpers; fixed SSL for PS7+; removed -log parameter
 04/27/2021 sb   Initial release.
 06/24/2022 sb   Adding vpc_subnet option.  Replacing external module dependency with local functions.
@@ -217,6 +218,162 @@ Date       By   Updates (newest updates at the top)
         return Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
     }
 
+    function Invoke-PrismV3Post {
+        param (
+            [parameter(mandatory = $true)]
+            [string]$Url,
+
+            [parameter(mandatory = $true)]
+            [hashtable]$Headers,
+
+            [parameter(mandatory = $true)]
+            [string]$Body,
+
+            [parameter(mandatory = $false)]
+            [int]$TimeoutSec = 120
+        )
+        $postHeaders = $Headers.Clone()
+        $postHeaders["NTNX-Request-Id"] = (New-Guid).ToString()
+        $invokeParams = @{
+            Uri        = $Url
+            Method     = 'POST'
+            Headers    = $postHeaders
+            Body       = $Body
+            TimeoutSec = $TimeoutSec
+        }
+        return Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+    }
+
+    function Invoke-PrismV3Put {
+        param (
+            [parameter(mandatory = $true)]
+            [string]$Url,
+
+            [parameter(mandatory = $true)]
+            [hashtable]$Headers,
+
+            [parameter(mandatory = $true)]
+            [string]$Body,
+
+            [parameter(mandatory = $false)]
+            [int]$TimeoutSec = 120
+        )
+        $putHeaders = $Headers.Clone()
+        $putHeaders["NTNX-Request-Id"] = (New-Guid).ToString()
+        $invokeParams = @{
+            Uri        = $Url
+            Method     = 'PUT'
+            Headers    = $putHeaders
+            Body       = $Body
+            TimeoutSec = $TimeoutSec
+        }
+        return Invoke-PrismAPICallWithRetry -InvokeParams $invokeParams
+    }
+
+    function Get-V4TaskStatus {
+        param (
+            [Parameter(Mandatory)]
+            [string]$TaskExtId,
+            
+            [parameter(mandatory = $true)]
+            [hashtable]$Headers,
+            
+            [parameter(mandatory = $true)]
+            [string]$BaseUri
+        )
+
+        $taskUrl = "$BaseUri/prism/v4.0/config/tasks/$TaskExtId"
+        Write-Host "$(Get-Date) [INFO] Retrieving details of task $TaskExtId..." -ForegroundColor Green
+        $taskDetails = Invoke-PrismV4Get -Url $taskUrl -Headers $Headers
+        Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $TaskExtId" -ForegroundColor Cyan
+
+        if ($taskDetails.data.percentage_complete -ne "100") 
+        {
+            Do 
+            {
+                Write-Host "$(Get-Date) [INFO] Task progress: $($taskDetails.data.percentage_complete)%" -ForegroundColor Green
+                Sleep 5
+                $taskDetails = Invoke-PrismV4Get -Url $taskUrl -Headers $Headers
+                
+                if ($taskDetails.data.status -ne "running") 
+                {
+                    if ($taskDetails.data.status -ne "succeeded") 
+                    {
+                        Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.data.operation_type) failed with status: $($taskDetails.data.status) : $($taskDetails.data.progress_message)" -ForegroundColor Yellow
+                    }
+                }
+            }
+            While ($taskDetails.data.percentage_complete -ne "100")
+            
+            Write-Host ""
+            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.data.operation_type) completed successfully!" -ForegroundColor Cyan
+        } 
+        else 
+        {
+            if ($taskDetails.data.status -ine "succeeded") {
+                Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.data.operation_type) status is $($taskDetails.data.status): $($taskDetails.data.progress_message)" -ForegroundColor Yellow
+            } else {
+                Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.data.operation_type) completed successfully!" -ForegroundColor Cyan
+            }
+        }
+    }
+
+    function Get-V3TaskStatus {
+        param (
+            [Parameter(Mandatory)]
+            [string]$TaskUUID,
+            
+            [parameter(mandatory = $true)]
+            [hashtable]$Headers,
+            
+            [parameter(mandatory = $true)]
+            [string]$BaseUri
+        )
+
+        $taskUrl = "$BaseUri/nutanix/v3/tasks/$TaskUUID"
+        Write-Host "$(Get-Date) [INFO] Retrieving details of task $TaskUUID..." -ForegroundColor Green
+        $taskDetails = Invoke-PrismAPICallWithRetry -InvokeParams @{Uri=$taskUrl; Method='GET'; Headers=$Headers; TimeoutSec=60}
+        Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $TaskUUID" -ForegroundColor Cyan
+
+        if ($taskDetails.status -eq "SUCCEEDED") {
+            Write-Host "$(Get-Date) [SUCCESS] Task completed successfully!" -ForegroundColor Cyan
+            return
+        }
+        if ($taskDetails.status -eq "FAILED") {
+            $errMsg = $taskDetails.progress_message
+            if ($taskDetails.error_detail) { $errMsg += " - $($taskDetails.error_detail)" }
+            if ($taskDetails.error_message) { $errMsg += " - $($taskDetails.error_message)" }
+            Write-Host "$(Get-Date) [ERROR] Task failed: $errMsg" -ForegroundColor Red
+            throw "Task $TaskUUID failed: $errMsg"
+        }
+
+        # Task is running, poll until completion
+        Do 
+        {
+            Write-Host "$(Get-Date) [INFO] Task progress: $($taskDetails.progress_message)" -ForegroundColor Green
+            Sleep 5
+            $taskDetails = Invoke-PrismAPICallWithRetry -InvokeParams @{Uri=$taskUrl; Method='GET'; Headers=$Headers; TimeoutSec=60}
+            
+            if ($taskDetails.status -eq "SUCCEEDED") {
+                Write-Host ""
+                Write-Host "$(Get-Date) [SUCCESS] Task completed successfully!" -ForegroundColor Cyan
+                return
+            }
+            if ($taskDetails.status -eq "FAILED") {
+                $errMsg = $taskDetails.progress_message
+                if ($taskDetails.error_detail) { $errMsg += " - $($taskDetails.error_detail)" }
+                if ($taskDetails.error_message) { $errMsg += " - $($taskDetails.error_message)" }
+                Write-Host "$(Get-Date) [ERROR] Task failed: $errMsg" -ForegroundColor Red
+                throw "Task $TaskUUID failed: $errMsg"
+            }
+        }
+        While ($taskDetails.status -eq "RUNNING")
+        
+        # Unexpected status
+        Write-Host "$(Get-Date) [ERROR] Task ended with unexpected status: $($taskDetails.status)" -ForegroundColor Red
+        throw "Task $TaskUUID ended with unexpected status: $($taskDetails.status)"
+    }
+
     function Set-CustomCredentials {
         param (
             [parameter(mandatory = $false)]
@@ -349,207 +506,6 @@ public class ServerCertificateValidationCallback
         }
         [ServerCertificateValidationCallback]::Ignore()
     }
-
-    function New-PercentageBar {
-        [CmdletBinding(DefaultParameterSetName = 'PERCENT')]
-        Param (
-            [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'PERCENT')]
-            [ValidateRange(0, 100)]
-            [int]$Percent
-            ,
-            [Parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName = 'VALUE')]
-            [ValidateRange(0, [double]::MaxValue)]
-            [double]$Value
-            ,
-            [Parameter(Mandatory, Position = 2, ParameterSetName = 'VALUE')]
-            [ValidateRange(1, [double]::MaxValue)]
-            [double]$MaxValue
-            ,
-            [Parameter(Mandatory = $false, Position = 3)]
-            [Alias("BarSize", "Length")]
-            [ValidateRange(10, 100)]
-            [int]$BarLength = 20
-            ,
-            [Parameter(Mandatory = $false, Position = 4)]
-            [ValidateSet("SimpleThin", "SimpleThick1", "SimpleThick2", "AdvancedThin1", "AdvancedThin2", "AdvancedThick")]
-            [string]$BarView = "SimpleThin"
-            ,
-            [Parameter(Mandatory = $false, Position = 5)]
-            [ValidateRange(50, 80)]
-            [int]$GreenBorder = 60
-            ,
-            [Parameter(Mandatory = $false, Position = 6)]
-            [ValidateRange(80, 90)]
-            [int]$YellowBorder = 80
-            ,
-            [Parameter(Mandatory = $false)]
-            [switch]$NoPercent
-            ,
-            [Parameter(Mandatory = $false)]
-            [switch]$DrawBar
-        )
-        
-        Begin
-        {
-            If ($PSBoundParameters.ContainsKey('VALUE'))
-            {
-                If ($Value -gt $MaxValue) { Throw "The [-Value] parameter cannot be greater than [-MaxValue]!" }
-                Else { $Percent = $Value/$MaxValue * 100 -as [int] }
-            }
-            If ($YellowBorder -le $GreenBorder) { Throw "The [-YellowBorder] value must be greater than [-GreenBorder]!" }
-            
-            Function Set-BarView ($View)
-            {
-                Switch -exact ($View)
-                {
-                    "SimpleThin"    { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = "-"; Break }
-                    "SimpleThick1"  { $GreenChar = [char]9608; $YellowChar = [char]9608; $RedChar = [char]9608; $EmptyChar = "-"; Break }
-                    "SimpleThick2"  { $GreenChar = [char]9612; $YellowChar = [char]9612; $RedChar = [char]9612; $EmptyChar = "-"; Break }
-                    "AdvancedThin1" { $GreenChar = [char]9632; $YellowChar = [char]9632; $RedChar = [char]9632; $EmptyChar = [char]9476; Break }
-                    "AdvancedThin2" { $GreenChar = [char]9642; $YellowChar = [char]9642; $RedChar = [char]9642; $EmptyChar = [char]9643; Break }
-                    "AdvancedThick" { $GreenChar = [char]9617; $YellowChar = [char]9618; $RedChar = [char]9619; $EmptyChar = [char]9482; Break }
-                }
-                $Properties = [ordered]@{ Char1 = $GreenChar; Char2 = $YellowChar; Char3 = $RedChar; Char4 = $EmptyChar }
-                $Object = New-Object PSObject -Property $Properties
-                $Object
-            }
-            
-            $BarChars = Set-BarView -View $BarView
-            $Bar = $null
-            
-            Function Draw-Bar
-            {
-                Param ([Parameter(Mandatory)][string]$Char, [Parameter(Mandatory = $false)][string]$Color = 'White', [Parameter(Mandatory = $false)][boolean]$Draw)
-                If ($Draw) { Write-Host -NoNewline -ForegroundColor ([System.ConsoleColor]$Color) $Char }
-                Else { return $Char }
-            }
-        }
-        
-        Process
-        {
-            If ($NoPercent) { $Bar += Draw-Bar -Char "[ " -Draw $DrawBar }
-            Else {
-                If ($Percent -eq 100) { $Bar += Draw-Bar -Char "$Percent% [ " -Draw $DrawBar }
-                ElseIf ($Percent -ge 10) { $Bar += Draw-Bar -Char " $Percent% [ " -Draw $DrawBar }
-                Else { $Bar += Draw-Bar -Char "  $Percent% [ " -Draw $DrawBar }
-            }
-            For ($i = 1; $i -le ($BarValue = ([Math]::Round($Percent * $BarLength / 100))); $i++)
-            {
-                If ($i -le ($GreenBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char1) -Color 'DarkGreen' -Draw $DrawBar }
-                ElseIf ($i -le ($YellowBorder * $BarLength / 100)) { $Bar += Draw-Bar -Char ($BarChars.Char2) -Color 'Yellow' -Draw $DrawBar }
-                Else { $Bar += Draw-Bar -Char ($BarChars.Char3) -Color 'Red' -Draw $DrawBar }
-            }
-            For ($i = 1; $i -le ($EmptyValue = $BarLength - $BarValue); $i++) { $Bar += Draw-Bar -Char ($BarChars.Char4) -Draw $DrawBar }
-            $Bar += Draw-Bar -Char " ]" -Draw $DrawBar
-        }
-        End { If (!$DrawBar) { return $Bar } }
-    }
-
-    function Get-PrismCentralTaskStatus {
-        param (
-            [Parameter(Mandatory)]
-            $task,
-            
-            [parameter(mandatory = $false)]
-            [System.Management.Automation.PSCredential]
-            $credential,
-
-            [parameter(mandatory = $false)]
-            [String]
-            $cluster
-        )
-
-        $url = "https://$($cluster):9440/api/nutanix/v3/tasks/$task"
-        $method = "GET"
-        
-        Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
-        $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-        Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
-
-        if ($taskDetails.percentage_complete -ne "100") 
-        {
-            Do 
-            {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
-                $Host.UI.RawUI.CursorPosition = New-Object System.Management.Automation.Host.Coordinates 2,$Host.UI.RawUI.CursorPosition.Y
-                Sleep 5
-                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-                
-                if ($taskDetails.status -ne "running") 
-                {
-                    if ($taskDetails.status -ne "succeeded") 
-                    {
-                        Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.operation_type) failed with the following status and error code : $($taskDetails.status) : $($taskDetails.progress_message)" -ForegroundColor Yellow
-                    }
-                }
-            }
-            While ($taskDetails.percentage_complete -ne "100")
-            
-            New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
-            Write-Host ""
-            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
-        } 
-        else 
-        {
-            if ($taskDetails.status -ine "succeeded") {
-                Write-Host "$(Get-Date) [WARNING] Task $($taskDetails.operation_type) status is $($taskDetails.status): $($taskDetails.progress_message)" -ForegroundColor Yellow
-            } else {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2
-                Write-Host ""
-                Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.operation_type) completed successfully!" -ForegroundColor Cyan
-            }
-        }
-    }
-
-    function Get-PrismTaskStatus {
-        param (
-            [Parameter(Mandatory)]
-            $task,
-            
-            [parameter(mandatory = $false)]
-            [System.Management.Automation.PSCredential]
-            $credential,
-
-            [parameter(mandatory = $false)]
-            [String]
-            $cluster
-        )
-
-        Write-Host "$(Get-Date) [INFO] Retrieving details of task $task..." -ForegroundColor Green
-        $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-        $method = "GET"
-        $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-        Write-Host "$(Get-Date) [SUCCESS] Retrieved details of task $task" -ForegroundColor Cyan
-
-        if ($taskDetails.percentage_complete -ne "100") 
-        {
-            Do 
-            {
-                New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-                Sleep 5
-                $url = "https://$($cluster):9440/PrismGateway/services/rest/v2.0/tasks/$task"
-                $method = "GET"
-                $taskDetails = Invoke-PrismAPICall -method $method -url $url -credential $credential
-                
-                if ($taskDetails.progress_status -ine "running") 
-                {
-                    if ($taskDetails.progress_status -ine "succeeded") 
-                    {
-                        Throw "$(Get-Date) [INFO] Task $($taskDetails.meta_request.method_name) failed with the following status and error code : $($taskDetails.progress_status) : $($taskDetails.meta_response.error_code)"
-                    }
-                }
-            }
-            While ($taskDetails.percentage_complete -ne "100")
-            
-            New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
-        } 
-        else 
-        {
-            New-PercentageBar -Percent $taskDetails.percentage_complete -DrawBar -Length 100 -BarView AdvancedThin2; "`r"
-            Write-Host "$(Get-Date) [SUCCESS] Task $($taskDetails.meta_request.method_name) completed successfully!" -ForegroundColor Cyan
-        }
-    }
     #endregion
 
     Set-PoSHSSLCerts
@@ -676,93 +632,90 @@ public class ServerCertificateValidationCallback
             }
         #endregion
 
-        #region process each vm - update NIC using v3 API (Prism Element v2)
+        #region process each vm - update NIC using v3 API (v4 VM PUT has ETag defect VMM-30301)
             ForEach ($vm in $myvar_vms_details)
             {
                 Write-Host "$(Get-Date) [INFO] Connecting VM '$($vm.name)' to network '$subnetName'..." -ForegroundColor Green
                 
-                # For VLAN networks, we need to use the Prism Element v2 API
-                # Find which cluster the VM is on
-                $clusterExtId = $vm.cluster.extId
+                $vmExtId = $vm.extId
+                $vmUri = "${baseUri}/vmm/v4.0/ahv/config/vms/$vmExtId"
                 
-                # Get cluster external IP from v3 clusters API
-                Write-Host "$(Get-Date) [INFO] Retrieving cluster external IP for VM cluster..." -ForegroundColor Green
-                $v3ClustersUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/clusters/list"
-                $v3Payload = '{"kind":"cluster","offset":0,"length":100}'
-                $clusterResp = Invoke-PrismAPICall -method "POST" -url $v3ClustersUrl -payload $v3Payload -credential $prismCredentials
+                # Step 1: Fresh GET from v4 to capture current state (no ETag needed for v3 write)
+                Write-Host "$(Get-Date) [INFO] Retrieving VM $vmExtId from v4 API..." -ForegroundColor Green
+                $vmResp = Invoke-PrismV4Get -Url $vmUri -Headers $v4Headers
+                $vmData = $vmResp.data
                 
-                $clusterIp = $null
-                if ($clusterResp.entities) {
-                    foreach ($cluster in $clusterResp.entities) {
-                        if ($cluster.metadata.uuid -eq $clusterExtId) {
-                            $clusterIp = $cluster.spec.resources.network.external_ip
-                            break
+                # Check if VM has at least one NIC
+                if (-not $vmData.nics -or $vmData.nics.Count -eq 0) {
+                    Write-Host "$(Get-Date) [WARNING] VM '$($vm.name)' has no NICs to update!" -ForegroundColor Yellow
+                    Continue
+                }
+                
+                # Update first NIC (nic0) to point to the new subnet
+                $nic0 = $vmData.nics[0]
+                $oldSubnetExtId = $nic0.nicNetworkInfo.subnet.extId
+                $nicMac = $nic0.nicBackingInfo.macAddress
+                
+                if ($oldSubnetExtId -eq $subnetExtId) {
+                    Write-Host "$(Get-Date) [WARNING] NIC 0 on VM '$($vm.name)' is already connected to subnet '$subnetName'! Skipping..." -ForegroundColor Yellow
+                    Continue
+                }
+                
+                Write-Host "$(Get-Date) [INFO] Updating NIC 0 (MAC: $nicMac) from subnet $oldSubnetExtId to $subnetExtId" -ForegroundColor Green
+                
+                # Modify only the requested field in the complete data object
+                $nic0.nicNetworkInfo.subnet.extId = $subnetExtId
+                
+                # Step 2: Update using v3 API (bypasses v4 ETag defect)
+                Write-Host "$(Get-Date) [INFO] Updating VM with new NIC configuration via v3 API..." -ForegroundColor Green
+                
+                # First, GET the complete VM spec from v3 API to preserve all fields
+                $v3VmUrl = "${baseUri}/nutanix/v3/vms/$vmExtId"
+                $v3GetResp = Invoke-PrismAPICallWithRetry -InvokeParams @{Uri=$v3VmUrl; Method='GET'; Headers=$v4Headers; TimeoutSec=60}
+                # Extract only the VM spec (metadata + spec), excluding status and our added properties
+                $v3VmSpec = @{
+                    "metadata" = $v3GetResp.metadata
+                    "spec" = $v3GetResp.spec
+                    "api_version" = $v3GetResp.api_version
+                }
+                
+                # Modify only the NIC list in the v3 spec
+                $nicList = @()
+                foreach ($nic in $vmData.nics) {
+                    $nicList += @{
+                        "nic_type" = "NORMAL_NIC"
+                        "uuid" = $nic.extId
+                        "mac_address" = $nic.nicBackingInfo.macAddress
+                        "is_connected" = $nic.nicBackingInfo.isConnected
+                        "subnet_reference" = @{
+                            "kind" = "subnet"
+                            "uuid" = $nic.nicNetworkInfo.subnet.extId
                         }
+                        "vlan_mode" = $nic.nicNetworkInfo.vlanMode
+                        "ip_endpoint_list" = @()
                     }
                 }
+                $v3VmSpec.spec.resources.nic_list = $nicList
                 
-                if (-not $clusterIp) {
-                    Write-Host "$(Get-Date) [ERROR] Could not find external IP for cluster $clusterExtId" -ForegroundColor Red
-                    exit 1
-                }
+                $v3Payload = $v3VmSpec | ConvertTo-Json -Depth 10
                 
-                Write-Host "$(Get-Date) [INFO] Cluster IP: $clusterIp" -ForegroundColor Green
+                $putResp = Invoke-PrismV3Put -Url $v3VmUrl -Headers $v4Headers -Body $v3Payload
                 
-                # Get VM details from Prism Element v2 API (for NIC update)
-                $pePort = $myvar_api_server_port
-                $peUrl = "https://" + $clusterIp + ":" + $pePort + "/PrismGateway/services/rest/v2.0/vms/?include_vm_nic_config=true&filterCriteria=vm_uuid==" + $vm.extId
-                $peResp = Invoke-PrismAPICall -method "GET" -url $peUrl -credential $prismCredentials
-                
-                if (-not $peResp.entities -or $peResp.entities.Count -eq 0) {
-                    Write-Host "$(Get-Date) [ERROR] VM not found on Prism Element $clusterIp" -ForegroundColor Red
-                    exit 1
-                }
-                
-                $peVm = $peResp.entities[0]
-                $peVmUuid = $peVm.uuid
-                
-                # Get network UUID from Prism Element v2 API
-                $netUrl = "https://" + $clusterIp + ":" + $pePort + "/PrismGateway/services/rest/v2.0/networks/"
-                $netResp = Invoke-PrismAPICall -method "GET" -url $netUrl -credential $prismCredentials
-                
-                $netUuid = $null
-                if ($netResp.entities) {
-                    foreach ($net in $netResp.entities) {
-                        if ($net.name -eq $subnetName) {
-                            $netUuid = $net.uuid
-                            break
-                        }
-                    }
-                }
-                
-                if (-not $netUuid) {
-                    Write-Host "$(Get-Date) [ERROR] Network '$subnetName' not found on Prism Element $clusterIp" -ForegroundColor Red
-                    exit 1
-                }
-                
-                Write-Host "$(Get-Date) [INFO] Network UUID: $netUuid" -ForegroundColor Green
-                
-                # Update NIC using Prism Element v2 API
-                $nicMac = $peVm.vm_nics[0].mac_address
-                $nicMacUrl = $nicMac -replace ":","%3A"
-                
-                $nicPayload = @{
-                    nic_spec = @{
-                        is_connected = $true
-                        network_uuid = $netUuid
-                    }
-                }
-                $nicPayloadJson = $nicPayload | ConvertTo-Json -Depth 9
-                
-                $updateUrl = "https://" + $clusterIp + ":" + $pePort + "/PrismGateway/services/rest/v2.0/vms/" + $peVmUuid + "/nics/" + $nicMacUrl
-                $updateResp = Invoke-PrismAPICall -method "PUT" -url $updateUrl -credential $prismCredentials -payload $nicPayloadJson
-                
+                # Extract task UUID from response
+                $taskUUID = $putResp.status.execution_context.task_uuid
                 Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of VM '$($vm.name)' to network '$subnetName'!" -ForegroundColor Cyan
-                Write-Host "$(Get-Date) [INFO] Task UUID: $($updateResp.task_uuid)" -ForegroundColor Green
+                Write-Host "$(Get-Date) [INFO] Task UUID: $taskUUID" -ForegroundColor Green
                 
-                # Task status check
-                if (-not $skiptaskstatuscheck) {
-                    Get-PrismTaskStatus -task $updateResp.task_uuid -credential $prismCredentials -cluster $clusterIp
+                # Task status check using v3 API
+                if (-not $skiptaskstatuscheck -and $taskUUID) {
+                    Get-V3TaskStatus -TaskUUID $taskUUID -Headers $v4Headers -BaseUri $baseUri
+                }
+                
+                # Step 3: Final GET from v4 for authoritative final state
+                if ($taskUUID) {
+                    Write-Host "$(Get-Date) [INFO] Retrieving final VM state from v4 API..." -ForegroundColor Green
+                    $finalResp = Invoke-PrismV4Get -Url $vmUri -Headers $v4Headers
+                    Write-Host "$(Get-Date) [DEBUG] Final VM state retrieved" -ForegroundColor White
                 }
             }
         #endregion
@@ -841,119 +794,182 @@ public class ServerCertificateValidationCallback
             }
         #endregion
 
-        #region process each vm - use v3 API for VPC subnet attachment
+        #region process each vm - use v4 VMM API reads, v3 writes for VPC subnet attachment
             ForEach ($vm in $myvar_vms_details)
             {
                 Write-Host "$(Get-Date) [INFO] Processing VM '$($vm.name)' for VPC subnet '$subnetName'..." -ForegroundColor Green
                 
-                # Use v3 API for VPC subnet operations (as in original script)
-                $content = @{
-                    kind = "vm";
-                    offset = 0;
-                    length = $myvar_length
+                $vmExtId = $vm.extId
+                $vmUri = "${baseUri}/vmm/v4.0/ahv/config/vms/$vmExtId"
+                
+                # ============================================================
+                # PHASE 1: Remove NIC 0 (v4 read -> v3 write)
+                # ============================================================
+                
+                # Step 1: Fresh GET from v4 to capture current state
+                Write-Host "$(Get-Date) [INFO] Retrieving VM $vmExtId from v4 API (phase 1: remove NIC 0)..." -ForegroundColor Green
+                $vmResp = Invoke-PrismV4Get -Url $vmUri -Headers $v4Headers
+                $vmData = $vmResp.data
+                
+                # Check if VM has NICs
+                if (-not $vmData.nics -or $vmData.nics.Count -eq 0) {
+                    Write-Host "$(Get-Date) [WARNING] VM '$($vm.name)' has no NICs to update!" -ForegroundColor Yellow
+                    Continue
                 }
-                $payload = (ConvertTo-Json $content -Depth 4)
-                $v3VmsUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/vms/list"
-                $method = "POST"
                 
-                $v3Resp = Invoke-PrismAPICall -method $method -url $v3VmsUrl -payload $payload -credential $prismCredentials
+                # Check if NIC 0 is already connected to this subnet
+                $nic0 = $vmData.nics[0]
+                $currentSubnetExtId = $nic0.nicNetworkInfo.subnet.extId
                 
-                $v3Vm = $null
-                if ($v3Resp.entities) {
-                    foreach ($entity in $v3Resp.entities) {
-                        if ($entity.metadata.uuid -eq $vm.extId) {
-                            $v3Vm = $entity
-                            break
+                if ($currentSubnetExtId -eq $subnetExtId) {
+                    Write-Host "$(Get-Date) [WARNING] NIC 0 on VM '$($vm.name)' is already connected to subnet '$subnetName'! Skipping..." -ForegroundColor Yellow
+                    Continue
+                }
+                
+                # Save NIC 0 configuration for new NIC (after removal)
+                $nic0Config = $nic0 | Select-Object -Property extId, nicBackingInfo, nicNetworkInfo
+                
+                # Remove NIC 0 from the list
+                if ($vmData.nics.Count -gt 1) {
+                    $vmData.nics = $vmData.nics[1..($vmData.nics.Count - 1)]
+                } else {
+                    $vmData.nics = @()
+                }
+                
+                # Step 2: PUT without NIC 0 using v3 API
+                Write-Host "$(Get-Date) [INFO] Removing NIC 0 from VM '$($vm.name)' via v3 API..." -ForegroundColor Green
+                
+                # First, GET the complete VM spec from v3 API to preserve all fields
+                $v3VmUrl = "${baseUri}/nutanix/v3/vms/$vmExtId"
+                $v3GetResp = Invoke-PrismAPICallWithRetry -InvokeParams @{Uri=$v3VmUrl; Method='GET'; Headers=$v4Headers; TimeoutSec=60}
+                # Extract only the VM spec (metadata + spec), excluding status and our added properties
+                $v3VmSpec = @{
+                    "metadata" = $v3GetResp.metadata
+                    "spec" = $v3GetResp.spec
+                    "api_version" = $v3GetResp.api_version
+                }
+                
+                # Modify only the NIC list in the v3 spec
+                $nicList = @()
+                foreach ($nic in $vmData.nics) {
+                    $nicList += @{
+                        "nic_type" = "NORMAL_NIC"
+                        "uuid" = $nic.extId
+                        "mac_address" = $nic.nicBackingInfo.macAddress
+                        "is_connected" = $nic.nicBackingInfo.isConnected
+                        "subnet_reference" = @{
+                            "kind" = "subnet"
+                            "uuid" = $nic.nicNetworkInfo.subnet.extId
+                        }
+                        "vlan_mode" = $nic.nicNetworkInfo.vlanMode
+                        "ip_endpoint_list" = @()
+                    }
+                }
+                $v3VmSpec.spec.resources.nic_list = $nicList
+                
+                $v3Payload = $v3VmSpec | ConvertTo-Json -Depth 10
+                
+                $putResp = Invoke-PrismV3Put -Url $v3VmUrl -Headers $v4Headers -Body $v3Payload
+                
+                $taskUUID = $putResp.status.execution_context.task_uuid
+                Write-Host "$(Get-Date) [SUCCESS] Successfully requested removal of NIC 0 from VM '$($vm.name)'!" -ForegroundColor Cyan
+                Write-Host "$(Get-Date) [INFO] Task UUID: $taskUUID" -ForegroundColor Green
+                
+                if (-not $skiptaskstatuscheck -and $taskUUID) {
+                    Get-V3TaskStatus -TaskUUID $taskUUID -Headers $v4Headers -BaseUri $baseUri
+                }
+                
+                # Step 3: Final GET from v4 after NIC removal (authoritative state)
+                Write-Host "$(Get-Date) [INFO] Retrieving VM state after NIC removal from v4 API..." -ForegroundColor Green
+                $vmResp2 = Invoke-PrismV4Get -Url $vmUri -Headers $v4Headers
+                $vmData2 = $vmResp2.data
+                
+                # ============================================================
+                # PHASE 2: Add new NIC connected to VPC subnet (v4 read -> v3 write)
+                # ============================================================
+                
+                # Create new NIC configuration for VPC subnet
+                $newNic = @{
+                    "extId" = [guid]::NewGuid().ToString()
+                    "nicBackingInfo" = @{
+                        "\$objectType" = "vmm.v4.ahv.config.VirtualEthernetNic"
+                        "macAddress" = $nic0Config.nicBackingInfo.macAddress
+                        "isConnected" = $true
+                        "numQueues" = 1
+                    }
+                    "nicNetworkInfo" = @{
+                        "\$objectType" = "vmm.v4.ahv.config.VirtualEthernetNicNetworkInfo"
+                        "nicType" = "NORMAL_NIC"
+                        "subnet" = @{
+                            "\$objectType" = "vmm.v4.ahv.config.SubnetReference"
+                            "extId" = $subnetExtId
+                        }
+                        "vlanMode" = "ACCESS"
+                        "ipv4Info" = @{
+                            "\$objectType" = "vmm.v4.ahv.config.Ipv4Info"
+                            "learnedIpAddresses" = " "
                         }
                     }
                 }
                 
-                if (-not $v3Vm) {
-                    Write-Host "$(Get-Date) [ERROR] VM not found in v3 API" -ForegroundColor Red
-                    exit 1
-                }
-                
-                # Get VPC subnet details from v3 API
-                $subnetContent = @{
-                    kind = "subnet";
-                    offset = 0;
-                    length = $myvar_length
-                }
-                $subnetPayload = (ConvertTo-Json $subnetContent -Depth 4)
-                $v3SubnetsUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/subnets/list"
-                $subnetResp = Invoke-PrismAPICall -method "POST" -url $v3SubnetsUrl -payload $subnetPayload -credential $prismCredentials
-                
-                $v3Subnet = $null
-                if ($subnetResp.entities) {
-                    foreach ($entity in $subnetResp.entities) {
-                        if ($entity.spec.name -eq $subnetName) {
-                            $v3Subnet = $entity
-                            break
-                        }
+                if ($dontkeepip) {
+                    # Remove IP configuration for new NIC
+                    $newNic.nicNetworkInfo.ipv4Info = @{
+                        "\$objectType" = "vmm.v4.ahv.config.Ipv4Info"
+                        "learnedIpAddresses" = " "
                     }
                 }
                 
-                if (-not $v3Subnet) {
-                    Write-Host "$(Get-Date) [ERROR] VPC subnet '$subnetName' not found in v3 API" -ForegroundColor Red
-                    exit 1
+                # Add new NIC to the list
+                $vmData2.nics += $newNic
+                
+                # Step 4: PUT with new NIC using v3 API
+                Write-Host "$(Get-Date) [INFO] Connecting VM '$($vm.name)' to VPC subnet '$subnetName' via v3 API..." -ForegroundColor Green
+                
+                # First, GET the complete VM spec from v3 API to preserve all fields
+                $v3GetResp2 = Invoke-PrismAPICallWithRetry -InvokeParams @{Uri=$v3VmUrl; Method='GET'; Headers=$v4Headers; TimeoutSec=60}
+                # Extract only the VM spec (metadata + spec), excluding status and our added properties
+                $v3VmSpec2 = @{
+                    "metadata" = $v3GetResp2.metadata
+                    "spec" = $v3GetResp2.spec
+                    "api_version" = $v3GetResp2.api_version
                 }
                 
-                Write-Host "$(Get-Date) [INFO] Removing first vnic from vm $($vm.name)..." -ForegroundColor Green
-                
-                $v3Vm.PSObject.Properties.Remove('status') #removing status section from the vm payload
-                if ($v3Vm.spec.resources.nic_list[0].subnet_reference.uuid -eq $v3Subnet.metadata.uuid)
-                {
-                    Write-Host "$(Get-Date) [WARNING] vnic0 on vm $($v3Vm.spec.name) is already connected to subnet $($vpc_subnet)! Skipping..." -ForegroundColor Yellow
-                    Continue
+                # Modify only the NIC list in the v3 spec
+                $nicList2 = @()
+                foreach ($nic in $vmData2.nics) {
+                    $nicList2 += @{
+                        "nic_type" = "NORMAL_NIC"
+                        "uuid" = $nic.extId
+                        "mac_address" = $nic.nicBackingInfo.macAddress
+                        "is_connected" = $nic.nicBackingInfo.isConnected
+                        "subnet_reference" = @{
+                            "kind" = "subnet"
+                            "uuid" = $nic.nicNetworkInfo.subnet.extId
+                        }
+                        "vlan_mode" = $nic.nicNetworkInfo.vlanMode
+                        "ip_endpoint_list" = @()
+                    }
                 }
-                $v3Vm_nic0_config = $v3Vm.spec.resources.nic_list[0] #saving vnic0 configuration
-                if ($v3Vm.spec.resources.nic_list.count -eq 0)
-                {#there are no vnics on this vm
-                    Write-Host "$(Get-Date) [WARNING] There is no vnic to update on vm $($v3Vm.spec.name)! Skipping..." -ForegroundColor Yellow
-                    Continue
+                $v3VmSpec2.spec.resources.nic_list = $nicList2
+                
+                $v3Payload2 = $v3VmSpec2 | ConvertTo-Json -Depth 10
+                
+                $putResp2 = Invoke-PrismV3Put -Url $v3VmUrl -Headers $v4Headers -Body $v3Payload2
+                
+                $taskUUID2 = $putResp2.status.execution_context.task_uuid
+                Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of VM '$($vm.name)' to VPC subnet '$subnetName'!" -ForegroundColor Cyan
+                Write-Host "$(Get-Date) [INFO] Task UUID: $taskUUID2" -ForegroundColor Green
+                
+                if (-not $skiptaskstatuscheck -and $taskUUID2) {
+                    Get-V3TaskStatus -TaskUUID $taskUUID2 -Headers $v4Headers -BaseUri $baseUri
                 }
-                elseif ($v3Vm.spec.resources.nic_list.count -gt 1)
-                {#we have more than 1 vnic
-                    $v3Vm.spec.resources.nic_list[0] = "" #removing existing vnic0
-                }
-                else 
-                {
-                    $v3Vm.spec.resources.nic_list = @()
-                }
-                $v3Vm.metadata.spec_version += 1 #increasing spec version
-                $v3UpdateUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/vms/$($v3Vm.metadata.uuid)"
-                $v3Method = "PUT"
-                $v3Payload = (ConvertTo-Json $v3Vm -Depth 9)
-                $v3UpdateResp = Invoke-PrismAPICall -method $v3Method -url $v3UpdateUrl -credential $prismCredentials -payload $v3Payload
                 
-                Write-Host "$(Get-Date) [SUCCESS] Successfully requested removal of vnic0 from vm $($v3Vm.spec.name)!" -ForegroundColor Cyan
-                Get-PrismCentralTaskStatus -task $v3UpdateResp.status.execution_context.task_uuid -credential $prismCredentials -cluster $prismcentral
-                
-                Write-Host "$(Get-Date) [INFO] Connecting vm $($v3Vm.spec.name) to subnet $($vpc_subnet)..." -ForegroundColor Green
-
-                $v3Vm_nic0_config.subnet_reference.name = $v3Subnet.spec.name #updating subnet name reference
-                $v3Vm_nic0_config.subnet_reference.uuid = $v3Subnet.metadata.uuid #updating subnet uuid reference
-                $v3Vm_nic0_config.PSObject.Properties.Remove('uuid') #removing uuid (this is a new vnic after all)
-                
-                # Get fresh VM payload
-                $v3GetUrl = "https://${prismcentral}:${myvar_api_server_port}/api/nutanix/v3/vms/$($v3Vm.metadata.uuid)"
-                $v3GetResp = Invoke-PrismAPICall -method "GET" -url $v3GetUrl -credential $prismCredentials
-                $v3Vm_payload_without_vnic0 = $v3GetResp
-                $v3Vm_payload_without_vnic0.PSObject.Properties.Remove('status') #removing status section from the vm payload
-                $v3Vm_payload_without_vnic0.metadata.spec_version += 1 #increasing spec version
-                
-                if ($dontkeepip)
-                {#remove the ip configuration
-                    $v3Vm_nic0_config.ip_endpoint_list = @()
-                }
-                $v3Vm_payload_without_vnic0.spec.resources.nic_list += $v3Vm_nic0_config #adding new vnic connected to vpc subnet
-                $v3Payload2 = (ConvertTo-Json $v3Vm_payload_without_vnic0 -Depth 9)
-                $v3UpdateResp2 = Invoke-PrismAPICall -method "PUT" -url $v3GetUrl -credential $prismCredentials -payload $v3Payload2
-                
-                Write-Host "$(Get-Date) [SUCCESS] Successfully requested connection of vm $($v3Vm.spec.name) to subnet $($vpc_subnet)!" -ForegroundColor Cyan
-                if (-not $skiptaskstatuscheck)
-                {
-                    Get-PrismCentralTaskStatus -task $v3UpdateResp2.status.execution_context.task_uuid -credential $prismCredentials -cluster $prismcentral
+                # Step 5: Final GET from v4 for authoritative final state
+                if ($taskUUID2) {
+                    Write-Host "$(Get-Date) [INFO] Retrieving final VM state from v4 API..." -ForegroundColor Green
+                    $finalResp = Invoke-PrismV4Get -Url $vmUri -Headers $v4Headers
+                    Write-Host "$(Get-Date) [DEBUG] Final VM state retrieved" -ForegroundColor White
                 }
             }
         #endregion
