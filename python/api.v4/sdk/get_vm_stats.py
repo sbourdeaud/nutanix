@@ -87,13 +87,32 @@ def fetch_entity_descriptors(client,source_ext_id,page,limit=50):
     return response
 
 
-def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_export):
+def parse_datetime(value):
+    '''parse_datetime function.
+       argparse type converter for ISO 8601 dates/datetimes (exp: 2026-11-20 or 2026-11-20T14:30).
+       Values without a timezone are interpreted as local time.
+        Args:
+            value: string to parse.
+        Returns:
+            timezone aware datetime object in UTC.
+    '''
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid date/time '{value}' (expected ISO 8601, exp: 2026-11-20 or 2026-11-20T14:30)")
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+    return parsed.astimezone(timezone.utc)
+
+
+def get_vm_metrics(client,vm,start_time,end_time,sampling_interval,stat_type,graph,csv_export):
     '''get_vm_metrics function.
        Fetches metrics for a specified vm and generates graphs for that entity.
         Args:
             client: a v4 Python SDK client object.
             vm: a virtual machine name
-            minutes_ago: integer indicating the number of minutes to get metrics for (exp: 60 would mean get the metrics for the last hour).
+            start_time: timezone aware datetime marking the beginning of the collection period.
+            end_time: timezone aware datetime marking the end of the collection period.
             sampling_interval: integer used to specify in seconds the sampling interval.
             stat_type: The operator to use while performing down-sampling on stats data. Allowed values are SUM, MIN, MAX, AVG, COUNT and LAST.
         Returns:
@@ -203,9 +222,7 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
     
     #* fetch metrics for vm
     entity_api = ntnx_vmm_py_client.StatsApi(api_client=client)
-    start_time = (datetime.now(timezone.utc)-timedelta(minutes=minutes_ago)).isoformat()
-    end_time = (datetime.now(timezone.utc)).isoformat()
-    response = entity_api.get_vm_stats_by_id(vm_uuid, _startTime=start_time, _endTime=end_time, _samplingInterval=sampling_interval, _statType=stat_type, _select='*')
+    response = entity_api.get_vm_stats_by_id(vm_uuid, _startTime=start_time.isoformat(), _endTime=end_time.isoformat(), _samplingInterval=sampling_interval, _statType=stat_type, _select='*')
     vm_stats = [stat for stat in response.data.stats if stat.cluster is None]
     #print(f"{PrintColors.OK}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [INFO] Found {len(vm_stats)} data points for VM {vm} with uuid {vm_uuid}...{PrintColors.RESET}")
     
@@ -380,7 +397,7 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
   <div class="topbar">
     <div class="report-meta">
       <strong>{vm}</strong> metrics
-      &nbsp;|&nbsp; <strong>time:</strong> last {minutes_ago} minutes
+      &nbsp;|&nbsp; <strong>time:</strong> {start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')} UTC
       &nbsp;|&nbsp; <strong>stat_type:</strong> {stat_type}
       &nbsp;|&nbsp; <strong>interval:</strong> {sampling_interval}s
     </div>
@@ -402,12 +419,15 @@ def get_vm_metrics(client,vm,minutes_ago,sampling_interval,stat_type,graph,csv_e
             df[column].to_csv(f"{vm}_{column}.csv", index=True)
 
 
-def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_interval=30,stat_type="AVG",secure=False,show=False):
+def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,start_time=None,end_time=None,sampling_interval=30,stat_type="AVG",secure=False,show=False):
     '''main function.
         Args:
             api_server: IP or FQDN of the REST API server.
             username: Username to use for authentication.
             secret: Secret for the username.
+            minutes_ago: length of the collection period in minutes, used when start_time is not specified.
+            start_time: timezone aware datetime for the beginning of the collection period.
+            end_time: timezone aware datetime for the end of the collection period (defaults to now).
             secure: indicates if certs should be verified.
         Returns:
             html and excel report files.
@@ -415,6 +435,14 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
 
     processing_start_time = time.time()
     limit=100
+
+    if end_time is None:
+        end_time = datetime.now(timezone.utc)
+    if start_time is None:
+        start_time = end_time - timedelta(minutes=minutes_ago)
+    if start_time >= end_time:
+        print(f"{PrintColors.FAIL}{(datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')} [ERROR] Start time {start_time.isoformat()} must be before end time {end_time.isoformat()}.{PrintColors.RESET}")
+        exit(1)
 
     if show is True:
         #* initialize variable for API client configuration
@@ -498,7 +526,8 @@ def main(api_server,username,secret,vms,graph,csv_export,minutes_ago=5,sampling_
                         get_vm_metrics,
                         client=client,
                         vm=vm,
-                        minutes_ago=minutes_ago,
+                        start_time=start_time,
+                        end_time=end_time,
                         sampling_interval=sampling_interval,
                         stat_type=stat_type,
                         graph=graph,
@@ -555,7 +584,9 @@ if __name__ == '__main__':
     parser.add_argument("-e", "--export", action=argparse.BooleanOptionalAction, default=False, help="Indicate you want csv exports to be generated (1 csv file per metric for each vm). Defaults to False.")
     parser.add_argument("-v", "--vm", type=str, help="Comma separated list of VM names you want to process.")
     parser.add_argument("-c", "--csv", type=str, help="Path and name of csv file with vm names (header: vm_name and then one vm name per line).")
-    parser.add_argument("-t", "--time", type=int, default=5, help="Integer used to specify how many minutes ago you want to collect metrics for (defaults to 5 minutes ago).")
+    parser.add_argument("-t", "--time", type=int, default=5, help="Integer used to specify how many minutes ago you want to collect metrics for (defaults to 5 minutes ago). Ignored when --start is specified.")
+    parser.add_argument("-sd", "--start", type=parse_datetime, help="Start of the collection period in ISO 8601 format (exp: 2026-11-20 or 2026-11-20T14:30). Local time unless a timezone offset is included.")
+    parser.add_argument("-ed", "--end", type=parse_datetime, help="End of the collection period in ISO 8601 format (exp: 2026-11-21 or 2026-11-21T14:30). Local time unless a timezone offset is included. Defaults to now.")
     parser.add_argument("-i", "--interval", type=int, default=30, help="Integer used to specify in seconds the sampling interval (defaults to 30 seconds).")
     parser.add_argument("-st", "--stat_type", default="AVG", choices=["AVG","MIN","MAX","LAST","SUM","COUNT"], help="The operator to use while performing down-sampling on stats data. Allowed values are SUM, MIN, MAX, AVG, COUNT and LAST. Defaults to AVG")
     args = parser.parse_args()
@@ -580,4 +611,4 @@ if __name__ == '__main__':
     elif args.vm:
         target_vms = args.vm.split(',')
 
-    main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,show=args.show,vms=target_vms,minutes_ago=args.time,sampling_interval=args.interval,stat_type=args.stat_type,graph=args.graph,csv_export=args.export)
+    main(api_server=args.prism,username=args.username,secret=pwd,secure=args.secure,show=args.show,vms=target_vms,minutes_ago=args.time,start_time=args.start,end_time=args.end,sampling_interval=args.interval,stat_type=args.stat_type,graph=args.graph,csv_export=args.export)
